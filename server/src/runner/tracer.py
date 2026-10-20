@@ -32,24 +32,24 @@ if STDOUT_FILE:
     start_cmd += f' > "{STDOUT_FILE.replace(chr(92), "/")}"'
 
 started = False
-for attempt in range(25):
+for attempt in range(40):
     try:
         gdb.execute(start_cmd)
         started = True
         break
     except Exception as e:
-        time.sleep(0.25)
+        time.sleep(0.3)
 
 if not started:
-    for attempt in range(15):
+    for attempt in range(25):
         try:
             gdb.execute("b main")
             gdb.execute(start_cmd.replace("start", "run", 1))
             started = True
             break
         except Exception as e2:
-            time.sleep(0.25)
-            if attempt == 14:
+            time.sleep(0.3)
+            if attempt == 24:
                 with open("gdb_run_error.log", "w", encoding="utf-8") as ef:
                     ef.write(f"run error: {e2}\n")
 
@@ -60,7 +60,6 @@ observed_freed_addresses = set()
 all_allocated_addresses = set()
 source_lines_cache = {}
 last_known_node_values = {}  # Cache of last known struct contents before deallocation
-pending_deletions = []       # [(target_addr, source_line, var_name)] pending actual execution
 pending_allocations = False  # Track when a new/CreateNode statement was executed
 last_stdout_size = -1
 last_stdout_cache = ""
@@ -101,6 +100,13 @@ for spec in [
     'operator delete(void*, unsigned long)',
     'operator delete[](void*, unsigned long long)',
     'operator delete[](void*)',
+    'operator delete[](void*, unsigned long)',
+    '_ZdlPv',      # GCC mangled: operator delete(void*)
+    '_ZdaPv',      # GCC mangled: operator delete[](void*)
+    '_ZdlPvy',     # GCC mangled: operator delete(void*, unsigned long long)
+    '_ZdaPvy',     # GCC mangled: operator delete[](void*, unsigned long long)
+    '_ZdlPvm',     # GCC mangled: operator delete(void*, unsigned long)
+    '_ZdaPvm',     # GCC mangled: operator delete[](void*, unsigned long)
 ]:
     try:
         DeallocationBreakpoint(spec)
@@ -254,11 +260,6 @@ while step_count < MAX_STEPS:
             if f_addr in all_allocated_addresses:
                 deleted_addresses.add(f_addr)
 
-        if pending_deletions:
-            for p_addr, p_line, p_var in pending_deletions:
-                deleted_addresses.add(p_addr)
-            pending_deletions = []
-
         # Build stackToRender and discover active pointers
         stack_to_render = []
         heap_records = {}
@@ -267,9 +268,27 @@ while step_count < MAX_STEPS:
         cur_f = frame
         f_list = []
         while cur_f:
+            is_user = False
             f_sal = cur_f.find_sal()
-            f_fn = os.path.basename(f_sal.symtab.filename) if f_sal and f_sal.symtab and f_sal.symtab.filename else ""
-            if f_fn == TARGET_FILE:
+            if f_sal and f_sal.symtab and f_sal.symtab.filename:
+                fn = os.path.basename(f_sal.symtab.filename.replace('\\', '/'))
+                if fn == TARGET_FILE:
+                    is_user = True
+            if not is_user:
+                try:
+                    fn_sym = cur_f.function()
+                    if fn_sym and fn_sym.symtab and fn_sym.symtab.filename:
+                        fn = os.path.basename(fn_sym.symtab.filename.replace('\\', '/'))
+                        if fn == TARGET_FILE:
+                            is_user = True
+                except Exception:
+                    pass
+            if not is_user and cur_f.name():
+                fname = cur_f.name()
+                if not fname.startswith('_') and not fname.startswith('std::') and 'CRT' not in fname and 'ntdll' not in fname and 'msvcrt' not in fname and 'kernel' not in fname.lower():
+                    is_user = True
+
+            if is_user:
                 f_list.append(cur_f)
             cur_f = cur_f.older()
         f_list.reverse()
@@ -339,6 +358,8 @@ while step_count < MAX_STEPS:
             except Exception:
                 pass
 
+            sal = f.find_sal()
+            f_line = sal.line if sal and sal.line else (f.function().line if (hasattr(f, 'function') and f.function() and hasattr(f.function(), 'line')) else line)
             stack_to_render.append({
                 "funcName": f_name,
                 "orderedVarNames": ordered_varnames,
@@ -346,7 +367,7 @@ while step_count < MAX_STEPS:
                 "frameId": fp,
                 "uniqueHash": f"{f_name}_{fp}",
                 "encodedLocals": locals_dict,
-                "line": f.find_sal().line
+                "line": f_line
             })
 
         # Address reuse check: if previous statement was an allocation statement,
@@ -424,23 +445,6 @@ while step_count < MAX_STEPS:
         if "new " in code_text or "CreateNode" in code_text:
             pending_allocations = True
 
-        # Check if THIS statement is a delete statement about to execute
-        is_conditional = bool(re.search(r'^\s*(?:if|while|for)\b', code_text))
-        del_match = re.search(r'\bdelete\s+([A-Za-z_][A-Za-z0-9_]*)', code_text)
-        if del_match:
-            del_var = del_match.group(1)
-            try:
-                var_val = frame.read_var(del_var)
-                if var_val and int(var_val) != 0:
-                    del_addr = f"0x{int(var_val):x}"
-                    if not is_conditional:
-                        # Queue for unconditional execution
-                        pending_deletions.append((del_addr, line, del_var))
-                    # For conditional statements, deallocation is tracked exclusively by
-                    # the runtime debugger breakpoint (observed_freed_addresses)
-            except Exception:
-                pass
-
     else:
         # Foreign file (STL or CRT)
         consecutive_foreign_steps += 1
@@ -483,11 +487,6 @@ if step_count >= MAX_STEPS:
 for f_addr in observed_freed_addresses:
     if f_addr in all_allocated_addresses:
         deleted_addresses.add(f_addr)
-
-if pending_deletions:
-    for p_addr, p_line, p_var in pending_deletions:
-        deleted_addresses.add(p_addr)
-    pending_deletions = []
 
 # Flush stdout buffers
 time.sleep(0.05)

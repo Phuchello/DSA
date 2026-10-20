@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { normalizeTrace, NormalizedExecutionPoint } from '../normalizer/dsaNormalizer.js';
+import { RawTraceFileSchema } from '../normalizer/schema.js';
 
 export interface RunResult {
   success: boolean;
@@ -30,14 +31,22 @@ const FORBIDDEN_PATTERNS = [
 
 // Local execution concurrency guard: prevent host resource starvation
 let activeExecutions = 0;
-const MAX_CONCURRENT_EXECUTIONS = 2;
+const MAX_CONCURRENT_EXECUTIONS = 8;
 
 function killProcessTree(pid: number) {
   try {
     if (process.platform === 'win32') {
       exec(`taskkill /pid ${pid} /T /F`, () => {});
     } else {
-      process.kill(-pid, 'SIGKILL');
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // Process already terminated
+        }
+      }
     }
   } catch {
     // Process may have already terminated
@@ -120,40 +129,43 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
   }
 
   activeExecutions++;
-
-  // 4. Setup ephemeral workspace in user home (.dsa_flowlab_tmp)
   const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const homeDir = process.env.USERPROFILE || process.env.HOME || os.homedir();
   const tempDir = path.join(homeDir, '.dsa_flowlab_tmp', runId);
-  fs.mkdirSync(tempDir, { recursive: true });
-
-  const sourceFile = path.join(tempDir, 'source.cpp');
-  const exeFile = path.join(tempDir, 'flowlab_runner.exe');
-  const stdinFile = path.join(tempDir, 'stdin.txt');
-  const stdoutFile = path.join(tempDir, 'stdout.txt');
-  const traceFile = path.join(tempDir, 'trace.json');
-  const localTracerPy = path.join(tempDir, 'tracer.py');
-
-  const candidatePaths = [
-    path.resolve(__dirname, 'tracer.py'),
-    path.resolve(__dirname, '..', '..', 'src', 'runner', 'tracer.py'),
-    path.resolve(process.cwd(), 'server', 'src', 'runner', 'tracer.py'),
-    path.resolve(process.cwd(), 'src', 'runner', 'tracer.py'),
-  ];
-  let tracerPySource = candidatePaths.find(p => fs.existsSync(p));
-  if (!tracerPySource) {
-    activeExecutions--;
-    throw new Error('Không tìm thấy tệp tracer.py');
-  }
-  fs.copyFileSync(tracerPySource, localTracerPy);
-
-  fs.writeFileSync(sourceFile, code, 'utf-8');
-  fs.writeFileSync(stdinFile, stdinText || '', 'utf-8');
-  fs.writeFileSync(stdoutFile, '', 'utf-8');
 
   try {
+    // 4. Setup ephemeral workspace in user home (.dsa_flowlab_tmp)
+    fs.mkdirSync(tempDir, { recursive: true });
+
+    const sourceFile = path.join(tempDir, 'source.cpp');
+    const isWin = process.platform === 'win32';
+    const exeFile = path.join(tempDir, isWin ? 'flowlab_runner.exe' : 'flowlab_runner');
+    const stdinFile = path.join(tempDir, 'stdin.txt');
+    const stdoutFile = path.join(tempDir, 'stdout.txt');
+    const traceFile = path.join(tempDir, 'trace.json');
+    const localTracerPy = path.join(tempDir, 'tracer.py');
+
+    const candidatePaths = [
+      path.resolve(__dirname, 'tracer.py'),
+      path.resolve(__dirname, '..', '..', 'src', 'runner', 'tracer.py'),
+      path.resolve(process.cwd(), 'server', 'src', 'runner', 'tracer.py'),
+      path.resolve(process.cwd(), 'src', 'runner', 'tracer.py'),
+    ];
+    let tracerPySource = candidatePaths.find(p => fs.existsSync(p));
+    if (!tracerPySource) {
+      throw new Error('Không tìm thấy tệp tracer.py');
+    }
+    fs.copyFileSync(tracerPySource, localTracerPy);
+
+    fs.writeFileSync(sourceFile, code, 'utf-8');
+    fs.writeFileSync(stdinFile, stdinText || '', 'utf-8');
+    fs.writeFileSync(stdoutFile, '', 'utf-8');
     // 5. Compile with g++
-    const compileCmd = `g++ -std=c++11 -g3 -O0 -mconsole -fno-omit-frame-pointer source.cpp -o flowlab_runner.exe`;
+    // -mconsole is a MinGW/Windows-specific flag that must not be used on Linux.
+    // On Linux/macOS we compile to a plain ELF binary.
+    const outputBinary = isWin ? 'flowlab_runner.exe' : 'flowlab_runner';
+    const platformFlags = isWin ? '-mconsole' : '';
+    const compileCmd = `g++ -std=c++11 -g3 -O0 ${platformFlags} -fno-omit-frame-pointer source.cpp -o ${outputBinary}`.trim().replace(/  +/g, ' ');
     try {
       await execWithTimeout(compileCmd, { cwd: tempDir }, 10000);
     } catch (compileErr: any) {
@@ -175,7 +187,7 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
       FLOWLAB_MAX_STEPS: process.env.FLOWLAB_MAX_STEPS || '1000'
     };
 
-    const gdbCmd = `gdb -batch -q -x tracer.py flowlab_runner.exe`;
+    const gdbCmd = `gdb -batch -q -x tracer.py ${outputBinary}`;
     try {
       await execWithTimeout(gdbCmd, { env, cwd: tempDir }, 35000);
     } catch (gdbErr: any) {
@@ -191,8 +203,29 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
       };
     }
 
-    const traceRaw = JSON.parse(fs.readFileSync(traceFile, 'utf-8'));
-    const rawPoints = traceRaw.trace || [];
+    let traceRaw: any;
+    try {
+      traceRaw = JSON.parse(fs.readFileSync(traceFile, 'utf-8'));
+    } catch (parseErr: any) {
+      return {
+        success: false,
+        buildOutput: `Lỗi định dạng tệp vết thực thi (JSON Parse Error): ${parseErr.message}`,
+        trace: []
+      };
+    }
+
+    // Strict Schema Validation: Malformed trace files result in explicit validation errors
+    const validationResult = RawTraceFileSchema.safeParse(traceRaw);
+    if (!validationResult.success) {
+      return {
+        success: false,
+        buildOutput: `Lỗi xác thực cấu trúc vết thực thi (Schema Validation Error): ${validationResult.error.message}`,
+        trace: []
+      };
+    }
+
+    const validatedTrace = validationResult.data;
+    const rawPoints = validatedTrace.trace || [];
 
     if (rawPoints.length === 0) {
       let extra = '';
@@ -212,8 +245,8 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
       success: true,
       trace: normalizedPoints,
       totalSteps: normalizedPoints.length,
-      terminationStatus: traceRaw.termination_status || 'normal',
-      terminationReason: traceRaw.termination_reason || ''
+      terminationStatus: validatedTrace.termination_status || 'normal',
+      terminationReason: validatedTrace.termination_reason || ''
     };
   } catch (err: any) {
     return {

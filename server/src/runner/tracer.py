@@ -32,7 +32,7 @@ if STDOUT_FILE:
     start_cmd += f' > "{STDOUT_FILE.replace(chr(92), "/")}"'
 
 started = False
-for attempt in range(10):
+for attempt in range(25):
     try:
         gdb.execute(start_cmd)
         started = True
@@ -41,17 +41,22 @@ for attempt in range(10):
         time.sleep(0.25)
 
 if not started:
-    try:
-        gdb.execute("b main")
-        gdb.execute(start_cmd.replace("start", "run", 1))
-        started = True
-    except Exception as e2:
-        with open("gdb_run_error.log", "w", encoding="utf-8") as ef:
-            ef.write(f"run error: {e2}\n")
+    for attempt in range(15):
+        try:
+            gdb.execute("b main")
+            gdb.execute(start_cmd.replace("start", "run", 1))
+            started = True
+            break
+        except Exception as e2:
+            time.sleep(0.25)
+            if attempt == 14:
+                with open("gdb_run_error.log", "w", encoding="utf-8") as ef:
+                    ef.write(f"run error: {e2}\n")
 
 trace = []
 step_count = 0
 deleted_addresses = set()
+observed_freed_addresses = set()
 all_allocated_addresses = set()
 source_lines_cache = {}
 last_known_node_values = {}  # Cache of last known struct contents before deallocation
@@ -59,6 +64,48 @@ pending_deletions = []       # [(target_addr, source_line, var_name)] pending ac
 pending_allocations = False  # Track when a new/CreateNode statement was executed
 last_stdout_size = -1
 last_stdout_cache = ""
+
+class DeallocationBreakpoint(gdb.Breakpoint):
+    """Runtime debugger-observed deallocation tracker.
+    Intercepts calls to operator delete and free at the CPU register level,
+    recording the exact address passed to the deallocator.
+    """
+    def __init__(self, spec):
+        super().__init__(spec, gdb.BP_BREAKPOINT, internal=True)
+        self.silent = True
+
+    def stop(self):
+        try:
+            f = gdb.selected_frame()
+            reg_names = ('rcx', 'rdi') if sys.platform.startswith('win') else ('rdi', 'rcx')
+            for rname in reg_names:
+                try:
+                    val = int(f.read_register(rname))
+                    if val > 0x1000:
+                        addr_hex = f"0x{val:x}"
+                        observed_freed_addresses.add(addr_hex)
+                        break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return False
+
+# Register runtime deallocation breakpoints across platforms and compilers
+# NOTE: We intercept 'operator delete' and 'operator delete[]', NOT 'free'.
+# C 'free' is called internally by CRT/iostream buffers; user C++ NODE allocations
+# always invoke 'operator delete'.
+for spec in [
+    'operator delete(void*, unsigned long long)',
+    'operator delete(void*)',
+    'operator delete(void*, unsigned long)',
+    'operator delete[](void*, unsigned long long)',
+    'operator delete[](void*)',
+]:
+    try:
+        DeallocationBreakpoint(spec)
+    except Exception:
+        pass
 
 def read_source_line(filename, lineno):
     if filename not in source_lines_cache:
@@ -201,9 +248,12 @@ while step_count < MAX_STEPS:
 
         # -------------------------------------------------------------
         # EXACT BEFORE-STATEMENT SNAPSHOT SEMANTICS:
-        # If there were pending deletions from a PREVIOUS statement,
-        # that statement has now executed! Commit them to deleted_addresses.
+        # Commit deallocations observed by debugger runtime during previous step
         # -------------------------------------------------------------
+        for f_addr in observed_freed_addresses:
+            if f_addr in all_allocated_addresses:
+                deleted_addresses.add(f_addr)
+
         if pending_deletions:
             for p_addr, p_line, p_var in pending_deletions:
                 deleted_addresses.add(p_addr)
@@ -249,35 +299,35 @@ while step_count < MAX_STEPS:
                                 if "NODE" in t_str and val.type.code == gdb.TYPE_CODE_PTR:
                                     try:
                                         ptr_val = int(val)
-                                        if ptr_val != 0:
+                                        if ptr_val > 0x1000:
                                             p_addr_hex = f"0x{ptr_val:x}"
                                             observed_active_pointers.append((sname, p_addr_hex))
-                                            all_allocated_addresses.add(p_addr_hex)
                                             if p_addr_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(p_addr_hex)
                                                 if node_val:
+                                                    all_allocated_addresses.add(p_addr_hex)
                                                     heap_records[p_addr_hex] = node_val
                                     except Exception:
                                         pass
                                 elif "LIST" in t_str:
                                     try:
                                         p_head = val["pHead"]
-                                        if int(p_head) != 0:
+                                        if int(p_head) > 0x1000:
                                             h_hex = f"0x{int(p_head):x}"
                                             observed_active_pointers.append((f"{sname}.pHead", h_hex))
-                                            all_allocated_addresses.add(h_hex)
                                             if h_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(h_hex)
                                                 if node_val:
+                                                    all_allocated_addresses.add(h_hex)
                                                     heap_records[h_hex] = node_val
                                         p_tail = val["pTail"]
-                                        if int(p_tail) != 0:
+                                        if int(p_tail) > 0x1000:
                                             t_hex = f"0x{int(p_tail):x}"
                                             observed_active_pointers.append((f"{sname}.pTail", t_hex))
-                                            all_allocated_addresses.add(t_hex)
                                             if t_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(t_hex)
                                                 if node_val:
+                                                    all_allocated_addresses.add(t_hex)
                                                     heap_records[t_hex] = node_val
                                     except Exception:
                                         pass
@@ -320,10 +370,10 @@ while step_count < MAX_STEPS:
                     if field[0] == "pNext" and field[1] and field[1][0] == "C_DATA":
                         next_addr = field[1][3]
                         if next_addr and next_addr != "0x0" and next_addr not in heap_records:
-                            all_allocated_addresses.add(next_addr)
                             if next_addr not in deleted_addresses:
                                 node_val = inspect_heap_node(next_addr)
                                 if node_val:
+                                    all_allocated_addresses.add(next_addr)
                                     heap_records[next_addr] = node_val
                                     check_queue.append(next_addr)
 
@@ -370,7 +420,12 @@ while step_count < MAX_STEPS:
             "snapshotConvention": "before-statement"
         })
 
+        # Check if THIS statement allocates memory (new or CreateNode)
+        if "new " in code_text or "CreateNode" in code_text:
+            pending_allocations = True
+
         # Check if THIS statement is a delete statement about to execute
+        is_conditional = bool(re.search(r'^\s*(?:if|while|for)\b', code_text))
         del_match = re.search(r'\bdelete\s+([A-Za-z_][A-Za-z0-9_]*)', code_text)
         if del_match:
             del_var = del_match.group(1)
@@ -378,13 +433,13 @@ while step_count < MAX_STEPS:
                 var_val = frame.read_var(del_var)
                 if var_val and int(var_val) != 0:
                     del_addr = f"0x{int(var_val):x}"
-                    pending_deletions.append((del_addr, line, del_var))
+                    if not is_conditional:
+                        # Queue for unconditional execution
+                        pending_deletions.append((del_addr, line, del_var))
+                    # For conditional statements, deallocation is tracked exclusively by
+                    # the runtime debugger breakpoint (observed_freed_addresses)
             except Exception:
                 pass
-
-        # Check if THIS statement allocates memory (new or CreateNode)
-        if "new " in code_text or "CreateNode" in code_text:
-            pending_allocations = True
 
     else:
         # Foreign file (STL or CRT)
@@ -424,7 +479,11 @@ if step_count >= MAX_STEPS:
     termination_status = "truncated"
     termination_reason = f"Vượt quá giới hạn tối đa {MAX_STEPS} bước thực thi cho phép"
 
-# If there was a pending deletion on the final step before exit, commit it
+# Commit any deallocations that executed on the final statement before program exit
+for f_addr in observed_freed_addresses:
+    if f_addr in all_allocated_addresses:
+        deleted_addresses.add(f_addr)
+
 if pending_deletions:
     for p_addr, p_line, p_var in pending_deletions:
         deleted_addresses.add(p_addr)

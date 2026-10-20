@@ -20,7 +20,7 @@ function runNormalizerUnitTests() {
     }
   }
 
-  // 1. Pointer states: null, valid, freed, dangling, uninitialized
+  // 1. Pointer states: null, valid, freed, dangling (confirmed via deletedAddresses), uninitialized, unknown
   test('Classifies null pointer correctly', () => {
     const raw = [{
       event: 'stepLine', line: 10, funcName: 'main',
@@ -57,7 +57,7 @@ function runNormalizerUnitTests() {
     assert.strictEqual(p.targetAddress, '0x5000');
   });
 
-  test('Classifies freed pointer (dangling to deallocated block) correctly', () => {
+  test('Classifies freed pointer (confirmed via deletedAddresses) correctly', () => {
     const raw = [{
       event: 'stepLine', line: 10, funcName: 'main',
       stackToRender: [{
@@ -73,7 +73,10 @@ function runNormalizerUnitTests() {
     assert.strictEqual(p.state, 'freed');
   });
 
-  test('Classifies dangling pointer to invalid address correctly', () => {
+  test('Pointer to address NOT in heap and NOT freed is classified as unknown (not false-positive dangling)', () => {
+    // A pointer whose target is not in the heap graph and not in deletedAddresses
+    // could be a non-NODE pointer, a library allocation, or an untraceable address.
+    // Conservative classification: 'unknown', NOT 'dangling'.
     const raw = [{
       event: 'stepLine', line: 10, funcName: 'main',
       stackToRender: [{
@@ -86,7 +89,9 @@ function runNormalizerUnitTests() {
     }];
     const res = normalizeTrace(raw);
     const p = res[0].dsa.pointers.find(x => x.name === 'p');
-    assert.strictEqual(p.state, 'dangling');
+    // Must be 'unknown' not 'dangling' — we have no evidence it's freed or invalid
+    assert.strictEqual(p.state, 'unknown',
+      `Expected 'unknown' for unresolved non-freed pointer, got: '${p.state}'`);
   });
 
   test('Classifies uninitialized pointer correctly', () => {
@@ -103,6 +108,17 @@ function runNormalizerUnitTests() {
     const res = normalizeTrace(raw);
     const p = res[0].dsa.pointers.find(x => x.name === 'p');
     assert.strictEqual(p.state, 'uninitialized');
+  });
+
+  test('Schema validation error step is emitted for malformed trace input', () => {
+    // A completely malformed step (missing required fields) must NOT silently pass through
+    const malformedTrace = [{ notEvent: 'foo', noLine: true }];
+    const result = normalizeTrace(malformedTrace);
+    assert.strictEqual(result.length, 1, 'Malformed step must produce one output entry');
+    assert.strictEqual(result[0].event, 'schema_error',
+      `Expected event=schema_error, got: ${result[0].event}`);
+    assert.ok(result[0].dsa.vietnameseExplanation.includes('Lỗi xác thực'),
+      'schema_error must include Vietnamese error message');
   });
 
   // 2. Multi-root Reachability: allocated (main chain), detached, unreachable, freed

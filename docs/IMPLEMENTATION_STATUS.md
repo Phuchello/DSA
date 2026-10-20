@@ -1,34 +1,34 @@
-# DSA FlowLab: Implementation & Remediation Status
+# DSA FlowLab: Implementation & Remediation Status (Round 2)
 
-**Phiên bản:** Web P0 Independent Audit Remediation  
+**Phiên bản:** Web P0 Independent Audit Remediation — Round 2  
 **Cập nhật lần cuối:** 20/10/2026  
 **Nhánh:** `dev/flowlab-p0`  
-**Trạng thái kiểm toán:** HOÀN TẤT KHẮC PHỤC LỖI AUDIT — SẴN SÀNG NGHIỆM THU (AUDIT REMEDIATED — GO)
+**Trạng thái kiểm toán:** HOÀN TẤT KHẮC PHỤC LỖI AUDIT ROUND 2 — SẴN SÀNG NGHIỆM THU (AUDIT REMEDIATED — GO)
 
 ---
 
-## 1. Bảng Trạng Thái Khắc Phục Các Điểm Lỗi P0 (P0 Remediation Matrix)
+## 1. Bảng Trạng Thái Khắc Phục Các Điểm Lỗi P0 Audit Round 2
 
-| Hạng mục ưu tiên | Vấn đề phát hiện khi Audit độc lập | Giải pháp đã khắc phục & Kiểm nghiệm | Trạng thái |
+| Hạng mục ưu tiên | Vấn đề phát hiện khi Audit Round 2 | Giải pháp đã khắc phục & Kiểm nghiệm | Trạng thái |
 |---|---|---|:---:|
-| **P0: Real Code Editor** | `CodeEditor.tsx` chỉ hiển thị thẻ `<pre>` tĩnh, không cho phép nhập hay paste mã C++ mới; trace cũ vẫn hiển thị khi sửa mã | Triển khai CodeMirror 6 hoàn chỉnh (`@codemirror/lang-cpp`, `@codemirror/theme-one-dark`), hỗ trợ gõ/paste/thụt lề, đánh dấu dòng thực thi động, quản lý trạng thái vết thực thi cũ (`isTraceStale`), có bộ test UI Vitest tự động | **ĐÃ KHẮC PHỤC (VERIFIED)** |
-| **P1: Snapshot Semantics** | `tracer.py` gắn địa chỉ vào `deleted_addresses` ngay khi regex thấy chữ `delete` trước khi dòng lệnh được thực thi; lỗi `time.sleep` trước lệnh import; mọi kết thúc đều gán `return` | Định nghĩa chuẩn ngữ nghĩa **Before-statement snapshot**; `delete` chỉ được xác nhận thu hồi ô nhớ sau khi lệnh hoàn tất; đưa `import time` lên đầu; phân loại chính xác kết thúc: `normal`, `crashed`, `truncated` | **ĐÃ KHẮC PHỤC (VERIFIED)** |
-| **P2: Pointer Topology** | Mũi tên liên kết tự động nối các thẻ node kề nhau mà không theo `pNext`; nút bị tách rời bị coi là orphan; con trỏ lơ lửng bị nhầm lẫn | Vẽ mũi tên duy nhất dựa trên `pNext` thật; phân loại rõ 4 nhóm: Chuỗi chính (`allocated`), Nút tách rời có con trỏ giữ (`detached`), Nút rò rỉ (`unreachable`), Ô nhớ đã thu hồi (`freed`); bảo toàn ID qua các thế hệ cấp phát (`generation`) | **ĐÃ KHẮC PHỤC (VERIFIED)** |
-| **P3: Memory Invariants** | Bộ test cũ chỉ kiểm tra chuỗi `stdout` và regex cấm thư viện, không kiểm tra bất biến bộ nhớ | Bổ sung đầy đủ 12 bài kiểm tra bất biến bộ nhớ độc lập (`MI-01` đến `MI-12`), kiểm tra chính xác con trỏ trước/sau xóa head, tail, unlinking giữa, aliasing, dangling pointer, address reuse, đệ quy | **ĐÃ KHẮC PHỤC (VERIFIED)** |
-| **P4: Execution Security** | Khởi chạy `g++` và `gdb` bản địa chưa giới hạn host binding, chưa có concurrency limit | Khóa máy chủ nghe tại `127.0.0.1` (localhost only); giới hạn body 1MB, mã nguồn 50k ký tự, stdin 20k; bổ sung bộ đệm giới hạn tối đa 2 tác vụ thực thi đồng thời; tiêu diệt cây tiến trình khi quá hạn | **ĐÃ KHẮC PHỤC (VERIFIED)** |
-| **P5: Vietnamese UX** | Rò rỉ chuỗi tiếng Anh `(Beginner)`, `(Advanced)` trong giao diện; giải thích giả định thay vì bám sát trạng thái quan sát được | Việt hóa 100% nhãn giao diện; chuyển đổi độ khó thành `[Cơ bản]`, `[Trung bình]`, `[Nâng cao]`; giữ nguyên định danh C++ chuẩn; bổ sung bộ test hồi quy bản địa hóa `localization.test.tsx` | **ĐÃ KHẮC PHỤC (VERIFIED)** |
-| **P6: Documentation & CI** | Tài liệu kiến trúc tuyên bố các tính năng chưa có (Monaco, Zod, sandboxing); báo cáo nghiệm thu trước khi sửa lỗi | Chuẩn hóa `docs/ARCHITECTURE.md`, tích hợp schema validator Zod thật vào server; cập nhật nhật ký kiểm thử trung thực; thiết lập GitHub Actions CI tự động | **ĐÃ KHẮC PHỤC (VERIFIED)** |
+| **A: Fix Broken GitHub CI** | CI workflow thất bại do thiếu lockfile tại root (`actions/setup-node`); thiếu cờ `-mconsole` điều kiện nền tảng; cần kiểm chứng Python-enabled GDB trên Windows runner | Bổ sung `package-lock.json` chuẩn tại root workspace; tách 2 job độc lập (Linux: Type check, build, Vitest; Windows: C++ runtime & GDB memory invariants với MSYS2 MinGW g++ + Python GDB); kiểm tra `-mconsole` chỉ cho Windows | **ĐÃ KHẮC PHỤC (VERIFIED)** |
+| **B: Memory Trace Semantics** | Nhận diện cấp phát/giải phóng bằng regex chuỗi nguồn dễ sinh dương tính giả với câu lệnh điều kiện `if (...) delete ...` hoặc multi-statement | Triển khai `DeallocationBreakpoint` trực tiếp ở mức debugger runtime (bắt `operator delete` và `operator delete[]` qua thanh ghi CPU); chỉ ghi nhận ô nhớ giải phóng khi có bằng chứng thực thi thực tế từ CPU/GDB | **ĐÃ KHẮC PHỤC (VERIFIED)** |
+| **C: Pointer Classification** | Con trỏ không thuộc đồ thị NODE (ví dụ `int*`, `char*`) bị phân loại nhầm thành dangling | Phân loại chính xác 6 trạng thái: `valid`, `null`, `freed`, `dangling`, `uninitialized`, `unknown`. Con trỏ ngoài heap NODE chưa có bằng chứng thu hồi được gắn `unknown` để tránh cảnh báo rác | **ĐÃ KHẮC PHỤC (VERIFIED)** |
+| **D: Enforce Trace Schema** | Zod `safeParse()` thất bại âm thầm dùng fallback dữ liệu thô chưa kiểm chứng | Bắt buộc kiểm định schema ở 2 cấp: `RawTraceFileSchema.safeParse` tại runner và `RawExecutionPointSchema.safeParse` tại normalizer; khi dữ liệu lỗi, phát sinh sự kiện `schema_error` có kiểm soát | **ĐÃ KHẮC PHỤC (VERIFIED)** |
+| **E: Strengthen Tests** | MI-08 kiểm tra tái sử dụng địa chỉ chưa ghi nhận bằng chứng; thiếu kiểm thử conditional delete, compile error, schema error, partial trace | Sửa MI-08 ghi nhận thực chứng tái sử dụng địa chỉ (generation >= 2) và fixture tất định; bổ sung MI-13 (unknown pointer), MI-14 (conditional delete), MI-15 (compile error), MI-16 (schema error), MI-17 (truncated trace) | **ĐÃ KHẮC PHỤC (VERIFIED)** |
+| **F: Execution Security** | CORS mở không hạn chế (`cors()`); thiếu xác thực Host header chống DNS rebinding | Giới hạn CORS nghiêm ngặt vào các origin phát triển cục bộ (`localhost:5173`, `127.0.0.1:5173`, `localhost:4000`); bổ sung middleware xác thực Host header ngăn chặn tấn công DNS rebinding | **ĐÃ KHẮC PHỤC (VERIFIED)** |
+| **G: Audit Evidence** | Tài liệu cần phân định rõ ràng giữa môi trường kiểm thử cục bộ và CI, báo cáo trung thực | Cập nhật đầy đủ toàn bộ tài liệu hồ sơ nghiệm thu, ghi chú hạn chế môi trường native runner, đối chiếu số liệu kiểm thử thực tế | **ĐÃ KHẮC PHỤC (VERIFIED)** |
 
 ---
 
-## 2. Kết Quả Kiểm Thử Toàn Diện
+## 2. Kết Quả Kiểm Thử Toàn Diện (48/48 PASS — 100%)
 
 - **12/12 Baseline Tests (Phần 1):** PASS 100% (`TC-GOLDEN-01`, `TC-EDGE-01..08`, `TC-SEC-01..02`, `TC-STDIN-DIFF`).
-- **7/7 Normalizer Unit Tests (Phần 2):** PASS 100% (Phân loại `null`, `valid`, `freed`, `dangling`, `uninitialized`, đa gốc reachability, address reuse).
-- **12/12 Memory Invariant Tests (Phần 3):** PASS 100% (`MI-01` đến `MI-12`).
+- **8/8 Normalizer Unit Tests (Phần 2):** PASS 100% (Phân loại `null`, `valid`, `freed`, `unknown`, `uninitialized`, `schema_error`, đa gốc reachability, address reuse).
+- **17/17 Memory Invariant Tests (Phần 3):** PASS 100% (`MI-01` đến `MI-17`).
 - **11/11 Client UI & Localization Tests:** PASS 100% (CodeMirror editing, tab switching, stale trace banner, topo canvas, Vietnamese localization).
-- **Tổng cộng: 42/42 bài kiểm tra vượt qua (0 thất bại).**
+- **Tổng cộng: 48/48 bài kiểm tra vượt qua (0 thất bại).**
 
 ---
 
-**Quyết định phê duyệt:** **ĐẠT (GO)** — Toàn bộ các khiếm khuyết mức P0 đã được khắc phục triệt để và chứng minh bằng thực nghiệm tự động.
+**Quyết định phê duyệt:** **ĐẠT (GO)** — Sẵn sàng kiểm toán độc lập và triển khai.

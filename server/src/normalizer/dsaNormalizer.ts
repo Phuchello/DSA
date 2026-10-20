@@ -104,9 +104,36 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
   let prevPoint: NormalizedExecutionPoint | null = null;
 
   for (let i = 0; i < rawTrace.length; i++) {
-    // Validate schema
+    // Validate schema — malformed steps must NOT silently fall back to unvalidated data.
+    // If a step fails validation, emit a controlled error sentinel instead.
     const parseResult = RawExecutionPointSchema.safeParse(rawTrace[i]);
-    const rawEp = parseResult.success ? parseResult.data : rawTrace[i];
+    if (!parseResult.success) {
+      // Emit a controlled error step rather than silently discarding or using raw data
+      normalized.push({
+        step: i,
+        line: 0,
+        funcName: '__schema_error__',
+        codeText: '',
+        stdout: '',
+        event: 'schema_error',
+        snapshotConvention: 'before-statement',
+        stackToRender: [],
+        heap: {},
+        dsa: {
+          nodes: [],
+          mainChain: [],
+          detachedNodes: [],
+          unreachableNodes: [],
+          freedNodes: [],
+          pointers: [],
+          diff: { changedVariables: [], allocatedNodes: [], freedNodes: [], unlinkedNodes: [], pointerReroutes: [] },
+          vietnameseExplanation: `Lỗi xác thực dữ liệu vết thực thi tại bước ${i}: ${parseResult.error.message}`,
+          advancedNotes: `Schema validation error at step ${i}: ${JSON.stringify(parseResult.error.issues)}`
+        }
+      });
+      continue;
+    }
+    const rawEp = parseResult.data;
 
     const heap = rawEp.heap || {};
     const deletedInStep = rawEp.deletedAddresses || [];
@@ -156,13 +183,21 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
           let state: DsaPointer['state'] = 'valid';
 
           if (!target || target === '0x0') {
+            // Null pointer — confirmed
             state = 'null';
           } else if (activeFreedAddresses.has(target)) {
+            // Confirmed freed: runtime observed a delete on this address
             state = 'freed';
           } else if (heap[target]) {
+            // Address is present in the observed heap graph — confirmed live NODE
             state = 'valid';
           } else {
-            state = 'dangling';
+            // Address not in heap graph. This could mean:
+            //   (a) it's a non-NODE pointer (int*, char*, etc.) — we haven't collected its heap entry
+            //   (b) it's a pointer that wasn't traced (library allocation)
+            //   (c) it's genuinely dangling — but we have NO evidence of that
+            // Conservative classification: 'unknown' to avoid false positive dangling warnings.
+            state = 'unknown';
           }
 
           if (!pointers.some(p => p.name === varName)) {
@@ -191,8 +226,12 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
                   state = 'null';
                 } else if (activeFreedAddresses.has(target)) {
                   state = 'freed';
-                } else if (!heap[target]) {
-                  state = 'dangling';
+                } else if (heap[target]) {
+                  state = 'valid';
+                } else {
+                  // No positive evidence this is dangling — could be a pointer to a node
+                  // that was allocated before tracing started or in an untraceable path.
+                  state = 'unknown';
                 }
 
                 if (!pointers.some(p => p.name === fieldName)) {

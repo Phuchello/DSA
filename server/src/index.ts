@@ -9,9 +9,46 @@ const app = express();
 const PORT = Number(process.env.PORT) || 4000;
 const HOST = process.env.HOST || '127.0.0.1';
 
-// Strict local origin and 1MB limit for request payload
-app.use(cors());
+// ─── Security: Restrict CORS to trusted local development origins only ───────
+// Do NOT use cors() without configuration: that allows any origin (CORS wildcard).
+// We permit only localhost variants that the local Vite dev server runs on.
+const TRUSTED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4000',
+  'http://127.0.0.1:4000',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (same-origin, curl, server-side tools)
+    if (!origin) return callback(null, true);
+    if (TRUSTED_ORIGINS.includes(origin)) return callback(null, true);
+    // Reject cross-origin requests from untrusted origins
+    return callback(new Error(`CORS: Origin không được phép: ${origin}`));
+  },
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type'],
+  credentials: false
+}));
+
+// ─── Body parser: 1 MB limit ─────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
+
+// ─── Security: Host header validation (prevent DNS rebinding) ───────────────
+app.use((req: Request, res: Response, next) => {
+  const host = req.headers.host;
+  if (host && !host.startsWith('localhost') && !host.startsWith('127.0.0.1')) {
+    return res.status(403).json({
+      success: false,
+      buildOutput: 'Truy cập bị từ chối: Máy chủ chỉ phục vụ các yêu cầu từ localhost (127.0.0.1).',
+      trace: []
+    });
+  }
+  next();
+});
 
 // Static client serving if built
 const candidateDistPaths = [

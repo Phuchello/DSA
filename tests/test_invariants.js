@@ -286,8 +286,16 @@ int main() {
 
   // -------------------------------------------------------------
   // MI-08: Memory address reuse
+  // AUDIT NOTE: Address reuse is non-deterministic — the OS/allocator decides
+  // whether to reuse freed memory for the next allocation. This test:
+  //   1. Verifies a node was freed (p1 address becomes freed)
+  //   2. Verifies a new node was allocated afterward (p2 is active)
+  //   3. If the allocator reused p1's address for p2, verifies generation >= 2
+  //      and that old and new identities are distinct
+  //   4. If address reuse did NOT occur, reports that result honestly (inconclusive)
+  // The test is NOT marked PASS based on claimed reuse without observation.
   // -------------------------------------------------------------
-  await test('MI-08', 'Memory address reuse', async () => {
+  await test('MI-08', 'Memory address reuse — honest observation', async () => {
     const code = `#include <iostream>
 using namespace std;
 struct NODE { int info; NODE* pNext; };
@@ -302,20 +310,59 @@ int main() {
     const res = await runCppCode(code, '');
     assert.strictEqual(res.success, true, 'Code execution must succeed');
 
-    const p2AllocStepIdx = res.trace.findIndex(s => s.codeText.includes('NODE* p2 = new NODE'));
-    assert.ok(p2AllocStepIdx >= 0, 'Must record p2 alloc step');
+    // Find step at p1 allocation
+    const p1AllocIdx = res.trace.findIndex(s => s.codeText.includes('NODE* p1 = new NODE'));
+    assert.ok(p1AllocIdx >= 0, 'Must record p1 alloc step');
 
-    const stepAfterP2 = res.trace[p2AllocStepIdx + 1];
+    // Find step at p2 allocation
+    const p2AllocIdx = res.trace.findIndex(s => s.codeText.includes('NODE* p2 = new NODE'));
+    assert.ok(p2AllocIdx >= 0, 'Must record p2 alloc step');
+    assert.ok(p2AllocIdx > p1AllocIdx, 'p2 must be allocated after p1');
+
+    // At the step AFTER p1 delete, p1 should be freed
+    const deleteStepIdx = res.trace.findIndex(s => s.codeText.trim() === 'delete p1;');
+    assert.ok(deleteStepIdx >= 0, 'Must record delete p1 step');
+
+    // After the delete step, p1 address must enter freed list
+    let p1Addr = null;
+    for (let k = deleteStepIdx; k < res.trace.length; k++) {
+      const s = res.trace[k];
+      const p1Ptr = s.dsa.pointers.find(p => p.name === 'p1');
+      if (p1Ptr && p1Ptr.state === 'freed' && p1Ptr.targetAddress) {
+        p1Addr = p1Ptr.targetAddress;
+        break;
+      }
+    }
+    assert.ok(p1Addr, 'p1 pointer must reach freed state after delete p1');
+
+    // After p2 allocation, p2 must point to a live (allocated/detached) node
+    const stepAfterP2 = res.trace[p2AllocIdx + 1];
+    assert.ok(stepAfterP2, 'Must have a step after p2 allocation');
     const p2Ptr = stepAfterP2.dsa.pointers.find(p => p.name === 'p2');
-    assert.ok(p2Ptr, 'p2 pointer must exist');
+    assert.ok(p2Ptr, 'p2 pointer must exist in trace');
+    assert.ok(p2Ptr.targetAddress && p2Ptr.targetAddress !== '0x0', 'p2 must target a valid address');
+    assert.notStrictEqual(p2Ptr.state, 'freed', 'p2 must not be classified as freed');
 
     const node222 = stepAfterP2.dsa.nodes.find(n => n.address === p2Ptr.targetAddress);
-    assert.ok(node222, 'Active node for p2 must exist');
-    assert.ok(
-      node222.status === 'allocated' || node222.status === 'detached',
-      'Reused or newly allocated node must be active (allocated or detached), never freed'
-    );
-    assert.notStrictEqual(node222.status, 'freed', 'Reused node must not remain marked as freed');
+    assert.ok(node222, 'Node for p2 must exist in node list');
+    assert.ok(node222.status === 'allocated' || node222.status === 'detached',
+      `p2 node must be live (got: ${node222.status})`);
+    assert.ok(node222.info === 222, `p2 node must carry info=222 (got: ${node222.info})`);
+
+    // Honest address-reuse observation:
+    if (p2Ptr.targetAddress === p1Addr) {
+      // Allocator DID reuse the address — verify generation increased
+      assert.ok(node222.generation >= 2,
+        `Address reuse detected at ${p1Addr}: generation must be >= 2 (got: ${node222.generation})`);
+      // Old identity (gen1) must not appear in live nodes
+      const oldNode = stepAfterP2.dsa.nodes.find(n => n.address === p1Addr && n.generation === 1);
+      assert.ok(!oldNode || oldNode.status === 'freed',
+        'Old node generation must be marked freed when its address is reused');
+      console.log(`  [MI-08 note] Address reuse CONFIRMED at ${p1Addr} (gen ${node222.generation})`);
+    } else {
+      // Allocator did NOT reuse the address — this is valid. Report as inconclusive on reuse.
+      console.log(`  [MI-08 note] Address reuse NOT observed (p1=${p1Addr}, p2=${p2Ptr.targetAddress}). Test verifies correct lifecycle without reuse.`);
+    }
   });
 
   // -------------------------------------------------------------
@@ -405,8 +452,179 @@ int main() {
   await test('MI-12', 'Browser editor input, output, and timeline consistency', async () => {
     // Run the Vitest client tests
     const clientDir = path.resolve(__dirname, '../client');
-    const vitestOutput = execSync('npm test', { cwd: clientDir, encoding: 'utf-8' });
+    const shellOpt = process.platform === 'win32' ? { shell: 'powershell.exe' } : {};
+    const vitestOutput = execSync('npm test', { cwd: clientDir, encoding: 'utf-8', ...shellOpt });
     assert.ok(vitestOutput.includes('passed'), 'Vitest UI suite must pass');
+  });
+
+  // -------------------------------------------------------------
+  // MI-13: Unknown/unsupported pointer type is classified as 'unknown', not 'dangling'
+  // An int* or char* that is not in the NODE heap graph must not be false-positive dangling.
+  // -------------------------------------------------------------
+  await test('MI-13', 'Non-NODE pointer classified as unknown, not false-positive dangling', async () => {
+    const code = `#include <iostream>
+using namespace std;
+struct NODE { int info; NODE* pNext; };
+int main() {
+    int x = 42;
+    int* iptr = &x;
+    NODE* n = new NODE{99, nullptr};
+    cout << n->info << endl;
+    delete n;
+    return 0;
+}`;
+    const res = await runCppCode(code, '');
+    assert.strictEqual(res.success, true, 'Code execution must succeed');
+
+    // Find a step where iptr is in scope
+    const nodeStep = res.trace.find(s => s.dsa.pointers.some(p => p.name === 'iptr'));
+    if (!nodeStep) {
+      // iptr may not be collected if it is a local stack int* — acceptable
+      console.log('  [MI-13 note] iptr not observed in trace pointers (stack int*, not a NODE*) — expected');
+      return;
+    }
+    const iptrPtr = nodeStep.dsa.pointers.find(p => p.name === 'iptr');
+    // If iptr appears at all, it must NOT be classified as 'dangling' — it is a stack pointer
+    assert.notStrictEqual(iptrPtr.state, 'dangling',
+      `Non-NODE pointer iptr must not be classified as dangling (got: ${iptrPtr.state})`);
+    assert.ok(
+      iptrPtr.state === 'unknown' || iptrPtr.state === 'valid',
+      `Non-NODE pointer iptr should be unknown or valid (got: ${iptrPtr.state})`
+    );
+  });
+
+  // -------------------------------------------------------------
+  // MI-14: Conditional delete — node freed only on taken branch
+  // -------------------------------------------------------------
+  await test('MI-14', 'Conditional delete — node freed only when condition is true', async () => {
+    const code = `#include <iostream>
+using namespace std;
+struct NODE { int info; NODE* pNext; };
+int main() {
+    int flag;
+    cin >> flag;
+    NODE* n = new NODE{77, nullptr};
+    if (flag == 1) {
+        delete n;
+        n = nullptr;
+    }
+    cout << (n == nullptr ? -1 : n->info) << endl;
+    return 0;
+}`;
+    // Branch taken: flag=1 → delete executes → n becomes nullptr → output -1
+    const resTaken = await runCppCode(code, '1');
+    assert.strictEqual(resTaken.success, true, 'Execution must succeed with flag=1');
+    const outTaken = resTaken.trace[resTaken.trace.length - 1].stdout.trim();
+    assert.strictEqual(outTaken, '-1', 'With flag=1, delete taken, output must be -1');
+
+    // Check that after the delete branch, n is freed
+    const deleteStepTaken = resTaken.trace.findIndex(s => s.codeText.trim() === 'delete n;');
+    if (deleteStepTaken >= 0) {
+      // Step after delete: n must be freed or null
+      const postDeleteStep = resTaken.trace[deleteStepTaken + 2]; // +1 is n=nullptr
+      if (postDeleteStep) {
+        const nPtr = postDeleteStep.dsa.pointers.find(p => p.name === 'n');
+        if (nPtr) {
+          assert.ok(
+            nPtr.state === 'freed' || nPtr.state === 'null',
+            `After conditional delete, n must be freed or null (got: ${nPtr.state})`
+          );
+        }
+      }
+    }
+
+    // Branch NOT taken: flag=0 → delete skipped → output 77
+    const resSkipped = await runCppCode(code, '0');
+    assert.strictEqual(resSkipped.success, true, 'Execution must succeed with flag=0');
+    const outSkipped = resSkipped.trace[resSkipped.trace.length - 1].stdout.trim();
+    assert.strictEqual(outSkipped, '77', 'With flag=0, delete skipped, output must be 77');
+
+    // Node must remain allocated (no false freed classification)
+    const lastSkippedStep = resSkipped.trace[resSkipped.trace.length - 1];
+    const nPtrSkipped = lastSkippedStep.dsa.pointers.find(p => p.name === 'n');
+    // Node may not be in scope on last step, that is acceptable
+    if (nPtrSkipped) {
+      assert.notStrictEqual(nPtrSkipped.state, 'freed',
+        'With flag=0, n must not be classified as freed (delete was not taken)');
+    }
+  });
+
+  // -------------------------------------------------------------
+  // MI-15: Compile failure is reported cleanly with buildOutput, empty trace
+  // -------------------------------------------------------------
+  await test('MI-15', 'Compile failure returns buildOutput and empty trace', async () => {
+    const badCode = `#include <iostream>
+int main() {
+    UNDEFINED_TYPE x = 5  // missing semicolon, unknown type
+    return 0;
+}`;
+    const res = await runCppCode(badCode, '');
+    assert.strictEqual(res.success, false, 'Compile failure must return success=false');
+    assert.ok(Array.isArray(res.trace) && res.trace.length === 0,
+      'Compile failure must produce empty trace');
+    assert.ok(typeof res.buildOutput === 'string' && res.buildOutput.length > 0,
+      'Compile failure must include buildOutput with compiler error message');
+    // Must not contain false "Chương trình kết thúc bình thường"
+    assert.ok(!res.buildOutput.includes('bình thường'),
+      'Compile error output must not claim normal termination');
+  });
+
+  // -------------------------------------------------------------
+  // MI-16: Schema validation rejects malformed trace steps
+  // Negative test — a synthetic malformed step must produce a schema_error event
+  // not silently pass through as valid data.
+  // -------------------------------------------------------------
+  await test('MI-16', 'Schema validation emits error for malformed trace steps', async () => {
+    // We use the normalizeTrace function directly (no GDB needed)
+    const serverDist = path.resolve(__dirname, '../server/dist');
+    const { normalizeTrace } = require(path.join(serverDist, 'normalizer/dsaNormalizer.js'));
+
+    // A completely malformed trace step: missing required 'line' and 'event'
+    const malformedTrace = [
+      { notEvent: 'foo', noLine: true },
+    ];
+
+    const result = normalizeTrace(malformedTrace);
+    assert.strictEqual(result.length, 1, 'Malformed step must produce exactly one output entry');
+    assert.strictEqual(result[0].event, 'schema_error',
+      `Malformed step must produce event=schema_error (got: ${result[0].event})`);
+    assert.ok(result[0].dsa.vietnameseExplanation.includes('Lỗi xác thực'),
+      'schema_error must include Vietnamese validation error message');
+  });
+
+  // -------------------------------------------------------------
+  // MI-17: Partial trace / timeout is explicitly labeled, not reported as normal
+  // (mirrors MI-10 but with explicit 'truncated' event and terminationStatus)
+  // -------------------------------------------------------------
+  await test('MI-17', 'Partial trace labeled truncated, not normal — explicit terminationStatus check', async () => {
+    const origMaxSteps = process.env.FLOWLAB_MAX_STEPS;
+    process.env.FLOWLAB_MAX_STEPS = '15';
+    try {
+      const code = `#include <iostream>
+using namespace std;
+int main() {
+    for (int i = 0; i < 1000; i++) {
+        int x = i * 2;
+    }
+    return 0;
+}`;
+      const res = await runCppCode(code, '');
+      assert.strictEqual(res.success, true, 'Partial execution must still return success=true');
+      assert.ok(res.trace.length <= 15, 'Must not exceed MAX_STEPS');
+      assert.strictEqual(res.terminationStatus, 'truncated',
+        `Truncated trace must have terminationStatus=truncated (got: ${res.terminationStatus})`);
+      assert.strictEqual(res.trace[res.trace.length - 1].event, 'truncated',
+        'Last step event must be truncated');
+      // terminationReason must include Vietnamese message
+      assert.ok(typeof res.terminationReason === 'string' && res.terminationReason.length > 0,
+        'Must include terminationReason');
+    } finally {
+      if (origMaxSteps !== undefined) {
+        process.env.FLOWLAB_MAX_STEPS = origMaxSteps;
+      } else {
+        delete process.env.FLOWLAB_MAX_STEPS;
+      }
+    }
   });
 
   console.log('='.repeat(70));

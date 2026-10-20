@@ -7,8 +7,11 @@ on:
     branches: [ dev/flowlab-p0, main ]
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 1: Build + type-check + client unit tests (Linux, no GDB dependency)
+  # ─────────────────────────────────────────────────────────────────────────────
   lint-and-unit-tests:
-    name: Build, Type Check & Unit Tests
+    name: Build, Type Check & Unit Tests (Linux)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -17,36 +20,42 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: '20'
+          # No root-level package-lock.json — cache disabled at root.
+          # Each sub-package uses its own lock file via npm ci below.
 
-      - name: Install Dependencies
-        run: |
-          npm install
-          cd client && npm install && cd ..
-          cd server && npm install && cd ..
+      - name: Install root dev dependencies
+        working-directory: .
+        run: npm install --ignore-scripts
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
 
       - name: Type Check & Build Client
-        run: |
-          cd client
-          npm run build
+        working-directory: client
+        run: npm run build
 
       - name: Run Client UI & Localization Tests (Vitest)
-        run: |
-          cd client
-          npm test
+        working-directory: client
+        run: npm test
 
       - name: Type Check & Build Server
-        run: |
-          cd server
-          npm run build
+        working-directory: server
+        run: npm run build
 
       - name: Run DSA Normalizer & Pointer Classification Unit Tests
-        run: |
-          node tests/normalizerUnitTests.js
+        run: node tests/normalizerUnitTests.js
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2: Full GDB integration tests (Windows – MinGW g++ + GDB available)
+  # ─────────────────────────────────────────────────────────────────────────────
   gdb-integration-tests:
-    name: Full C++ & GDB Memory Invariant Verification
+    name: Full C++ & GDB Memory Invariant Tests (Windows)
     runs-on: windows-latest
     needs: lint-and-unit-tests
     steps:
@@ -56,20 +65,44 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: '20'
 
-      - name: Install Dependencies
-        run: |
-          npm install
-          cd client && npm install && cd ..
-          cd server && npm install && cd ..
+      - name: Install MSYS2 MinGW toolchain (g++ + gdb)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-gdb
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-python-pip
 
-      - name: Build Applications
-        run: |
-          cd server && npm run build && cd ..
-          cd client && npm run build && cd ..
+      - name: Add MinGW to PATH
+        run: echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Run Full Automated Verification Suite (Baseline + Invariants)
+      - name: Verify toolchain
         run: |
-          npm test
+          g++ --version
+          gdb --version
+
+      - name: Install root dev dependencies
+        run: npm install --ignore-scripts
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Build server and client
+        run: |
+          cd server
+          npm run build
+          cd ../client
+          npm run build
+
+      - name: Run Full Automated Verification Suite
+        run: npm test

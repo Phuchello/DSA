@@ -66,7 +66,7 @@ last_stdout_cache = ""
 
 class DeallocationBreakpoint(gdb.Breakpoint):
     """Runtime debugger-observed deallocation tracker.
-    Intercepts calls to operator delete and free at the CPU register level,
+    Intercepts calls to operator delete at the CPU register level,
     recording the exact address passed to the deallocator.
     """
     def __init__(self, spec):
@@ -75,17 +75,26 @@ class DeallocationBreakpoint(gdb.Breakpoint):
 
     def stop(self):
         try:
-            f = gdb.selected_frame()
-            reg_names = ('rcx', 'rdi') if sys.platform.startswith('win') else ('rdi', 'rcx')
-            for rname in reg_names:
-                try:
-                    val = int(f.read_register(rname))
-                    if val > 0x1000:
-                        addr_hex = f"0x{val:x}"
-                        observed_freed_addresses.add(addr_hex)
-                        break
-                except Exception:
-                    pass
+            f = gdb.newest_frame()
+            # Determine platform register for first argument (pointer being freed):
+            # Windows x64 (MSVC and MinGW-w64 GCC): RCX
+            # Linux / macOS x64 (System V AMD64 ABI): RDI
+            # Do NOT check RDI on Windows, because RDI is a callee-saved register
+            # that retains local variables across calls.
+            is_win = (
+                os.name == 'nt' or
+                sys.platform.startswith('win') or
+                sys.platform.startswith('msys') or
+                sys.platform.startswith('cygwin')
+            )
+            reg_name = 'rcx' if is_win else 'rdi'
+            try:
+                val = int(f.read_register(reg_name))
+                if val > 0x1000:
+                    addr_hex = f"0x{val:x}"
+                    observed_freed_addresses.add(addr_hex)
+            except Exception:
+                pass
         except Exception:
             pass
         return False
@@ -304,7 +313,13 @@ while step_count < MAX_STEPS:
 
         for idx, f in enumerate(f_list):
             f_name = f.name() or "???"
-            fp = hex(int(f.read_register("sp"))) if f.is_valid() else f"frame_{idx}"
+            try:
+                fp = hex(int(f.read_register("sp")))
+            except Exception:
+                try:
+                    fp = hex(int(f.pc()))
+                except Exception:
+                    fp = f"frame_{idx}"
             locals_dict = {}
             ordered_varnames = []
 

@@ -167,7 +167,7 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     const platformFlags = isWin ? '-mconsole' : '';
     const compileCmd = `g++ -std=c++11 -g3 -O0 ${platformFlags} -fno-omit-frame-pointer -fasynchronous-unwind-tables source.cpp -o ${outputBinary}`.trim().replace(/  +/g, ' ');
     try {
-      await execWithTimeout(compileCmd, { cwd: tempDir }, 10000);
+      await execWithTimeout(compileCmd, { cwd: tempDir }, 25000);
     } catch (compileErr: any) {
       const errOut = compileErr.stderr || compileErr.stdout || compileErr.message;
       return {

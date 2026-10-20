@@ -1,5 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Code, FileText, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import CodeMirror, { ReactCodeMirrorRef, Extension } from '@uiw/react-codemirror';
+import { cpp } from '@codemirror/lang-cpp';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { EditorView, Decoration } from '@codemirror/view';
+import { Terminal, Code, FileText, AlertTriangle, AlertCircle } from 'lucide-react';
 
 interface CodeEditorProps {
   code: string;
@@ -10,6 +14,62 @@ interface CodeEditorProps {
   stdout: string;
   buildOutput?: string;
   isExecuting: boolean;
+  isTraceStale?: boolean;
+}
+
+const customEditorTheme = EditorView.theme({
+  '&': {
+    height: '100%',
+    fontSize: '13px',
+    backgroundColor: '#090d16 !important',
+  },
+  '.cm-scroller': {
+    overflow: 'auto',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+    lineHeight: '1.6',
+  },
+  '.cm-gutters': {
+    backgroundColor: '#070a13',
+    color: '#64748b',
+    borderRight: '1px solid #1e293b',
+    userSelect: 'none',
+    minWidth: '40px',
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    color: '#cbd5e1',
+  },
+  '.cm-execution-highlight': {
+    backgroundColor: 'rgba(59, 130, 246, 0.22) !important',
+    borderLeft: '4px solid #3b82f6 !important',
+    fontWeight: '600',
+  },
+  '.cm-execution-highlight-stale': {
+    backgroundColor: 'rgba(245, 158, 11, 0.15) !important',
+    borderLeft: '4px solid #f59e0b !important',
+  },
+  '&.cm-focused': {
+    outline: 'none',
+  },
+});
+
+function createExecutionLineExtension(lineNo: number | null, isStale: boolean): Extension {
+  if (!lineNo || lineNo < 1) return [];
+
+  const lineDeco = Decoration.line({
+    attributes: {
+      class: isStale ? 'cm-execution-highlight-stale' : 'cm-execution-highlight',
+    },
+  });
+
+  return EditorView.decorations.compute(['doc'], (state) => {
+    if (lineNo < 1 || lineNo > state.doc.lines) return Decoration.none;
+    const line = state.doc.line(lineNo);
+    return Decoration.set([lineDeco.range(line.from)]);
+  });
 }
 
 export const CodeEditor: React.FC<CodeEditorProps> = ({
@@ -21,20 +81,32 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   stdout,
   buildOutput,
   isExecuting,
+  isTraceStale = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'code' | 'stdin'>('code');
-  const codeLines = code.split('\n');
-  const activeLineRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<ReactCodeMirrorRef>(null);
 
-  // Auto scroll to active executing line
+  // Auto scroll to active executing line in CodeMirror
   useEffect(() => {
-    if (activeLineRef.current) {
-      activeLineRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-      });
+    if (editorRef.current?.view && currentLine && currentLine > 0) {
+      const view = editorRef.current.view;
+      if (currentLine <= view.state.doc.lines) {
+        const lineInfo = view.state.doc.line(currentLine);
+        view.dispatch({
+          effects: EditorView.scrollIntoView(lineInfo.from, { y: 'center' }),
+        });
+      }
     }
   }, [currentLine]);
+
+  const extensions = useMemo(() => {
+    return [
+      cpp(),
+      oneDark,
+      customEditorTheme,
+      createExecutionLineExtension(currentLine, isTraceStale),
+    ];
+  }, [currentLine, isTraceStale]);
 
   return (
     <div className="flex flex-col h-full bg-slate-900 border-r border-slate-800">
@@ -43,6 +115,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         <div className="flex space-x-1">
           <button
             onClick={() => setActiveTab('code')}
+            data-testid="tab-code"
             className={`px-3 py-1 text-xs font-medium rounded-md flex items-center space-x-1.5 transition-colors ${
               activeTab === 'code'
                 ? 'bg-slate-800 text-blue-400 border border-slate-700'
@@ -54,6 +127,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('stdin')}
+            data-testid="tab-stdin"
             className={`px-3 py-1 text-xs font-medium rounded-md flex items-center space-x-1.5 transition-colors ${
               activeTab === 'stdin'
                 ? 'bg-slate-800 text-amber-400 border border-slate-700'
@@ -69,55 +143,92 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         </div>
 
         {currentLine && activeTab === 'code' && (
-          <div className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-            Đang thực thi dòng: {currentLine}
+          <div
+            className={`text-[11px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 ${
+              isTraceStale
+                ? 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+                : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+            }`}
+          >
+            {isTraceStale ? (
+              <span>Vết cũ (Dòng: {currentLine})</span>
+            ) : (
+              <span>Đang thực thi dòng: {currentLine}</span>
+            )}
           </div>
         )}
       </div>
 
+      {/* Stale Trace Warning Banner */}
+      {isTraceStale && (
+        <div
+          data-testid="stale-trace-banner"
+          className="bg-amber-950/40 border-b border-amber-800/50 px-3 py-1.5 text-xs text-amber-300 flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 animate-pulse" />
+            <span>
+              Mã nguồn hoặc stdin đã được chỉnh sửa. Vết thực thi hiện tại không còn khớp với mã mới.
+            </span>
+          </div>
+          <span className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+            Cần chạy lại
+          </span>
+        </div>
+      )}
+
       {/* Editor Body */}
-      <div className="flex-1 overflow-auto relative font-mono text-xs">
+      <div className="flex-1 overflow-hidden relative font-mono text-xs">
         {activeTab === 'code' ? (
-          <div className="min-w-full inline-block py-2">
-            {codeLines.map((lineText, idx) => {
-              const lineNo = idx + 1;
-              const isCurrent = lineNo === currentLine;
-
-              return (
-                <div
-                  key={lineNo}
-                  ref={isCurrent ? activeLineRef : null}
-                  className={`flex items-center group transition-colors ${
-                    isCurrent
-                      ? 'bg-blue-600/20 text-white font-semibold border-l-4 border-blue-500'
-                      : 'hover:bg-slate-800/40 text-slate-300 border-l-4 border-transparent'
-                  }`}
-                >
-                  {/* Line Number & Indicator */}
-                  <div className="w-12 text-right pr-3 select-none text-slate-500 text-[11px] flex-shrink-0 flex items-center justify-end space-x-1">
-                    {isCurrent && <span className="text-blue-400 animate-pulse">➔</span>}
-                    <span className={isCurrent ? 'text-blue-400 font-bold' : ''}>{lineNo}</span>
-                  </div>
-
-                  {/* Code Line Content */}
-                  <pre className="pr-4 py-0.5 whitespace-pre leading-relaxed overflow-x-visible">
-                    {lineText || ' '}
-                  </pre>
-                </div>
-              );
-            })}
+          <div className="h-full w-full" data-testid="codemirror-wrapper">
+            <CodeMirror
+              ref={editorRef}
+              value={code}
+              height="100%"
+              extensions={extensions}
+              onChange={(value) => onChangeCode(value)}
+              readOnly={isExecuting}
+              theme={oneDark}
+              basicSetup={{
+                lineNumbers: true,
+                highlightActiveLineGutter: true,
+                highlightSpecialChars: true,
+                history: true,
+                foldGutter: true,
+                drawSelection: true,
+                dropCursor: true,
+                allowMultipleSelections: true,
+                indentOnInput: true,
+                syntaxHighlighting: true,
+                bracketMatching: true,
+                closeBrackets: true,
+                autocompletion: true,
+                rectangularSelection: true,
+                crosshairCursor: true,
+                highlightActiveLine: true,
+                highlightSelectionMatches: true,
+                closeBracketsKeymap: true,
+                defaultKeymap: true,
+                searchKeymap: true,
+                historyKeymap: true,
+                foldKeymap: true,
+                completionKeymap: true,
+                lintKeymap: true,
+              }}
+            />
           </div>
         ) : (
-          <div className="p-3 h-full flex flex-col">
+          <div className="p-3 h-full flex flex-col bg-slate-950">
             <label className="text-xs text-slate-400 mb-1 flex items-center justify-between">
               <span>Nội dung cung cấp cho std::cin:</span>
               <span className="text-[11px] text-slate-500">Mỗi dòng là một giá trị hoặc mảng</span>
             </label>
             <textarea
+              data-testid="stdin-textarea"
               value={stdin}
               onChange={(e) => onChangeStdin(e.target.value)}
               placeholder="Ví dụ:&#10;7&#10;3 0 8 2 3 4 7&#10;3"
-              className="w-full flex-1 bg-slate-950 border border-slate-800 rounded-lg p-3 text-amber-200 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 resize-none"
+              className="w-full flex-1 bg-slate-900 border border-slate-800 rounded-lg p-3 text-amber-200 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 resize-none"
             />
           </div>
         )}
@@ -139,9 +250,9 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
         <div className="flex-1 p-3 overflow-auto font-mono text-xs">
           {buildOutput ? (
-            <pre className="text-red-400 whitespace-pre-wrap leading-relaxed">{buildOutput}</pre>
+            <pre data-testid="console-build-error" className="text-red-400 whitespace-pre-wrap leading-relaxed">{buildOutput}</pre>
           ) : stdout ? (
-            <pre className="text-emerald-400 whitespace-pre-wrap leading-relaxed">{stdout}</pre>
+            <pre data-testid="console-stdout" className="text-emerald-400 whitespace-pre-wrap leading-relaxed">{stdout}</pre>
           ) : (
             <span className="text-slate-600 italic">Chưa có kết quả in ra màn hình...</span>
           )}

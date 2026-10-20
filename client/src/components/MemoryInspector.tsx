@@ -16,7 +16,7 @@ export const MemoryInspector: React.FC<MemoryInspectorProps> = ({
         <div className="px-3 py-1.5 bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold flex items-center justify-between">
           <span>Ngăn xếp Lệnh (Call Stack Frames)</span>
           <span className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">
-            {stackToRender.length} frames
+            {stackToRender.length} khung
           </span>
         </div>
 
@@ -35,7 +35,7 @@ export const MemoryInspector: React.FC<MemoryInspectorProps> = ({
                   {frame.funcName}()
                   {frame.isHighlighted && (
                     <span className="ml-2 text-[10px] bg-blue-500/20 text-blue-400 px-1 rounded">
-                      Active
+                      Đang chạy
                     </span>
                   )}
                 </span>
@@ -86,7 +86,7 @@ export const MemoryInspector: React.FC<MemoryInspectorProps> = ({
         <div className="px-3 py-1.5 bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold flex items-center justify-between">
           <span>Vùng nhớ Động Heap (Allocated Blocks)</span>
           <span className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">
-            {Object.keys(heap).length} blocks
+            {Object.keys(heap).length} khối
           </span>
         </div>
 

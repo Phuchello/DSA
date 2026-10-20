@@ -1,17 +1,16 @@
-import { exec, spawn } from 'child_process';
+import { exec, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { promisify } from 'util';
 import * as os from 'os';
 import { normalizeTrace, NormalizedExecutionPoint } from '../normalizer/dsaNormalizer.js';
-
-const execAsync = promisify(exec);
 
 export interface RunResult {
   success: boolean;
   buildOutput?: string;
   trace: NormalizedExecutionPoint[];
   totalSteps?: number;
+  terminationStatus?: string;
+  terminationReason?: string;
   error?: string;
 }
 
@@ -29,8 +28,87 @@ const FORBIDDEN_PATTERNS = [
   /\bShellExecute/i
 ];
 
+// Local execution concurrency guard: prevent host resource starvation
+let activeExecutions = 0;
+const MAX_CONCURRENT_EXECUTIONS = 2;
+
+function killProcessTree(pid: number) {
+  try {
+    if (process.platform === 'win32') {
+      exec(`taskkill /pid ${pid} /T /F`, () => {});
+    } else {
+      process.kill(-pid, 'SIGKILL');
+    }
+  } catch {
+    // Process may have already terminated
+  }
+}
+
+function execWithTimeout(
+  command: string,
+  options: { cwd: string; env?: NodeJS.ProcessEnv },
+  timeoutMs: number
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    let child: ChildProcess;
+    let timer: NodeJS.Timeout | null = null;
+    let timedOut = false;
+
+    try {
+      child = exec(command, options, (error, stdout, stderr) => {
+        if (timer) clearTimeout(timer);
+        if (timedOut) {
+          return reject(new Error(`Quá thời gian thực thi cho phép (${timeoutMs / 1000}s)`));
+        }
+        if (error) {
+          const errObj: any = new Error(stderr || stdout || error.message);
+          errObj.stdout = stdout;
+          errObj.stderr = stderr;
+          return reject(errObj);
+        }
+        resolve({ stdout: String(stdout), stderr: String(stderr) });
+      });
+
+      if (child.pid) {
+        timer = setTimeout(() => {
+          timedOut = true;
+          if (child.pid) killProcessTree(child.pid);
+        }, timeoutMs);
+      }
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
 export async function runCppCode(code: string, stdinText: string = ''): Promise<RunResult> {
-  // 1. Security Validation
+  // 1. Concurrency control
+  if (activeExecutions >= MAX_CONCURRENT_EXECUTIONS) {
+    return {
+      success: false,
+      buildOutput: 'Máy chủ đang bận xử lý các tác vụ thực thi khác. Vui lòng chờ vài giây và thử lại.',
+      trace: []
+    };
+  }
+
+  // 2. Input size limits
+  if (code.length > 50000) {
+    return {
+      success: false,
+      buildOutput: 'Lỗi kích thước: Mã nguồn vượt quá giới hạn 50,000 ký tự cho phép.',
+      trace: []
+    };
+  }
+
+  if (stdinText.length > 20000) {
+    return {
+      success: false,
+      buildOutput: 'Lỗi kích thước: Dữ liệu stdin vượt quá giới hạn 20,000 ký tự cho phép.',
+      trace: []
+    };
+  }
+
+  // 3. Static Forbidden Pattern Checks (Supplementary defense, NOT a full sandbox)
   for (const pattern of FORBIDDEN_PATTERNS) {
     if (pattern.test(code)) {
       return {
@@ -41,17 +119,9 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     }
   }
 
-  if (code.length > 50000) {
-    return {
-      success: false,
-      buildOutput: 'Lỗi kích thước: Mã nguồn vượt quá giới hạn 50,000 ký tự cho phép.',
-      trace: []
-    };
-  }
+  activeExecutions++;
 
-  // 2. Setup ephemeral directory in user home (.dsa_flowlab_tmp) to avoid both:
-  //    (a) non-ASCII path issues in MinGW ld.exe (e.g. "Môn học")
-  //    (b) Windows Application Control (WDAC error 4551) blocking executables in %TEMP%
+  // 4. Setup ephemeral workspace in user home (.dsa_flowlab_tmp)
   const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const homeDir = process.env.USERPROFILE || process.env.HOME || os.homedir();
   const tempDir = path.join(homeDir, '.dsa_flowlab_tmp', runId);
@@ -72,6 +142,7 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
   ];
   let tracerPySource = candidatePaths.find(p => fs.existsSync(p));
   if (!tracerPySource) {
+    activeExecutions--;
     throw new Error('Không tìm thấy tệp tracer.py');
   }
   fs.copyFileSync(tracerPySource, localTracerPy);
@@ -81,10 +152,10 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
   fs.writeFileSync(stdoutFile, '', 'utf-8');
 
   try {
-    // 3. Compile with g++
+    // 5. Compile with g++
     const compileCmd = `g++ -std=c++11 -g3 -O0 -mconsole -fno-omit-frame-pointer source.cpp -o flowlab_runner.exe`;
     try {
-      await execAsync(compileCmd, { timeout: 10000, cwd: tempDir });
+      await execWithTimeout(compileCmd, { cwd: tempDir }, 10000);
     } catch (compileErr: any) {
       const errOut = compileErr.stderr || compileErr.stdout || compileErr.message;
       return {
@@ -94,29 +165,28 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
       };
     }
 
-    // 4. Run GDB with Python Tracer
+    // 6. Run GDB with Python Tracer
     const env = {
       ...process.env,
       FLOWLAB_TARGET_FILE: 'source.cpp',
       FLOWLAB_STDIN_FILE: stdinFile,
       FLOWLAB_STDOUT_FILE: stdoutFile,
       FLOWLAB_TRACE_FILE: traceFile,
-      FLOWLAB_MAX_STEPS: '1000'
+      FLOWLAB_MAX_STEPS: process.env.FLOWLAB_MAX_STEPS || '1000'
     };
 
     const gdbCmd = `gdb -batch -q -x tracer.py flowlab_runner.exe`;
     try {
-      await execAsync(gdbCmd, { env, timeout: 20000, cwd: tempDir });
+      await execWithTimeout(gdbCmd, { env, cwd: tempDir }, 35000);
     } catch (gdbErr: any) {
-      // GDB might exit with error if program hits crash or timeout
-      // Check if trace.json was written anyway
+      // GDB might exit when user code crashes or times out; we proceed to inspect traceFile
     }
 
-    // 5. Read trace.json
+    // 7. Read trace.json
     if (!fs.existsSync(traceFile)) {
       return {
         success: false,
-        buildOutput: 'Lỗi thực thi: Không thể tạo vết thực thi (Execution Trace). Có thể chương trình gặp lỗi bộ nhớ nghiêm trọng (Segmentation Fault) hoặc vòng lặp vô hạn.',
+        buildOutput: 'Lỗi thực thi: Không thể tạo vết thực thi (Execution Trace). Có thể chương trình gặp lỗi bộ nhớ nghiêm trọng (Segmentation Fault) hoặc quá thời gian xử lý.',
         trace: []
       };
     }
@@ -126,9 +196,7 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
 
     if (rawPoints.length === 0) {
       let extra = '';
-      const startLog = path.join(tempDir, 'gdb_start_error.log');
       const runLog = path.join(tempDir, 'gdb_run_error.log');
-      if (fs.existsSync(startLog)) extra += fs.readFileSync(startLog, 'utf-8');
       if (fs.existsSync(runLog)) extra += fs.readFileSync(runLog, 'utf-8');
       return {
         success: false,
@@ -137,13 +205,15 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
       };
     }
 
-    // 6. Normalize trace for DSA Visualization
+    // 8. Normalize trace for DSA Visualization
     const normalizedPoints = normalizeTrace(rawPoints);
 
     return {
       success: true,
       trace: normalizedPoints,
-      totalSteps: normalizedPoints.length
+      totalSteps: normalizedPoints.length,
+      terminationStatus: traceRaw.termination_status || 'normal',
+      terminationReason: traceRaw.termination_reason || ''
     };
   } catch (err: any) {
     return {
@@ -152,10 +222,11 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
       trace: []
     };
   } finally {
-    // Cleanup temp directory
+    activeExecutions = Math.max(0, activeExecutions - 1);
+    // Cleanup temp directory safely
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch (cleanErr) {
+    } catch {
       // Ignore cleanup error
     }
   }

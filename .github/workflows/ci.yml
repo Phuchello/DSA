@@ -1,0 +1,75 @@
+name: DSA FlowLab CI
+
+on:
+  push:
+    branches: [ dev/flowlab-p0, main ]
+  pull_request:
+    branches: [ dev/flowlab-p0, main ]
+
+jobs:
+  lint-and-unit-tests:
+    name: Build, Type Check & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: |
+          npm install
+          cd client && npm install && cd ..
+          cd server && npm install && cd ..
+
+      - name: Type Check & Build Client
+        run: |
+          cd client
+          npm run build
+
+      - name: Run Client UI & Localization Tests (Vitest)
+        run: |
+          cd client
+          npm test
+
+      - name: Type Check & Build Server
+        run: |
+          cd server
+          npm run build
+
+      - name: Run DSA Normalizer & Pointer Classification Unit Tests
+        run: |
+          node tests/normalizerUnitTests.js
+
+  gdb-integration-tests:
+    name: Full C++ & GDB Memory Invariant Verification
+    runs-on: windows-latest
+    needs: lint-and-unit-tests
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: |
+          npm install
+          cd client && npm install && cd ..
+          cd server && npm install && cd ..
+
+      - name: Build Applications
+        run: |
+          cd server && npm run build && cd ..
+          cd client && npm run build && cd ..
+
+      - name: Run Full Automated Verification Suite (Baseline + Invariants)
+        run: |
+          npm test

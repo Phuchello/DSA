@@ -6,10 +6,12 @@ import { runCppCode } from './runner/cppRunner.js';
 import { LESSONS } from './lessons.js';
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT) || 4000;
+const HOST = process.env.HOST || '127.0.0.1';
 
+// Strict local origin and 1MB limit for request payload
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
 
 // Static client serving if built
 const candidateDistPaths = [
@@ -27,7 +29,9 @@ app.get('/api/health', (req: Request, res: Response) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     service: 'DSA FlowLab C++ Execution Server',
-    engine: 'MinGW GCC + GDB Native Tracing Engine'
+    engine: 'MinGW GCC + GDB Native Tracing Engine',
+    boundHost: HOST,
+    boundPort: PORT
   });
 });
 
@@ -48,7 +52,22 @@ app.post('/api/run', async (req: Request, res: Response) => {
     });
   }
 
+  if (code.length > 50000) {
+    return res.status(400).json({
+      success: false,
+      buildOutput: 'Lỗi kích thước: Mã nguồn vượt quá giới hạn 50,000 ký tự cho phép.',
+      trace: []
+    });
+  }
+
   const stdinText = typeof stdin === 'string' ? stdin : '';
+  if (stdinText.length > 20000) {
+    return res.status(400).json({
+      success: false,
+      buildOutput: 'Lỗi kích thước: Dữ liệu stdin vượt quá giới hạn 20,000 ký tự cho phép.',
+      trace: []
+    });
+  }
 
   try {
     const result = await runCppCode(code, stdinText);
@@ -70,6 +89,12 @@ if (clientDist) {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`[DSA FlowLab] Server running on http://localhost:${PORT}`);
-});
+// Bind strictly to localhost / 127.0.0.1 by default
+let serverInstance: any = null;
+if (process.env.NODE_ENV !== 'test-manual') {
+  serverInstance = app.listen(PORT, HOST, () => {
+    console.log(`[DSA FlowLab] Server running strictly on http://${HOST}:${PORT}`);
+  });
+}
+
+export { app, serverInstance };

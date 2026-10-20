@@ -44,7 +44,7 @@ export const EducationalBanner: React.FC<EducationalBannerProps> = ({
           <div className="space-y-1">
             <div className="flex items-center space-x-2">
               <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                {mode === 'beginner' ? 'Sư phạm IT003 (Tập sự)' : 'Góc nhìn Chuyên sâu (Advanced)'}
+                {mode === 'beginner' ? 'Sư phạm IT003 (Tập sự)' : 'Góc nhìn Chuyên sâu'}
               </span>
               {line && codeText && (
                 <span className="text-xs font-mono text-slate-400">

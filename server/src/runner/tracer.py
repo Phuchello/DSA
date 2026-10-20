@@ -2,7 +2,10 @@ import gdb
 import json
 import os
 import re
+import sys
+import time
 
+# Configure GDB parameters
 gdb.execute("set pagination off")
 gdb.execute("set confirm off")
 gdb.execute("set print address on")
@@ -29,20 +32,21 @@ if STDOUT_FILE:
     start_cmd += f' > "{STDOUT_FILE.replace(chr(92), "/")}"'
 
 started = False
-for attempt in range(4):
+for attempt in range(10):
     try:
         gdb.execute(start_cmd)
         started = True
         break
     except Exception as e:
-        time.sleep(0.15)
+        time.sleep(0.25)
 
 if not started:
     try:
         gdb.execute("b main")
         gdb.execute(start_cmd.replace("start", "run", 1))
+        started = True
     except Exception as e2:
-        with open("gdb_run_error.log", "w") as ef:
+        with open("gdb_run_error.log", "w", encoding="utf-8") as ef:
             ef.write(f"run error: {e2}\n")
 
 trace = []
@@ -50,6 +54,11 @@ step_count = 0
 deleted_addresses = set()
 all_allocated_addresses = set()
 source_lines_cache = {}
+last_known_node_values = {}  # Cache of last known struct contents before deallocation
+pending_deletions = []       # [(target_addr, source_line, var_name)] pending actual execution
+pending_allocations = False  # Track when a new/CreateNode statement was executed
+last_stdout_size = -1
+last_stdout_cache = ""
 
 def read_source_line(filename, lineno):
     if filename not in source_lines_cache:
@@ -67,19 +76,28 @@ def read_source_line(filename, lineno):
     return ""
 
 def read_current_stdout():
+    global last_stdout_size, last_stdout_cache
     if STDOUT_FILE and os.path.exists(STDOUT_FILE):
         try:
+            sz = os.path.getsize(STDOUT_FILE)
+            if sz == last_stdout_size:
+                return last_stdout_cache
             with open(STDOUT_FILE, "r", encoding="utf-8", errors="replace") as f:
-                return f.read()
+                last_stdout_cache = f.read()
+                last_stdout_size = sz
+                return last_stdout_cache
         except Exception:
-            return ""
+            return last_stdout_cache
     return ""
 
 def parse_val(val):
-    """Encodes a gdb.Value into the See++ C_DATA / C_STRUCT / C_ARRAY format."""
+    """Encodes a gdb.Value into the C_DATA / C_STRUCT / C_ARRAY format."""
     if val is None:
         return ["C_DATA", "0x0", "null", None]
     try:
+        if val.is_optimized_out:
+            return ["C_DATA", "0x0", "uninitialized", "?"]
+
         t = val.type.strip_typedefs()
         t_str = str(t)
 
@@ -144,13 +162,22 @@ def parse_val(val):
 
 def inspect_heap_node(addr_hex):
     """Safely inspects a NODE struct at a given heap address."""
+    if not addr_hex or addr_hex == "0x0":
+        return None
     try:
+        addr_int = int(addr_hex, 16)
+        if addr_int < 0x1000:
+            return None
         val = gdb.parse_and_eval(f"*(NODE*){addr_hex}")
-        return parse_val(val)
+        parsed = parse_val(val)
+        if parsed and parsed[0] == "C_STRUCT":
+            last_known_node_values[addr_hex] = parsed
+        return parsed
     except Exception:
         return None
 
-last_stdout = ""
+termination_status = "normal"
+termination_reason = "Chương trình kết thúc bình thường (Exit code 0)"
 consecutive_foreign_steps = 0
 
 while step_count < MAX_STEPS:
@@ -172,23 +199,21 @@ while step_count < MAX_STEPS:
         consecutive_foreign_steps = 0
         code_text = read_source_line(raw_fname, line)
 
-        # Detect delete statements: e.g. "delete temp;" or "delete p;"
-        del_match = re.search(r'\bdelete\s+([A-Za-z_][A-Za-z0-9_]*)', code_text)
-        if del_match:
-            del_var = del_match.group(1)
-            try:
-                var_val = frame.read_var(del_var)
-                if var_val and int(var_val) != 0:
-                    del_addr = f"0x{int(var_val):x}"
-                    deleted_addresses.add(del_addr)
-            except Exception:
-                pass
+        # -------------------------------------------------------------
+        # EXACT BEFORE-STATEMENT SNAPSHOT SEMANTICS:
+        # If there were pending deletions from a PREVIOUS statement,
+        # that statement has now executed! Commit them to deleted_addresses.
+        # -------------------------------------------------------------
+        if pending_deletions:
+            for p_addr, p_line, p_var in pending_deletions:
+                deleted_addresses.add(p_addr)
+            pending_deletions = []
 
-        # Build stackToRender
+        # Build stackToRender and discover active pointers
         stack_to_render = []
         heap_records = {}
 
-        # Collect user frames
+        # Collect user frames from outermost down to innermost
         cur_f = frame
         f_list = []
         while cur_f:
@@ -198,6 +223,8 @@ while step_count < MAX_STEPS:
                 f_list.append(cur_f)
             cur_f = cur_f.older()
         f_list.reverse()
+
+        observed_active_pointers = []
 
         for idx, f in enumerate(f_list):
             f_name = f.name() or "???"
@@ -224,6 +251,7 @@ while step_count < MAX_STEPS:
                                         ptr_val = int(val)
                                         if ptr_val != 0:
                                             p_addr_hex = f"0x{ptr_val:x}"
+                                            observed_active_pointers.append((sname, p_addr_hex))
                                             all_allocated_addresses.add(p_addr_hex)
                                             if p_addr_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(p_addr_hex)
@@ -236,6 +264,7 @@ while step_count < MAX_STEPS:
                                         p_head = val["pHead"]
                                         if int(p_head) != 0:
                                             h_hex = f"0x{int(p_head):x}"
+                                            observed_active_pointers.append((f"{sname}.pHead", h_hex))
                                             all_allocated_addresses.add(h_hex)
                                             if h_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(h_hex)
@@ -244,6 +273,7 @@ while step_count < MAX_STEPS:
                                         p_tail = val["pTail"]
                                         if int(p_tail) != 0:
                                             t_hex = f"0x{int(p_tail):x}"
+                                            observed_active_pointers.append((f"{sname}.pTail", t_hex))
                                             all_allocated_addresses.add(t_hex)
                                             if t_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(t_hex)
@@ -269,6 +299,17 @@ while step_count < MAX_STEPS:
                 "line": f.find_sal().line
             })
 
+        # Address reuse check: if previous statement was an allocation statement,
+        # any active pointer now referencing a previously deleted address indicates reuse!
+        if pending_allocations:
+            for v_name, p_addr in observed_active_pointers:
+                if p_addr in deleted_addresses:
+                    deleted_addresses.discard(p_addr)
+                    node_val = inspect_heap_node(p_addr)
+                    if node_val:
+                        heap_records[p_addr] = node_val
+            pending_allocations = False
+
         # Deep BFS discovery along pNext pointers
         check_queue = list(heap_records.keys())
         while check_queue:
@@ -286,13 +327,35 @@ while step_count < MAX_STEPS:
                                     heap_records[next_addr] = node_val
                                     check_queue.append(next_addr)
 
-        # Include deleted nodes marked with freed status if they were ever allocated
+        # Include deleted nodes marked with freed status using cached data
         for d_addr in deleted_addresses:
             if d_addr not in heap_records:
-                heap_records[d_addr] = ["C_STRUCT", d_addr, "NODE (freed)", ["info", ["C_DATA", d_addr, "int", "?"]], ["pNext", ["C_DATA", "0x0", "pointer", "0x0"]]]
+                cached = last_known_node_values.get(d_addr)
+                if cached:
+                    info_val = None
+                    for f in cached[3:]:
+                        if f[0] == "info":
+                            info_val = f[1]
+                            break
+                    heap_records[d_addr] = [
+                        "C_STRUCT",
+                        d_addr,
+                        "NODE (freed)",
+                        ["info", info_val or ["C_DATA", d_addr, "int", "?"]],
+                        ["pNext", ["C_DATA", "0x0", "pointer", "0x0"]]
+                    ]
+                else:
+                    heap_records[d_addr] = [
+                        "C_STRUCT",
+                        d_addr,
+                        "NODE (freed)",
+                        ["info", ["C_DATA", d_addr, "int", "?"]],
+                        ["pNext", ["C_DATA", "0x0", "pointer", "0x0"]]
+                    ]
 
         current_stdout = read_current_stdout()
 
+        # Record this execution snapshot (BEFORE line executes)
         trace.append({
             "event": "stepLine",
             "line": line,
@@ -303,35 +366,85 @@ while step_count < MAX_STEPS:
             "heap": heap_records,
             "orderedGlobals": [],
             "stdout": current_stdout,
-            "deletedAddresses": list(deleted_addresses)
+            "deletedAddresses": list(deleted_addresses),
+            "snapshotConvention": "before-statement"
         })
 
+        # Check if THIS statement is a delete statement about to execute
+        del_match = re.search(r'\bdelete\s+([A-Za-z_][A-Za-z0-9_]*)', code_text)
+        if del_match:
+            del_var = del_match.group(1)
+            try:
+                var_val = frame.read_var(del_var)
+                if var_val and int(var_val) != 0:
+                    del_addr = f"0x{int(var_val):x}"
+                    pending_deletions.append((del_addr, line, del_var))
+            except Exception:
+                pass
+
+        # Check if THIS statement allocates memory (new or CreateNode)
+        if "new " in code_text or "CreateNode" in code_text:
+            pending_allocations = True
+
     else:
-        # We stepped into a foreign file (e.g. standard library)
+        # Foreign file (STL or CRT)
         consecutive_foreign_steps += 1
-        if consecutive_foreign_steps > 200:
+        if consecutive_foreign_steps > 300:
             pass
 
-    # Step forward
+    # Step forward to next statement
     try:
         res = gdb.execute("step", to_string=True)
-        if "exited" in res or len(gdb.inferiors()) == 0 or gdb.inferiors()[0].pid == 0:
+        if "exited" in res:
+            m = re.search(r"exited with code (\d+)", res)
+            if m and m.group(1) != "0":
+                termination_status = "abnormal_exit"
+                termination_reason = f"Tiến trình thoát bất thường với mã lỗi {m.group(1)}"
+            else:
+                termination_status = "normal"
+                termination_reason = "Chương trình kết thúc bình thường (Exit code 0)"
             break
-    except Exception:
+        elif any(sig in res for sig in ("SIGSEGV", "Segmentation fault", "SIGABRT", "Aborted", "received signal")):
+            termination_status = "crashed"
+            termination_reason = f"Lỗi truy cập bộ nhớ nghiêm trọng (Segmentation Fault / Signal): {res.strip()}"
+            break
+        if len(gdb.inferiors()) == 0 or gdb.inferiors()[0].pid == 0:
+            break
+    except Exception as step_err:
+        err_msg = str(step_err)
+        if "received signal" in err_msg or "SIGSEGV" in err_msg:
+            termination_status = "crashed"
+            termination_reason = f"Lỗi thực thi: {err_msg}"
+        else:
+            termination_status = "interrupted"
+            termination_reason = f"Quá trình thực thi bị gián đoạn: {err_msg}"
         break
 
-import time
+if step_count >= MAX_STEPS:
+    termination_status = "truncated"
+    termination_reason = f"Vượt quá giới hạn tối đa {MAX_STEPS} bước thực thi cho phép"
 
-# Give Windows OS brief moment to flush file buffers upon process exit
+# If there was a pending deletion on the final step before exit, commit it
+if pending_deletions:
+    for p_addr, p_line, p_var in pending_deletions:
+        deleted_addresses.add(p_addr)
+    pending_deletions = []
+
+# Flush stdout buffers
 time.sleep(0.05)
 final_stdout = read_current_stdout()
 if not final_stdout:
     time.sleep(0.1)
     final_stdout = read_current_stdout()
 
-# Mark last step and backfill final stdout if missing
+# Update final step event and backfill stdout
 if trace:
-    trace[-1]["event"] = "return"
+    if termination_status == "normal":
+        trace[-1]["event"] = "return"
+    else:
+        trace[-1]["event"] = termination_status
+        trace[-1]["terminationReason"] = termination_reason
+
     if final_stdout:
         for k in range(max(0, len(trace) - 5), len(trace)):
             trace[k]["stdout"] = final_stdout
@@ -340,12 +453,25 @@ if trace:
 with open(TRACE_FILE, "w", encoding="utf-8") as f:
     json.dump({
         "total_steps": len(trace),
+        "termination_status": termination_status,
+        "termination_reason": termination_reason,
         "trace": trace
     }, f, indent=2)
 
-print(f"TRACING_COMPLETE: {len(trace)} steps written to {TRACE_FILE}")
+print(f"TRACING_COMPLETE: {len(trace)} steps written to {TRACE_FILE} [status={termination_status}]")
+
+try:
+    gdb.execute("kill")
+except Exception:
+    pass
 
 try:
     gdb.execute("quit")
+except Exception:
+    pass
+
+try:
+    import os
+    os._exit(0)
 except Exception:
     pass

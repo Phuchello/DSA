@@ -1,15 +1,18 @@
+import { RawExecutionPoint, RawExecutionPointSchema } from './schema.js';
+
 export interface DsaNode {
   id: string;
   address: string;
+  generation: number;
   info: number | string | null;
   nextAddress: string | null;
-  status: 'allocated' | 'freed' | 'orphan';
+  status: 'allocated' | 'detached' | 'unreachable' | 'freed';
 }
 
 export interface DsaPointer {
   name: string;
   targetAddress: string | null;
-  state: 'valid' | 'null' | 'freed' | 'dangling' | 'uninitialized';
+  state: 'valid' | 'null' | 'freed' | 'dangling' | 'uninitialized' | 'unknown';
   varAddress?: string;
   color?: string;
 }
@@ -18,6 +21,7 @@ export interface DsaDiff {
   changedVariables: string[];
   allocatedNodes: string[];
   freedNodes: string[];
+  unlinkedNodes: string[];
   pointerReroutes: Array<{ pointer: string; from: string | null; to: string | null }>;
 }
 
@@ -28,10 +32,15 @@ export interface NormalizedExecutionPoint {
   codeText: string;
   stdout: string;
   event: string;
+  snapshotConvention: string;
   stackToRender: any[];
   heap: Record<string, any>;
   dsa: {
     nodes: DsaNode[];
+    mainChain: DsaNode[];
+    detachedNodes: DsaNode[];
+    unreachableNodes: DsaNode[];
+    freedNodes: DsaNode[];
     pointers: DsaPointer[];
     diff: DsaDiff;
     vietnameseExplanation: string;
@@ -46,10 +55,12 @@ const POINTER_COLORS: Record<string, string> = {
   prev: '#F59E0B',  // Amber
   temp: '#EF4444',  // Red
   head: '#3B82F6',
-  tail: '#8B5CF6'
+  tail: '#8B5CF6',
+  cur: '#10B981',
+  current: '#10B981',
 };
 
-function extractInfo(cStruct: any): number | string | null {
+export function extractInfo(cStruct: any): number | string | null {
   if (!Array.isArray(cStruct) || cStruct[0] !== 'C_STRUCT') return null;
   for (let i = 3; i < cStruct.length; i++) {
     const field = cStruct[i];
@@ -63,7 +74,7 @@ function extractInfo(cStruct: any): number | string | null {
   return null;
 }
 
-function extractNextAddress(cStruct: any): string | null {
+export function extractNextAddress(cStruct: any): string | null {
   if (!Array.isArray(cStruct) || cStruct[0] !== 'C_STRUCT') return null;
   for (let i = 3; i < cStruct.length; i++) {
     const field = cStruct[i];
@@ -78,40 +89,45 @@ function extractNextAddress(cStruct: any): string | null {
   return null;
 }
 
+/**
+ * Normalizes raw GDB trace points into pedagogical learning snapshots.
+ * Enforces explicit before-statement snapshot convention, root-reachability graph traversal,
+ * precise pointer classifications, and stable object identities across address reuse.
+ */
 export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
   const normalized: NormalizedExecutionPoint[] = [];
-  const knownAllocations = new Set<string>();
-  const deletedSet = new Set<string>();
+
+  // Track allocation generations for stable object identity across address reuse
+  const addressGenerations = new Map<string, number>();
+  const activeFreedAddresses = new Set<string>();
 
   let prevPoint: NormalizedExecutionPoint | null = null;
 
   for (let i = 0; i < rawTrace.length; i++) {
-    const rawEp = rawTrace[i];
+    // Validate schema
+    const parseResult = RawExecutionPointSchema.safeParse(rawTrace[i]);
+    const rawEp = parseResult.success ? parseResult.data : rawTrace[i];
+
     const heap = rawEp.heap || {};
     const deletedInStep = rawEp.deletedAddresses || [];
+
     for (const d of deletedInStep) {
-      deletedSet.add(d);
+      activeFreedAddresses.add(d);
     }
 
-    // 1. Gather all heap nodes
-    const nodeMap = new Map<string, DsaNode>();
-
+    // Detect address reuse before classifying pointers:
+    // If an address was marked freed, but now heap contains an active (non-freed) node struct,
+    // and in previous step it was freed: it has been re-allocated by operator new (Address Reuse!)
     for (const [addr, rawNode] of Object.entries(heap)) {
-      knownAllocations.add(addr);
-      const isFreed = deletedSet.has(addr);
-      const info = extractInfo(rawNode);
-      const nextAddr = extractNextAddress(rawNode);
-
-      nodeMap.set(addr, {
-        id: `node_${addr}`,
-        address: addr,
-        info: info,
-        nextAddress: nextAddr,
-        status: isFreed ? 'freed' : 'allocated'
-      });
+      const rawType = Array.isArray(rawNode) && rawNode[2] ? String(rawNode[2]) : '';
+      const isRawFreed = rawType.includes('(freed)');
+      if (activeFreedAddresses.has(addr) && !isRawFreed && prevPoint && prevPoint.dsa.freedNodes.some(n => n.address === addr)) {
+        addressGenerations.set(addr, (addressGenerations.get(addr) || 1) + 1);
+        activeFreedAddresses.delete(addr);
+      }
     }
 
-    // 2. Discover pointers across all stack frames
+    // 1. Discover all pointers across stack frames and globals
     const pointers: DsaPointer[] = [];
     const stackFrames = rawEp.stackToRender || [];
 
@@ -120,19 +136,35 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       for (const [varName, val] of Object.entries(locals)) {
         if (!Array.isArray(val)) continue;
 
-        // Pointer
+        // Uninitialized variable
+        if (val[0] === 'C_DATA' && val[2] === 'uninitialized') {
+          if (!pointers.some(p => p.name === varName)) {
+            pointers.push({
+              name: varName,
+              targetAddress: null,
+              state: 'uninitialized',
+              varAddress: val[1],
+              color: '#94A3B8'
+            });
+          }
+          continue;
+        }
+
+        // Pointer or reference
         if (val[0] === 'C_DATA' && (val[2] === 'pointer' || val[2] === 'ref')) {
           const target = val[3] && val[3] !== '0x0' ? String(val[3]) : null;
           let state: DsaPointer['state'] = 'valid';
+
           if (!target || target === '0x0') {
             state = 'null';
-          } else if (deletedSet.has(target)) {
+          } else if (activeFreedAddresses.has(target)) {
             state = 'freed';
-          } else if (!nodeMap.has(target)) {
+          } else if (heap[target]) {
+            state = 'valid';
+          } else {
             state = 'dangling';
           }
 
-          // Avoid duplicate pointer names in inner frames if already recorded
           if (!pointers.some(p => p.name === varName)) {
             pointers.push({
               name: varName,
@@ -154,11 +186,12 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
               if (fData && Array.isArray(fData) && fData[0] === 'C_DATA') {
                 const target = fData[3] && fData[3] !== '0x0' ? String(fData[3]) : null;
                 let state: DsaPointer['state'] = 'valid';
+
                 if (!target || target === '0x0') {
                   state = 'null';
-                } else if (deletedSet.has(target)) {
+                } else if (activeFreedAddresses.has(target)) {
                   state = 'freed';
-                } else if (!nodeMap.has(target)) {
+                } else if (!heap[target]) {
                   state = 'dangling';
                 }
 
@@ -178,50 +211,137 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
     }
 
-    // 3. Order nodes in list traversal order starting from pHead
-    const orderedNodes: DsaNode[] = [];
-    const visited = new Set<string>();
+    // 2. Discover and track heap nodes with address reuse & generations
+    const nodeMap = new Map<string, DsaNode>();
 
-    const pHeadPtr = pointers.find(p => p.name === 'L.pHead' || p.name === 'pHead');
+    for (const [addr, rawNode] of Object.entries(heap)) {
+      let isFreed = activeFreedAddresses.has(addr);
+      const rawType = Array.isArray(rawNode) && rawNode[2] ? String(rawNode[2]) : '';
+      const isRawFreed = rawType.includes('(freed)');
+
+      // Handle generation for address reuse
+      if (!addressGenerations.has(addr)) {
+        addressGenerations.set(addr, 1);
+      } else if (isFreed && !isRawFreed && prevPoint && prevPoint.dsa.freedNodes.some(n => n.address === addr)) {
+        // Address was freed previously but is now allocated again (Address Reuse!)
+        addressGenerations.set(addr, (addressGenerations.get(addr) || 1) + 1);
+        activeFreedAddresses.delete(addr);
+        isFreed = false;
+      }
+
+      const gen = addressGenerations.get(addr) || 1;
+      const info = extractInfo(rawNode);
+      const nextAddr = extractNextAddress(rawNode);
+
+      nodeMap.set(addr, {
+        id: `node_${addr}_gen${gen}`,
+        address: addr,
+        generation: gen,
+        info: info,
+        nextAddress: nextAddr,
+        status: isFreed ? 'freed' : 'allocated'
+      });
+    }
+
+    // Include any deleted addresses not present in raw heap object
+    for (const d_addr of activeFreedAddresses) {
+      if (!nodeMap.has(d_addr)) {
+        const gen = addressGenerations.get(d_addr) || 1;
+        nodeMap.set(d_addr, {
+          id: `node_${d_addr}_gen${gen}`,
+          address: d_addr,
+          generation: gen,
+          info: null,
+          nextAddress: null,
+          status: 'freed'
+        });
+      }
+    }
+
+    // 3. Multi-Root Reachability Analysis
+    // Main root: pHead
+    const pHeadPtr = pointers.find(p => p.name === 'L.pHead' || p.name === 'pHead' || p.name === 'head');
+    const mainChainAddresses = new Set<string>();
+    const mainChain: DsaNode[] = [];
+
     let currAddr = pHeadPtr?.targetAddress;
-
-    while (currAddr && nodeMap.has(currAddr) && !visited.has(currAddr)) {
-      visited.add(currAddr);
+    while (currAddr && nodeMap.has(currAddr) && !mainChainAddresses.has(currAddr)) {
       const node = nodeMap.get(currAddr)!;
-      orderedNodes.push(node);
+      if (node.status === 'freed') break;
+      mainChainAddresses.add(currAddr);
+      mainChain.push(node);
       currAddr = node.nextAddress;
     }
 
-    // Add any unlinked or freed or orphan nodes
-    for (const [addr, node] of nodeMap.entries()) {
-      if (!visited.has(addr)) {
-        if (node.status === 'allocated') {
-          node.status = 'orphan';
+    // Other roots: any other stack pointer (temp, prev, p, etc.)
+    const otherReachableAddresses = new Set<string>();
+    for (const ptr of pointers) {
+      if (ptr.targetAddress && ptr.state === 'valid' && nodeMap.has(ptr.targetAddress)) {
+        let walkAddr: string | null = ptr.targetAddress;
+        while (walkAddr && nodeMap.has(walkAddr) && !otherReachableAddresses.has(walkAddr)) {
+          otherReachableAddresses.add(walkAddr);
+          const wNode: DsaNode = nodeMap.get(walkAddr)!;
+          if (wNode.status === 'freed') break;
+          walkAddr = wNode.nextAddress;
         }
-        orderedNodes.push(node);
       }
     }
+
+    // Classify node status accurately
+    const detachedNodes: DsaNode[] = [];
+    const unreachableNodes: DsaNode[] = [];
+    const freedNodes: DsaNode[] = [];
+
+    for (const [addr, node] of nodeMap.entries()) {
+      if (node.status === 'freed') {
+        freedNodes.push(node);
+      } else if (mainChainAddresses.has(addr)) {
+        node.status = 'allocated';
+      } else if (otherReachableAddresses.has(addr)) {
+        // Still reachable via another stack pointer (e.g. temp or detached list)
+        node.status = 'detached';
+        detachedNodes.push(node);
+      } else {
+        // Not reachable by ANY stack pointer or main list (memory leak candidate!)
+        node.status = 'unreachable';
+        unreachableNodes.push(node);
+      }
+    }
+
+    const allOrderedNodes: DsaNode[] = [
+      ...mainChain,
+      ...detachedNodes,
+      ...unreachableNodes,
+      ...freedNodes
+    ];
 
     // 4. Calculate diff from previous step
     const diff: DsaDiff = {
       changedVariables: [],
       allocatedNodes: [],
       freedNodes: [],
+      unlinkedNodes: [],
       pointerReroutes: []
     };
 
     if (prevPoint) {
       // Check node allocations
-      for (const node of orderedNodes) {
-        if (!prevPoint.dsa.nodes.some(n => n.address === node.address)) {
+      for (const node of allOrderedNodes) {
+        if (!prevPoint.dsa.nodes.some(n => n.address === node.address && n.generation === node.generation)) {
           diff.allocatedNodes.push(node.address);
         }
       }
       // Check node deallocations
       for (const prevNode of prevPoint.dsa.nodes) {
-        const currNode = orderedNodes.find(n => n.address === prevNode.address);
+        const currNode = allOrderedNodes.find(n => n.address === prevNode.address && n.generation === prevNode.generation);
         if (currNode && currNode.status === 'freed' && prevNode.status !== 'freed') {
           diff.freedNodes.push(prevNode.address);
+        }
+      }
+      // Check unlinked nodes
+      for (const prevNode of prevPoint.dsa.mainChain) {
+        if (!mainChainAddresses.has(prevNode.address)) {
+          diff.unlinkedNodes.push(prevNode.address);
         }
       }
       // Check pointer movements
@@ -244,135 +364,108 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       rawEp.line,
       rawEp.funcName,
       pointers,
-      orderedNodes,
+      allOrderedNodes,
       diff
     );
 
-    const normPoint: NormalizedExecutionPoint = {
+    const normalizedPoint: NormalizedExecutionPoint = {
       step: i,
       line: rawEp.line,
       funcName: rawEp.funcName,
       codeText: rawEp.codeText || '',
       stdout: rawEp.stdout || '',
       event: rawEp.event,
+      snapshotConvention: rawEp.snapshotConvention || 'before-statement',
       stackToRender: stackFrames,
       heap: heap,
       dsa: {
-        nodes: orderedNodes,
-        pointers: pointers,
-        diff: diff,
+        nodes: allOrderedNodes,
+        mainChain,
+        detachedNodes,
+        unreachableNodes,
+        freedNodes,
+        pointers,
+        diff,
         vietnameseExplanation: explanation,
         advancedNotes: advanced
       }
     };
 
-    normalized.push(normPoint);
-    prevPoint = normPoint;
+    normalized.push(normalizedPoint);
+    prevPoint = normalizedPoint;
   }
 
   return normalized;
 }
 
-function generateVietnameseExplanation(
-  code: string,
+export function generateVietnameseExplanation(
+  codeText: string,
   line: number,
-  func: string,
+  funcName: string,
   pointers: DsaPointer[],
   nodes: DsaNode[],
   diff: DsaDiff
 ): { explanation: string; advanced: string } {
-  const trimmed = code.trim();
+  let explanation = '';
+  let advanced = '';
 
-  // CreateEmptyList
-  if (trimmed.includes('CreateEmptyList') || trimmed.includes('L.pHead = nullptr')) {
-    return {
-      explanation: 'Khởi tạo danh sách liên kết rỗng: Cả con trỏ đầu (pHead) và con trỏ cuối (pTail) đều được đặt về nullptr (0x0).',
-      advanced: 'Khởi tạo bất biến (Invariant): Khi danh sách rỗng, pHead == pTail == nullptr.'
-    };
+  const trimmed = codeText.trim();
+
+  // Explain deallocation (freedNodes)
+  if (diff.freedNodes.length > 0) {
+    const freedAddr = diff.freedNodes[0];
+    explanation = `Đã thực thi giải phóng bộ nhớ (deallocation): Vùng nhớ Heap tại địa chỉ ${freedAddr} đã được trả lại cho hệ điều hành.`;
+    advanced = `Hàm delete hoàn tất thu hồi khối nhớ. Nếu các con trỏ trỏ tới ${freedAddr} chưa được gán nullptr, chúng đã trở thành con trỏ lơ lửng (dangling pointer).`;
+    return { explanation, advanced };
   }
 
-  // new NODE
-  if (trimmed.includes('new NODE')) {
-    return {
-      explanation: 'Toán tử new cấp phát một vùng nhớ mới trên Heap cho một nút NODE. Địa chỉ bộ nhớ được cấp phát tự động bởi hệ điều hành.',
-      advanced: 'Cấp phát động (Dynamic Allocation): Vùng nhớ Heap tồn tại độc lập với thời gian sống của hàm, chỉ được giải phóng khi gọi delete.'
-    };
+  // Pre-delete line
+  if (trimmed.startsWith('delete ')) {
+    const varName = trimmed.replace('delete ', '').replace(';', '').trim();
+    const ptr = pointers.find(p => p.name === varName);
+    explanation = `Chuẩn bị giải phóng bộ nhớ qua lệnh: ${trimmed}. Con trỏ ${varName} đang giữ địa chỉ ${ptr?.targetAddress || '???'}.`;
+    advanced = `Ngữ nghĩa trước câu lệnh: Bộ nhớ tại địa chỉ trên vẫn hợp lệ và có thể truy xuất cho đến khi lệnh delete được hoàn tất ở bước kế tiếp.`;
+    return { explanation, advanced };
   }
 
-  // Delete temp
-  if (trimmed.includes('delete temp')) {
-    return {
-      explanation: 'Gọi delete temp: Thu hồi vùng nhớ của nút đang được con trỏ temp trỏ tới trên Heap, tránh rò rỉ bộ nhớ (Memory Leak).',
-      advanced: 'Con trỏ lơ lửng (Dangling Pointer): Sau lệnh delete, biến temp trên Stack vẫn lưu giá trị địa chỉ cũ, nhưng không được phép giải phóng lần 2 hoặc truy cập (*temp).'
-    };
+  // Pointer unlinking
+  if (trimmed.includes('->pNext =') || trimmed.includes('.pHead =') || trimmed.includes('.pTail =')) {
+    explanation = `Cập nhật liên kết con trỏ: ${trimmed}. Cấu trúc liên kết giữa các nút danh sách đang được thiết lập lại.`;
+    advanced = `Thay đổi liên kết pNext làm thay đổi topo của đồ thị. Kiểm tra xem các nút bị tách rời có còn được giữ bởi con trỏ tạm nào không để tránh rò rỉ bộ nhớ.`;
+    return { explanation, advanced };
   }
 
-  // prev->pNext = p->pNext
-  if (trimmed.includes('prev->pNext = p->pNext')) {
-    return {
-      explanation: 'Bắc cầu liên kết: Chuyển liên kết pNext của nút đứng trước (prev) để bỏ qua nút hiện tại (p), trỏ thẳng tới nút tiếp theo (p->pNext).',
-      advanced: 'Thao tác ngắt liên kết: Giúp cô lập nút p ra khỏi mạch danh sách mà không làm đứt chuỗi liên kết của các phần tử phía sau.'
-    };
+  // CreateNode / new NODE
+  if (trimmed.includes('new NODE') || trimmed.includes('CreateNode')) {
+    explanation = `Cấp phát nút mới trên Heap: ${trimmed}. Một ô nhớ mới được tạo để chứa dữ liệu nút.`;
+    advanced = `Toán tử new cấp phát sizeof(NODE) bytes trên Heap và trả về con trỏ địa chỉ ô nhớ.`;
+    return { explanation, advanced };
   }
 
-  // L.pHead = p->pNext or L.pHead = p
-  if (trimmed.includes('L.pHead = p->pNext') || trimmed.includes('L.pHead = p')) {
-    return {
-      explanation: 'Cập nhật con trỏ pHead: Dịch chuyển con trỏ đầu danh sách sang nút tiếp theo.',
-      advanced: 'Bảo toàn bất biến đầu danh sách: Đảm bảo pHead luôn trỏ tới nút đầu tiên hợp lệ của danh sách.'
-    };
+  // Loop traversal
+  if (trimmed.startsWith('while') || trimmed.startsWith('for')) {
+    const pPtr = pointers.find(p => p.name === 'p');
+    explanation = `Kiểm tra điều kiện lặp: ${trimmed}. Con trỏ duyệt p đang ở địa chỉ ${pPtr?.targetAddress || 'nullptr'}.`;
+    advanced = `Nếu p != nullptr, vòng lặp tiếp tục xử lý nút hiện tại. Khi p trỏ tới nullptr, quá trình duyệt kết thúc an toàn.`;
+    return { explanation, advanced };
   }
 
-  // L.pTail = prev
-  if (trimmed.includes('L.pTail = prev') || trimmed.includes('L.pTail = p')) {
-    return {
-      explanation: 'Cập nhật con trỏ pTail: Cập nhật con trỏ cuối danh sách để chỉ đúng phần tử cuối cùng hiện tại.',
-      advanced: 'Bảo toàn bất biến cuối danh sách: Đảm bảo pTail->pNext luôn là nullptr.'
-    };
+  // Function calls
+  if (trimmed.includes('TimKiemVaXoa')) {
+    explanation = `Bắt đầu thực thi thuật toán Tìm Kiếm Và Xóa (TimKiemVaXoa) trên Danh Sách Liên Kết.`;
+    advanced = `Hàm nhận tham chiếu danh sách LIST &L để có thể trực tiếp sửa đổi pHead và pTail khi xóa nút đầu hoặc cuối.`;
+    return { explanation, advanced };
   }
 
-  // p = p->pNext
-  if (trimmed.includes('p = p->pNext')) {
-    return {
-      explanation: 'Dịch chuyển con trỏ duyệt: Cho con trỏ p tiến sang nút tiếp theo trong danh sách.',
-      advanced: 'Duyệt tuần tự (Sequential Traversal): Con trỏ p di chuyển theo chuỗi địa chỉ pNext cho đến khi gặp nullptr.'
-    };
+  if (trimmed.includes('PrintList')) {
+    explanation = `Gọi hàm in các phần tử trong danh sách liên kết ra console.`;
+    advanced = `Duyệt tuần tự từ pHead tới khi gặp nullptr. Độ phức tạp thời gian O(n).`;
+    return { explanation, advanced };
   }
 
-  // prev = p
-  if (trimmed.includes('prev = p')) {
-    return {
-      explanation: 'Lưu vết nút trước: Gán prev bằng p để giữ vị trí nút hiện tại trước khi p bước sang nút kế tiếp.',
-      advanced: 'Kỹ thuật hai con trỏ (Two Pointers): Dùng con trỏ kép (prev và p) để có thể sửa đổi liên kết của nút tiền bối khi cần xóa nút p.'
-    };
-  }
+  // General statement
+  explanation = `Đang thực thi dòng ${line}: "${trimmed || '(chuyển bước)'}".`;
+  advanced = `Số lượng nút còn hoạt động: ${nodes.filter(n => n.status !== 'freed').length}. Số con trỏ đang theo dõi: ${pointers.length}.`;
 
-  // if (p->info == k)
-  if (trimmed.includes('p->info == k') || trimmed.includes('== k')) {
-    return {
-      explanation: 'Kiểm tra giá trị: So sánh giá trị info của nút hiện tại với giá trị khóa k cần tìm và xóa.',
-      advanced: 'Điều kiện rẽ nhánh: Nếu trùng khớp (info == k), tiến hành tách nút và giải phóng; ngược lại, tiếp tục duyệt qua nút sau.'
-    };
-  }
-
-  // while (p != nullptr)
-  if (trimmed.includes('p != nullptr') || trimmed.includes('while')) {
-    return {
-      explanation: 'Vòng lặp kiểm tra: Kiểm tra xem con trỏ p đã đi hết danh sách (chạm nullptr) hay chưa.',
-      advanced: 'Điều kiện dừng vòng lặp: Khi p == nullptr, toàn bộ danh sách đã được kiểm tra xong an toàn.'
-    };
-  }
-
-  // Default fallback
-  if (func === 'TimKiemVaXoa') {
-    return {
-      explanation: `Đang thực thi hàm Tìm kiếm & Xóa tại dòng ${line}: "${trimmed}".`,
-      advanced: 'Đang theo dõi biến và các liên kết con trỏ trong khung ngăn xếp TimKiemVaXoa.'
-    };
-  }
-
-  return {
-    explanation: `Thực thi dòng lệnh ${line}: "${trimmed}".`,
-    advanced: `Trạng thái ngăn xếp hàm ${func}().`
-  };
+  return { explanation, advanced };
 }

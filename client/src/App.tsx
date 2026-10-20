@@ -13,6 +13,7 @@ export const App: React.FC = () => {
   const [code, setCode] = useState<string>('');
   const [stdin, setStdin] = useState<string>('');
   const [trace, setTrace] = useState<NormalizedExecutionPoint[]>([]);
+  const [isTraceStale, setIsTraceStale] = useState<boolean>(false);
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [mode, setMode] = useState<'beginner' | 'advanced'>('beginner');
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -33,6 +34,7 @@ export const App: React.FC = () => {
           setSelectedLessonId(first.id);
           setCode(first.code);
           setStdin(first.defaultStdin);
+          setIsTraceStale(false);
         }
       })
       .catch((err) => {
@@ -48,9 +50,24 @@ export const App: React.FC = () => {
       setCode(found.code);
       setStdin(found.defaultStdin);
       setTrace([]);
+      setIsTraceStale(false);
       setCurrentStepIndex(0);
       setIsPlaying(false);
       setBuildOutput('');
+    }
+  };
+
+  const handleCodeChange = (newCode: string) => {
+    setCode(newCode);
+    if (trace.length > 0) {
+      setIsTraceStale(true);
+    }
+  };
+
+  const handleStdinChange = (newStdin: string) => {
+    setStdin(newStdin);
+    if (trace.length > 0) {
+      setIsTraceStale(true);
     }
   };
 
@@ -71,15 +88,18 @@ export const App: React.FC = () => {
 
       if (data.success && data.trace && data.trace.length > 0) {
         setTrace(data.trace);
+        setIsTraceStale(false);
         setCurrentStepIndex(0);
         setBuildOutput('');
       } else {
         setBuildOutput(data.buildOutput || 'Biên dịch hoặc chạy mã thất bại.');
         setTrace([]);
+        setIsTraceStale(false);
       }
     } catch (err: any) {
       setBuildOutput(`Lỗi kết nối tới máy chủ: ${err?.message || err}`);
       setTrace([]);
+      setIsTraceStale(false);
     } finally {
       setIsRunning(false);
     }
@@ -133,10 +153,11 @@ export const App: React.FC = () => {
   // Keyboard navigation shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in textarea
+      // Ignore if user is typing in textarea or code editor
       if (
         document.activeElement?.tagName === 'TEXTAREA' ||
-        document.activeElement?.tagName === 'INPUT'
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.classList.contains('cm-content')
       ) {
         return;
       }
@@ -181,18 +202,30 @@ export const App: React.FC = () => {
         <div className="w-full md:w-5/12 h-1/2 md:h-full flex flex-col">
           <CodeEditor
             code={code}
-            onChangeCode={setCode}
+            onChangeCode={handleCodeChange}
             stdin={stdin}
-            onChangeStdin={setStdin}
+            onChangeStdin={handleStdinChange}
             currentLine={currentStep?.line || null}
             stdout={currentStep?.stdout || ''}
             buildOutput={buildOutput}
             isExecuting={isRunning}
+            isTraceStale={isTraceStale}
           />
         </div>
 
         {/* Right Panel: Linked List Canvas & Memory Inspector */}
-        <div className="w-full md:w-7/12 h-1/2 md:h-full flex flex-col bg-slate-950 overflow-hidden">
+        <div className="w-full md:w-7/12 h-1/2 md:h-full flex flex-col bg-slate-950 overflow-hidden relative">
+          {/* Stale Trace Overlay Banner */}
+          {isTraceStale && (
+            <div
+              data-testid="stale-canvas-banner"
+              className="absolute top-2 right-4 z-20 bg-amber-900/90 border border-amber-600 text-amber-200 px-3 py-1 rounded-md text-xs font-semibold shadow-lg backdrop-blur flex items-center gap-2"
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span>Vết thực thi cũ (Mã nguồn đã đổi)</span>
+            </div>
+          )}
+
           {/* Linked List Visualizer */}
           <div className="flex-1 overflow-hidden">
             <LinkedListCanvas
@@ -214,7 +247,11 @@ export const App: React.FC = () => {
 
       {/* Educational Tutor Banner */}
       <EducationalBanner
-        explanation={currentStep?.dsa.vietnameseExplanation || ''}
+        explanation={
+          isTraceStale
+            ? '⚠️ Lưu ý: Mã nguồn đã bị thay đổi kể từ lần chạy cuối. Vết thực thi này thuộc về phiên bản mã trước đó. Bấm "Chạy mã C++" để phân tích mã mới.'
+            : currentStep?.dsa.vietnameseExplanation || ''
+        }
         advancedNotes={currentStep?.dsa.advancedNotes || ''}
         mode={mode}
         diff={currentStep?.dsa.diff}

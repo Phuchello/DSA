@@ -8,9 +8,9 @@ DSA FlowLab is an educational runtime visualizer for C++ data structures and alg
 +-------------------------------------------------------------+
 |                      Browser Frontend                       |
 |  - React 18 + TypeScript + Vite + Tailwind CSS               |
-|  - Monaco / CodeMirror Editor with C++ Syntax Highlighting  |
-|  - Dynamic Singly Linked List SVG/DOM Canvas (FLIP anim)   |
-|  - Memory & Stack Frames Inspector                          |
+|  - Real Editable CodeMirror 6 C++ Editor (Syntax, Line Deco) |
+|  - Dynamic Singly Linked List Topological Canvas             |
+|  - Memory & Stack Frames Inspector (Advanced Mode)           |
 |  - Step-by-Step Educational Timeline & Vietnamese Tutor     |
 +-------------------------------------------------------------+
                                |
@@ -18,94 +18,70 @@ DSA FlowLab is an educational runtime visualizer for C++ data structures and alg
                                v
 +-------------------------------------------------------------+
 |                     Backend Orchestrator                    |
-|  - Node.js + Express + TypeScript                           |
-|  - Input Validation & Resource Quotas Enforcement           |
-|  - Execution Sandbox & Process Manager                      |
+|  - Node.js + Express + TypeScript (Strict Localhost Binding) |
+|  - Request Limits (1MB Payload, 50k Code, 20k Stdin)        |
+|  - Concurrency Limiter (Max 2 Concurrent Executions)        |
+|  - Ephemeral Workspace Manager (~/.dsa_flowlab_tmp)         |
 +-------------------------------------------------------------+
                                |
                                v
 +-------------------------------------------------------------+
 |                  C++ Native Execution Engine                |
 |  - g++ Compiler (-std=c++11, -g3, -O0, no frame omission)   |
-|  - Interactive GDB/MI + Python Memory Inspector             |
-|  - Stdin redirection & Stdout stream capture                |
-|  - Allocation / Deallocation tracking (new/delete lifecycle)|
+|  - Automated GDB/MI + Python Memory Inspector (tracer.py)   |
+|  - Explicit Before-Statement Snapshot Convention            |
+|  - Runtime Deallocation Commitment (Pre vs Post Delete)     |
+|  - Termination Classification (Normal, Crashed, Truncated)  |
 +-------------------------------------------------------------+
                                |
                                v
 +-------------------------------------------------------------+
 |              DSA Normalization & Learning Layer             |
-|  - ProgramTrace Schema Validator (Zod)                      |
-|  - Stable Node Identity & Pointer Topology Graph Builder    |
-|  - State Diff Engine (Variable changes, Dereference deltas) |
-|  - Vietnamese Pedagogical Explanation Synthesizer           |
+|  - ProgramTrace Schema Validator (Zod Schema Validation)    |
+|  - Multi-Root Reachability Analysis (pHead + Stack Roots)    |
+|  - Node Categorization: Allocated, Detached, Unreachable    |
+|  - Pointer Classification: Valid, Null, Freed, Dangling      |
+|  - Stable Node Identity & Address Reuse (Generation Counter)|
+|  - Contextual Vietnamese Pedagogical Narrative Synthesizer   |
 +-------------------------------------------------------------+
 ```
 
-## 2. Key Subsystems
+## 2. Key Subsystems & Design Principles
 
-### 2.1 C++ Execution Engine
-Unlike purely browser-based interpreters that implement only a subset of C++ and often miss subtle compiler/pointer semantics, DSA FlowLab runs a **real C++ compilation and debug tracing pipeline**:
-1. Code and `stdin` are securely staged into an ephemeral temporary workspace.
-2. Code is compiled using standard `g++` with full symbol generation (`-g3 -O0`).
-3. An automated GDB Python agent attaches to the execution thread, setting breakpoints, stepping through statements, and capturing:
-   - Call stack frames (`frameId`, `funcName`, `line`).
-   - Local variables (`name`, `type`, `raw_value`, `address`).
-   - Dereferenced pointer targets and heap structures (`NODE`, `LIST`).
-   - Program output (`stdout`) synchronized to the exact statement line.
-4. Execution halts immediately if max steps (1000) or execution timeout (5s) are exceeded.
+### 2.1 Real C++ Code Editor (CodeMirror 6)
+- **Editable Source**: Full editing, typing, copy/pasting, and indentation support.
+- **Language Support**: Official `@codemirror/lang-cpp` extension providing C++ keyword, type, and operator highlighting.
+- **Execution Line Decoration**: Custom CodeMirror decoration extension that highlights the active execution line with visual borders and scroll-into-view.
+- **Stale Trace Safety**: Modifying source code or `stdin` raises the `isTraceStale` state. An amber warning banner alerts the student that the existing trace reflects prior code and requires re-running, preventing any presentation of an outdated trace as matching edited source code.
+- **Integrated Stdin Tab**: Allows user-defined standard input for `cin` operations with a visual pulse indicator.
 
-### 2.2 DSA State Normalizer
-Raw debugger outputs are normalized into deterministic `LearningSnapshot` records:
-- **Node Graph Extraction**: Recursively discovers all `NODE` instances in heap/stack memory, mapping their `info` and `pNext` pointers.
-- **Pointer Status Analysis**: Categorizes each pointer variable (`pHead`, `pTail`, `p`, `prev`, `temp`) into:
-  - `valid`: pointing to an active, allocated node.
-  - `null`: explicitly `nullptr` / `0x0`.
-  - `freed`: pointing to a memory block that was deleted.
-  - `dangling`: pointing to an unallocated or invalid memory location.
-  - `uninitialized`: local pointer not yet assigned.
-- **Topology Diffing**: Compares step $N-1$ and step $N$ to detect:
-  - New allocations (`new NODE`).
-  - Pointer redirection (`prev->pNext = p->pNext`).
-  - Head/Tail shifts (`L.pHead = p`).
-  - Memory deallocations (`delete temp`).
+### 2.2 Execution Snapshot Convention (Before-Statement)
+DSA FlowLab follows an explicit **Before-Statement Snapshot Convention**:
+- **Line Indicator**: Highlights line $L$ as the statement *about to be executed*.
+- **Memory Snapshot**: Captures the state of stack frames, variables, and heap allocations *immediately prior* to evaluating line $L$.
+- **Deallocation Semantics**:
+  - When paused at `delete temp;`, `temp` and its target memory block are strictly preserved as active (`allocated` or `detached`).
+  - Upon advancing to the next step, the deallocation is committed: the address is added to `deletedAddresses`, the block is classified as `freed`, and any pointer retaining that address without reassignment is marked as pointing to freed memory (`freed` / dangling).
+- **Termination Classification**: Distinguishes normal termination (`return`, exit code 0) from crashes (`SIGSEGV`, `SIGABRT`), timeouts, and step ceiling limits (`truncated`), rather than labeling all execution endings as normal return.
 
-### 2.3 Frontend Visualizer
-- **Singly Linked List Diagram**: High-fidelity visual cards for each node displaying its value, memory address, and SVG pointer arrow to `pNext`.
-- **Pointer Badges**: Badges for `pHead`, `pTail`, `p`, `prev`, `temp` hover above or point directly to the exact node they reference.
-- **Vietnamese Pedagogical Tutor**: Real-time contextual narrative explaining *what* happened in this line and *why* it matters for algorithm correctness.
+### 2.3 Topological Pointer Graph & Reachability
+Instead of drawing linear arrows between consecutive displayed elements, the normalizer and visualizer reconstruct the true pointer topology:
+- **Real Pointer Edges**: Directed connections (`pNext ➔`) are drawn exclusively between a node and the specific address stored in its `pNext` field.
+- **Multi-Root Reachability**:
+  - Traversal starts from all active stack roots (`pHead`, `pTail`, `p`, `prev`, `temp`, and arguments/locals).
+  - **Main List Chain (`allocated`)**: Nodes reachable from `pHead` following `pNext` chains.
+  - **Detached Nodes (`detached`)**: Nodes unlinked from the main chain but still reachable from an active stack pointer (e.g., node held by `temp` during removal).
+  - **Unreachable Nodes (`unreachable`)**: Active heap blocks no longer reachable from any stack root (potential memory leak).
+  - **Freed Blocks (`freed`)**: Deallocated memory blocks retained for educational inspection with strikethrough formatting and dangling pointer indicators.
+- **Address Reuse & Object Identity**: Allocations reusing a recently freed memory address increment an allocation generation counter (`node_0x..._gen2`), ensuring stable React DOM keys and preventing visual animation artifacts.
 
-## 3. Data Flow Specification
-
-`POST /api/run` Request:
-```json
-{
-  "code": "string",
-  "stdin": "string"
-}
-```
-
-Response:
-```json
-{
-  "success": true,
-  "code": "string",
-  "trace": [
-    {
-      "step": 0,
-      "line": 35,
-      "funcName": "main",
-      "event": "stepLine",
-      "stdout": "",
-      "stackToRender": [...],
-      "heap": {...},
-      "dsa": {
-        "nodes": [...],
-        "pointers": [...],
-        "explanation": "..."
-      }
-    }
-  ],
-  "buildOutput": ""
-}
-```
+### 2.4 Execution Security Architecture
+- **Local Remediated Runner**: The current engine is designed exclusively for local execution on the student's machine. The backend strictly binds to `127.0.0.1` by default.
+- **Guards & Limits**:
+  - Request body limit: 1 MB.
+  - Source code limit: 50,000 characters.
+  - Stdin limit: 20,000 characters.
+  - Concurrency control: Maximum 2 concurrent compilation/tracing executions.
+  - Process tree cleanup: Child process trees are forcefully terminated on timeout.
+- **Truth in Security**: Static pattern checking (blocking `#include <windows.h>`, `system()`) is a supplementary sanity check, NOT a secure execution sandbox. Host g++ and GDB execution must never be exposed to public, untrusted networks.
+- **Future Production Isolation Architecture**: For future online deployments, the execution worker will run in ephemeral, unprivileged Linux microVMs or containers (e.g. gVisor, Firecracker, or isolated seccomp-bpf sandbox) without network access, without Docker socket mounts, and with strict CPU, RAM, and PID quotas.

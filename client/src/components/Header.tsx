@@ -13,6 +13,12 @@ interface HeaderProps {
   onReset: () => void;
 }
 
+const DIFFICULTY_LABELS: Record<string, string> = {
+  Beginner: 'Cơ bản',
+  Intermediate: 'Trung bình',
+  Advanced: 'Nâng cao',
+};
+
 export const Header: React.FC<HeaderProps> = ({
   lessons,
   selectedLessonId,
@@ -56,7 +62,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           {lessons.map((lesson) => (
             <option key={lesson.id} value={lesson.id}>
-              {lesson.title} ({lesson.difficulty})
+              {lesson.title} [{DIFFICULTY_LABELS[lesson.difficulty] || lesson.difficulty}]
             </option>
           ))}
         </select>

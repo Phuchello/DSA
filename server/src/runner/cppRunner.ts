@@ -165,7 +165,7 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     // On Linux/macOS we compile to a plain ELF binary.
     const outputBinary = isWin ? 'flowlab_runner.exe' : 'flowlab_runner';
     const platformFlags = isWin ? '-mconsole' : '';
-    const compileCmd = `g++ -std=c++11 -g3 -O0 ${platformFlags} -fno-omit-frame-pointer source.cpp -o ${outputBinary}`.trim().replace(/  +/g, ' ');
+    const compileCmd = `g++ -std=c++11 -g3 -O0 ${platformFlags} -fno-omit-frame-pointer -fasynchronous-unwind-tables source.cpp -o ${outputBinary}`.trim().replace(/  +/g, ' ');
     try {
       await execWithTimeout(compileCmd, { cwd: tempDir }, 10000);
     } catch (compileErr: any) {
@@ -178,6 +178,10 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     }
 
     // 6. Run GDB with Python Tracer
+    if (isWin) {
+      // Brief yield on Windows to let filesystem and file scanners release handle on fresh binary
+      await new Promise(r => setTimeout(r, 120));
+    }
     const env = {
       ...process.env,
       FLOWLAB_TARGET_FILE: 'source.cpp',

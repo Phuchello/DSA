@@ -268,29 +268,36 @@ while step_count < MAX_STEPS:
         cur_f = frame
         f_list = []
         while cur_f:
-            is_user = False
-            f_sal = cur_f.find_sal()
-            if f_sal and f_sal.symtab and f_sal.symtab.filename:
-                fn = os.path.basename(f_sal.symtab.filename.replace('\\', '/'))
-                if fn == TARGET_FILE:
-                    is_user = True
-            if not is_user:
-                try:
-                    fn_sym = cur_f.function()
-                    if fn_sym and fn_sym.symtab and fn_sym.symtab.filename:
-                        fn = os.path.basename(fn_sym.symtab.filename.replace('\\', '/'))
-                        if fn == TARGET_FILE:
-                            is_user = True
-                except Exception:
-                    pass
-            if not is_user and cur_f.name():
-                fname = cur_f.name()
-                if not fname.startswith('_') and not fname.startswith('std::') and 'CRT' not in fname and 'ntdll' not in fname and 'msvcrt' not in fname and 'kernel' not in fname.lower():
-                    is_user = True
+            try:
+                is_user = False
+                f_sal = cur_f.find_sal()
+                if f_sal and f_sal.symtab and f_sal.symtab.filename:
+                    fn = os.path.basename(f_sal.symtab.filename.replace('\\', '/'))
+                    if fn == TARGET_FILE:
+                        is_user = True
+                if not is_user:
+                    try:
+                        fn_sym = cur_f.function()
+                        if fn_sym and fn_sym.symtab and fn_sym.symtab.filename:
+                            fn = os.path.basename(fn_sym.symtab.filename.replace('\\', '/'))
+                            if fn == TARGET_FILE:
+                                is_user = True
+                    except Exception:
+                        pass
+                if not is_user and cur_f.name():
+                    fname = cur_f.name()
+                    if not fname.startswith('_') and not fname.startswith('std::') and 'CRT' not in fname and 'ntdll' not in fname and 'msvcrt' not in fname and 'kernel' not in fname.lower():
+                        is_user = True
 
-            if is_user:
-                f_list.append(cur_f)
-            cur_f = cur_f.older()
+                if is_user:
+                    f_list.append(cur_f)
+            except Exception:
+                pass
+
+            try:
+                cur_f = cur_f.older()
+            except Exception:
+                break
         f_list.reverse()
 
         observed_active_pointers = []
@@ -309,6 +316,10 @@ while step_count < MAX_STEPS:
                             sname = sym.name
                             ordered_varnames.append(sname)
                             try:
+                                # For innermost frame, verify if declaration line has been reached
+                                if f == frame and hasattr(sym, 'line') and sym.line and sym.line > line and not sym.is_argument:
+                                    locals_dict[sname] = ["C_DATA", "0x0", "uninitialized", "?"]
+                                    continue
                                 val = f.read_var(sym)
                                 parsed = parse_val(val)
                                 locals_dict[sname] = parsed

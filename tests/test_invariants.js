@@ -476,21 +476,26 @@ int main() {
     const res = await runCppCode(code, '');
     assert.strictEqual(res.success, true, 'Code execution must succeed');
 
-    // Find a step where iptr is in scope
-    const nodeStep = res.trace.find(s => s.dsa.pointers.some(p => p.name === 'iptr'));
-    if (!nodeStep) {
-      // iptr may not be collected if it is a local stack int* — acceptable
-      console.log('  [MI-13 note] iptr not observed in trace pointers (stack int*, not a NODE*) — expected');
-      return;
+    // Find a step where iptr is initialized in scope
+    const coutStep = res.trace.find(s => s.codeText.includes('cout << n->info'));
+    if (coutStep) {
+      const iptrPtr = coutStep.dsa.pointers.find(p => p.name === 'iptr');
+      if (iptrPtr) {
+        assert.notStrictEqual(iptrPtr.state, 'dangling',
+          `Non-NODE pointer iptr must not be classified as dangling (got: ${iptrPtr.state})`);
+        assert.ok(
+          iptrPtr.state === 'unknown' || iptrPtr.state === 'valid',
+          `Non-NODE pointer iptr should be unknown or valid at execution (got: ${iptrPtr.state})`
+        );
+      }
+    } else {
+      const nodeStep = res.trace.find(s => s.dsa.pointers.some(p => p.name === 'iptr'));
+      if (nodeStep) {
+        const iptrPtr = nodeStep.dsa.pointers.find(p => p.name === 'iptr');
+        assert.notStrictEqual(iptrPtr.state, 'dangling',
+          `Non-NODE pointer iptr must not be classified as dangling (got: ${iptrPtr.state})`);
+      }
     }
-    const iptrPtr = nodeStep.dsa.pointers.find(p => p.name === 'iptr');
-    // If iptr appears at all, it must NOT be classified as 'dangling' — it is a stack pointer
-    assert.notStrictEqual(iptrPtr.state, 'dangling',
-      `Non-NODE pointer iptr must not be classified as dangling (got: ${iptrPtr.state})`);
-    assert.ok(
-      iptrPtr.state === 'unknown' || iptrPtr.state === 'valid',
-      `Non-NODE pointer iptr should be unknown or valid (got: ${iptrPtr.state})`
-    );
   });
 
   // -------------------------------------------------------------
@@ -540,13 +545,14 @@ int main() {
     assert.strictEqual(outSkipped, '77', 'With flag=0, delete skipped, output must be 77');
 
     // Node must remain allocated (no false freed classification)
-    const lastSkippedStep = resSkipped.trace[resSkipped.trace.length - 1];
-    const nPtrSkipped = lastSkippedStep.dsa.pointers.find(p => p.name === 'n');
-    // Node may not be in scope on last step, that is acceptable
-    if (nPtrSkipped) {
-      assert.notStrictEqual(nPtrSkipped.state, 'freed',
-        'With flag=0, n must not be classified as freed (delete was not taken)');
-    }
+    // Verify that at the cout step following the if block, n is active and not freed
+    const coutStep = resSkipped.trace.find(s => s.codeText.includes('cout << (n == nullptr'));
+    assert.ok(coutStep, 'Must trace the cout step following the if block');
+    const nPtrCout = coutStep.dsa.pointers.find(p => p.name === 'n');
+    assert.ok(nPtrCout, 'n must be in scope at cout step');
+    assert.strictEqual(nPtrCout.state, 'valid', 'With flag=0, n must be valid (delete was skipped)');
+    assert.ok(coutStep.dsa.nodes.some(n => n.info === 77 && n.status !== 'freed'),
+      'Node with info=77 must remain live and active');
   });
 
   // -------------------------------------------------------------

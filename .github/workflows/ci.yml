@@ -92,7 +92,7 @@ jobs:
         run: |
           g++ --version
           gdb --version
-          gdb -batch -ex "python import sys; print('GDB Python version:', sys.version)"
+          gdb -batch -ex 'python import sys; print("GDB Python version:", sys.version)'
 
       - name: Install root dependencies
         run: npm ci

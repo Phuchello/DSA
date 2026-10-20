@@ -20,13 +20,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          # No root-level package-lock.json — cache disabled at root.
-          # Each sub-package uses its own lock file via npm ci below.
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            server/package-lock.json
 
-      - name: Install root dev dependencies
-        working-directory: .
-        run: npm install --ignore-scripts
+      - name: Install root dependencies
+        run: npm ci
 
       - name: Install client dependencies
         working-directory: client
@@ -65,7 +67,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            server/package-lock.json
 
       - name: Install MSYS2 MinGW toolchain (g++ + gdb)
         uses: msys2/setup-msys2@v2
@@ -81,13 +88,14 @@ jobs:
       - name: Add MinGW to PATH
         run: echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Verify toolchain
+      - name: Verify toolchain & Python GDB support
         run: |
           g++ --version
           gdb --version
+          gdb -batch -ex "python import sys; print('GDB Python version:', sys.version)"
 
-      - name: Install root dev dependencies
-        run: npm install --ignore-scripts
+      - name: Install root dependencies
+        run: npm ci
 
       - name: Install client dependencies
         working-directory: client

@@ -1,0 +1,20 @@
+{
+  "name": "dsa-flowlab",
+  "version": "1.0.0",
+  "description": "DSA FlowLab - Web-first C++ Execution Visualizer for Data Structures & Algorithms",
+  "scripts": {
+    "start": "concurrently \"npm run start:server\" \"npm run start:client\"",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "start:server": "npm --prefix server start",
+    "start:client": "npm --prefix client run preview",
+    "build": "npm --prefix server run build && npm --prefix client run build",
+    "test": "node tests/runAllTests.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "author": "Vo Trong Phuc",
+  "license": "MIT"
+}

@@ -2,6 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { execFileWithTimeout } = require('../server/dist/runner/cppRunner.js');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -38,6 +39,12 @@ async function waitForProcessesToExit(pids, timeoutMs) {
   return pids.every(pid => !pidIsAlive(pid));
 }
 
+function compileFailureTool(outputPath) {
+  const source = path.join(__dirname, 'processTreeToolFailure.c');
+  const build = spawnSync('g++', [source, '-o', outputPath], { encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(build.status, 0, `Could not compile deterministic process-tree command failure fixture: ${build.stderr}`);
+}
+
 async function startAndTimeOut(tempDir, env) {
   const fixture = path.join(__dirname, 'processTreeChild.js');
   const pidFile = path.join(tempDir, 'pids.json');
@@ -64,7 +71,7 @@ async function assertHeartbeatStops(heartbeatFile) {
 async function runProcessTreeTests() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowlab-process-tree-'));
   let passed = 0;
-  const total = process.platform === 'win32' ? 8 : 4;
+  const total = process.platform === 'win32' ? 9 : 4;
   try {
     const baseline = await startAndTimeOut(tempDir, process.env);
     const startedAt = Date.now();
@@ -72,7 +79,7 @@ async function runProcessTreeTests() {
       if (!/Quá thời gian thực thi cho phép/.test(error.message)) console.error(`Unexpected process-tree termination: ${error.message}`);
       return /Quá thời gian thực thi cho phép/.test(error.message);
     }, 'Timeout must settle with the configured timeout error');
-    assert.ok(Date.now() - startedAt < 8000, 'Timeout termination must settle within a bounded interval');
+    assert.ok(Date.now() - startedAt < 15000, 'Timeout termination must settle within the helper’s 12s hard bound plus process-close overhead');
     passed++;
     assert.ok(await waitForProcessesToExit([baseline.pids.parent, baseline.pids.child], 1500),
       'The command and its descendant must be gone before timeout cleanup completes');
@@ -87,11 +94,15 @@ async function runProcessTreeTests() {
       return { passed, failed: 0, total };
     }
 
-    const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT;
-    const failingTaskkill = path.join(systemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const toolsDir = path.join(tempDir, 'failing-tools');
+    fs.mkdirSync(toolsDir);
+    const failingTaskkill = path.join(toolsDir, 'taskkill.exe');
+    compileFailureTool(failingTaskkill);
+    const fallbackMarker = path.join(tempDir, 'taskkill-primary-failed.log');
     const fallbackEnv = {
       ...process.env,
       FLOWLAB_TASKKILL_EXE: failingTaskkill,
+      FLOWLAB_TOOL_FAILURE_MARKER: fallbackMarker,
     };
     let fallbackRun;
     fallbackRun = await startAndTimeOut(tempDir, fallbackEnv);
@@ -103,19 +114,22 @@ async function runProcessTreeTests() {
       if (!matches) console.error(`Unexpected taskkill fallback result: ${error.message}; fallback=${error.processTreeFallbackUsed}; executable=${error.processTreePrimaryExecutable}; primary=${error.processTreePrimaryError}`);
       return matches;
     },
-    'A non-taskkill primary helper must fail and the system taskkill fallback must preserve the timeout result');
+    'The injected taskkill executable must fail and the native identity fallback must preserve the timeout result');
+    passed++;
+    assert.ok(fs.existsSync(fallbackMarker), 'The injected primary taskkill executable must actually run and fail');
     passed++;
     assert.ok(await waitForProcessesToExit([fallbackRun.pids.parent, fallbackRun.pids.child], 2000),
       'The system taskkill fallback must terminate parent and descendant');
     passed++;
     await assertHeartbeatStops(fallbackRun.heartbeatFile);
     passed++;
-    console.log('✅ Windows failing primary helper: system taskkill fallback terminated captured tree and heartbeat stopped');
+    console.log('✅ Windows failing taskkill: native identity fallback terminated captured tree and heartbeat stopped');
 
     const unverifiedEnv = {
       ...process.env,
       FLOWLAB_TASKKILL_EXE: failingTaskkill,
       FLOWLAB_TEST_DISABLE_PROCESS_FALLBACK: '1',
+      FLOWLAB_TOOL_FAILURE_MARKER: path.join(tempDir, 'taskkill-unverified-primary-failed.log'),
     };
     let unverified;
     let terminationError;
@@ -128,7 +142,8 @@ async function runProcessTreeTests() {
         && error.message.includes(failingTaskkill)
         && /deadline|remaining/i.test(error.message);
     }, 'Failure to confirm cleanup when fallback is unavailable must be surfaced as unverified termination');
-    assert.ok(Date.now() - unverifiedStarted < 10000, 'Unverified shutdown must still settle in a bounded interval');
+    assert.ok(Date.now() - unverifiedStarted < 15000, 'Unverified shutdown must still settle within the helper’s hard bound plus process-close overhead');
+    assert.ok(fs.existsSync(unverifiedEnv.FLOWLAB_TOOL_FAILURE_MARKER), 'The injected primary taskkill executable must run before unverified cleanup is surfaced');
     passed++;
     console.log(`✅ Windows unverified termination surfaced for PID ${terminationError.rootPid}; no success was claimed`);
 

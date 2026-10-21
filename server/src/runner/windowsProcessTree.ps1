@@ -30,6 +30,7 @@ public static class FlowLabProcessTreeNative {
     private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     private const uint SYNCHRONIZE = 0x00100000;
     private const uint WAIT_OBJECT_0 = 0;
+    private const uint WAIT_TIMEOUT = 0x102;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct PROCESSENTRY32 {
@@ -82,7 +83,7 @@ public static class FlowLabProcessTreeNative {
     }
 
     private static long? TryCreation(int pid, out IntPtr handle) {
-        handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+        handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, false, (uint)pid);
         if (handle == IntPtr.Zero) {
             int error = Marshal.GetLastWin32Error();
             if (error == 87 || error == 1168) return null; // The process exited between the snapshot and open.
@@ -109,8 +110,14 @@ public static class FlowLabProcessTreeNative {
     public static bool IsSameProcess(int pid, long creation) {
         IntPtr handle;
         long? current = TryCreation(pid, out handle);
-        if (handle != IntPtr.Zero) CloseHandle(handle);
-        return current.HasValue && current.Value == creation;
+        if (handle == IntPtr.Zero) return false;
+        try {
+            if (!current.HasValue || current.Value != creation) return false;
+            uint state = WaitForSingleObject(handle, 0);
+            if (state == WAIT_OBJECT_0) return false;
+            if (state == WAIT_TIMEOUT) return true;
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "WaitForSingleObject failed for PID " + pid);
+        } finally { CloseHandle(handle); }
     }
 
     public static bool TerminateExact(int pid, long creation) {

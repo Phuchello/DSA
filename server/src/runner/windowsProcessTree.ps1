@@ -58,6 +58,8 @@ public static class FlowLabProcessTreeNative {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32 entry);
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern void SetLastErrorNative(uint errorCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
@@ -68,7 +70,18 @@ public static class FlowLabProcessTreeNative {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
 
-    public static FlowLabProcessEntry[] Snapshot() {
+    private static bool Process32NextForSnapshot(IntPtr snapshot, ref PROCESSENTRY32 entry, int rootPid) {
+        int injectedRootPid;
+        if (int.TryParse(Environment.GetEnvironmentVariable("FLOWLAB_TEST_PROCESS32NEXT_FAIL_AFTER_ROOT"), out injectedRootPid)
+            && injectedRootPid == rootPid && entry.th32ProcessID == (uint)rootPid) {
+            // Test seam: model Process32NextW returning FALSE with a non-EOF last-error.
+            SetLastErrorNative(5);
+            return false;
+        }
+        return Process32NextW(snapshot, ref entry);
+    }
+
+    public static FlowLabProcessEntry[] Snapshot(int rootPid) {
         IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snapshot == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateToolhelp32Snapshot failed");
         var entries = new List<FlowLabProcessEntry>();
@@ -79,7 +92,7 @@ public static class FlowLabProcessTreeNative {
             do {
                 entries.Add(new FlowLabProcessEntry { Pid = (int)entry.th32ProcessID, ParentPid = (int)entry.th32ParentProcessID });
                 entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
-            } while (Process32NextW(snapshot, ref entry));
+            } while (Process32NextForSnapshot(snapshot, ref entry, rootPid));
         } finally { CloseHandle(snapshot); }
         return entries.ToArray();
     }
@@ -156,7 +169,7 @@ public static class FlowLabProcessTreeNative {
     [void][System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($NativeAssemblyPath))
 
     function Get-CurrentTree {
-        $snapshot = [FlowLabProcessTreeNative]::Snapshot()
+        $snapshot = [FlowLabProcessTreeNative]::Snapshot($RootPid)
         $rootEntry = @($snapshot | Where-Object { $_.Pid -eq $RootPid } | Select-Object -First 1)
         if (-not $captured.ContainsKey([string]$RootPid)) {
             if ($rootEntry.Count -eq 0) {

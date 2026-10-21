@@ -7,6 +7,25 @@ const { execFileWithTimeout } = require('../server/dist/runner/cppRunner.js');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+async function waitForFile(file, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) return;
+    await delay(10);
+  }
+  throw new Error(`Timed out waiting for ${file}`);
+}
+
+async function waitForContentChange(file, previous, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    if (current.length > previous.length) return current;
+    await delay(10);
+  }
+  throw new Error(`Timed out waiting for heartbeat change in ${file}`);
+}
+
 async function waitForJson(file, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -71,7 +90,7 @@ async function assertHeartbeatStops(heartbeatFile) {
 async function runProcessTreeTests() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowlab-process-tree-'));
   let passed = 0;
-  const total = process.platform === 'win32' ? 9 : 4;
+  const total = process.platform === 'win32' ? 11 : 4;
   try {
     const baseline = await startAndTimeOut(tempDir, process.env);
     const startedAt = Date.now();
@@ -124,6 +143,111 @@ async function runProcessTreeTests() {
     await assertHeartbeatStops(fallbackRun.heartbeatFile);
     passed++;
     console.log('✅ Windows failing taskkill: native identity fallback terminated captured tree and heartbeat stopped');
+    async function runLateChildScenario(label, injectNextError = false) {
+      const fixture = path.join(__dirname, 'processTreeChild.js');
+      const files = {
+        pid: path.join(tempDir, `${label}-parent.json`),
+        trigger: path.join(tempDir, `${label}-spawn.trigger`),
+        ready: path.join(tempDir, `${label}-child-ready.json`),
+        heartbeat: path.join(tempDir, `${label}-child-heartbeat.txt`),
+        identity: path.join(tempDir, `${label}-child-identity.txt`),
+        allowRootKill: path.join(tempDir, `${label}-allow-root-kill`),
+        snapshotComplete: path.join(tempDir, `${label}-initial-snapshot-complete`),
+        primaryMarker: path.join(tempDir, `${label}-primary-marker.log`),
+      };
+      const env = {
+        ...process.env,
+        FLOWLAB_TASKKILL_EXE: failingTaskkill,
+        FLOWLAB_TOOL_FAILURE_MARKER: files.primaryMarker,
+        FLOWLAB_TEST_LATE_CHILD_TRIGGER_FILE: files.trigger,
+        FLOWLAB_TEST_LATE_CHILD_READY_FILE: files.ready,
+        FLOWLAB_TEST_LATE_CHILD_IDENTITY_FILE: files.identity,
+        FLOWLAB_TEST_ALLOW_ROOT_KILL_FILE: files.allowRootKill,
+        FLOWLAB_TEST_SNAPSHOT_COMPLETED_FILE: files.snapshotComplete,
+        ...(injectNextError ? { FLOWLAB_TEST_PROCESS32NEXT_FAIL_AFTER_ROOT: '1' } : {}),
+      };
+      const command = execFileWithTimeout(process.execPath, [
+        fixture, 'late-parent', files.pid, files.trigger, files.ready, files.heartbeat
+      ], { cwd: tempDir, env }, 1800);
+      let parent;
+      let child;
+      try {
+        parent = await waitForJson(files.pid, 1200);
+        assert.ok(parent.parent > 0, 'Late-child fixture root must publish its PID');
+        let terminationError;
+        if (injectNextError) {
+          await assert.rejects(command, error => {
+            terminationError = error;
+            return error?.processTreeTerminationVerified === false;
+          }, 'An injected non-EOF Process32NextW result must fail closed as unverified termination');
+          assert.ok(!fs.existsSync(files.primaryMarker),
+            'Incomplete Toolhelp enumeration must be rejected before invoking primary termination');
+          assert.ok(!fs.existsSync(files.ready),
+            'The root must not spawn a descendant after an incomplete initial snapshot');
+          assert.ok(!fs.existsSync(files.snapshotComplete),
+            'The injected enumeration error must occur before the primary helper marker');
+          assert.strictEqual(terminationError.processTreeTerminationVerified, false);
+          console.log('✅ Windows Process32NextW injected error: incomplete snapshot surfaced as unverified before taskkill');
+          return;
+        }
+
+        await waitForFile(files.identity, 9000);
+        assert.ok(fs.existsSync(files.snapshotComplete),
+          'The taskkill fixture must prove the initial process snapshot completed before the child spawn');
+        child = await waitForJson(files.ready, 1000);
+        const [identityPidText, identityCreation] = fs.readFileSync(files.identity, 'utf8').trim().split(':');
+        assert.strictEqual(Number(identityPidText), child.pid, 'Captured process identity must match the late child PID');
+        assert.ok(/^[0-9]+$/.test(identityCreation || ''), 'The late child must have a nonzero OS creation-time identity');
+        assert.ok(child.pid > 0 && child.nonce, 'Late descendant must publish its PID and unique identity token');
+
+        const initialHeartbeat = fs.existsSync(files.heartbeat) ? fs.readFileSync(files.heartbeat, 'utf8') : '';
+        const heartbeatBeforeTermination = await waitForContentChange(files.heartbeat, initialHeartbeat, 1500);
+        assert.ok(pidIsAlive(child.pid), 'The same late child process must be alive before root-only termination');
+        assert.ok(heartbeatBeforeTermination.includes(`${child.pid}:${child.nonce}`),
+          'The late child must continue writing its unique heartbeat before root termination');
+
+        // The injected primary tool has observed the completed snapshot, then
+        // waited for the child identity and heartbeat before killing only root.
+        fs.writeFileSync(files.allowRootKill, 'kill-root-only');
+        await assert.rejects(command, error => {
+          terminationError = error;
+          return /Quá thời gian thực thi cho phép/.test(error.message)
+            || error?.processTreeTerminationVerified === false;
+        }, 'Timeout must settle after the root-only primary termination attempt');
+
+        const childStopped = await waitForProcessesToExit([child.pid], 1000);
+        let heartbeatAdvancedAfterReturn = false;
+        if (!childStopped) {
+          const atReturn = fs.existsSync(files.heartbeat) ? fs.readFileSync(files.heartbeat, 'utf8') : '';
+          try {
+            const afterReturn = await waitForContentChange(files.heartbeat, atReturn, 1000);
+            heartbeatAdvancedAfterReturn = afterReturn.includes(`${child.pid}:${child.nonce}`);
+          } catch { /* A correctly reported unverified state may race fixture cleanup. */ }
+        }
+        const unverified = terminationError?.processTreeTerminationVerified === false;
+        assert.ok(childStopped || unverified,
+          `Late child survived root-only termination but helper did not report unverified cleanup; pid=${child.pid}, creation=${identityCreation}, heartbeatAdvanced=${heartbeatAdvancedAfterReturn}, error=${terminationError?.message}`);
+        if (!childStopped) {
+          assert.strictEqual(unverified, true, 'A surviving descendant may never accompany a verified timeout result');
+          assert.ok(heartbeatAdvancedAfterReturn, 'Unverified state must retain evidence that this exact child is still alive');
+        }
+        console.log(`✅ Windows late child after initial snapshot: pid=${child.pid}, creation=${identityCreation}; ${childStopped ? 'child terminated' : 'unverified cleanup surfaced'}`);
+      } finally {
+        const cleanupPids = new Set([parent?.parent, child?.pid].filter(pid => Number.isInteger(pid) && pid > 0));
+        if (!child && fs.existsSync(files.ready)) {
+          try { cleanupPids.add(JSON.parse(fs.readFileSync(files.ready, 'utf8')).pid); } catch { /* Partial readiness file. */ }
+        }
+        for (const pid of cleanupPids) {
+          try { process.kill(pid, 'SIGKILL'); } catch { /* The fixture may already have exited. */ }
+        }
+        await waitForProcessesToExit([...cleanupPids], 2000);
+      }
+    }
+
+    await runLateChildScenario('late-child-after-snapshot');
+    passed++;
+    await runLateChildScenario('snapshot-next-error', true);
+    passed++;
 
     const unverifiedEnv = {
       ...process.env,

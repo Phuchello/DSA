@@ -1,42 +1,39 @@
 # DSA FlowLab: Trạng thái kiểm toán P0 Round 3
 
 **Cập nhật:** 21/10/2026
-**Nhánh:** `dev/flowlab-p0`
-**Commit nền có CI lỗi:** `3dde96678beb195073edc5eca8e133d4acaea4a6`
-**Quyết định hiện tại:** **NO-GO — chờ xác minh lại trên GitHub Actions Windows và Linux**
 
-## 1. Bằng chứng đã xác minh
+**Nhánh:** dev/flowlab-p0
 
-| Nguồn | Kết quả | Phạm vi |
+**Commit runtime đã xác minh:** [9ac0acf3bf5b36c2fd1e01c10159b22e264ef880](https://github.com/Phuchello/DSA/commit/9ac0acf3bf5b36c2fd1e01c10159b22e264ef880)
+
+**GitHub Actions:** [run 39530079680](https://github.com/Phuchello/DSA/actions/runs/39530079680)
+**Kết luận:** **GO cho phạm vi kiểm toán runtime correctness P0; NO-GO cho public multi-tenant deployment.**
+
+## 1. Bằng chứng xác minh
+
+| Nguồn | Kết quả | Bằng chứng |
 |---|---|---|
-| GitHub Actions run [39438217969](https://github.com/Phuchello/DSA/actions/runs/39438217969) | Linux **PASS**; Windows **FAIL** | Windows thất bại MI-09 và MI-14 tại commit `3dde966`; 15/17 bất biến còn lại PASS. |
-| Local Windows, `g++ 16.1.0`, GDB `17.2`, Node `24.19.0` | **48/48 test case PASS** trên lần chạy đầy đủ gần nhất | 12 baseline, 8 normalizer, 17 memory invariants, 11 client test chạy một lần qua MI-12. Đây không phải kết quả của GitHub CI. |
-| Golden trace local | **161 snapshot**, đạt các assertion về độ đầy đủ | 7 allocation, 21 pointer traversal, 3 lần unlink, 2 deallocation, 17 call và 18 return. Không có assertion buộc số snapshot phải cố định. |
-| MI-14 local có debug | `flag=0`: stdout `77`, `n=valid`; `flag=1`: stdout `-1`, deallocation hoàn tất trước snapshot kế tiếp | Debug ghi symbol `_ZdlPv`, PC, `RCX`, candidate address, NODE generation, call stack và vị trí source. Vector cleanup được ghi nhận là STL event và bị bỏ qua. |
-| MI-09 local | PASS | Snapshot sâu nhất chứa `main` và bốn `SumList` frame, mỗi frame giữ tham số `p`, source location, depth, cùng liên kết caller/child. |
+| GitHub Actions 39530079680 | Linux **PASS**, Windows **PASS** | Cả hai job hoàn tất trên commit 9ac0acf3; Windows chạy toàn bộ npm test. |
+| Windows full suite | **48/48 executions PASS** | 12/12 baseline, 8/8 normalizer, 17/17 memory invariants, 11 client assertions qua MI-12. |
+| TC-GOLDEN-01 trên Windows CI | **PASS**, 161 snapshot | 7 allocation, 21 traversal, 3 unlink, 2 deallocation, 17 call và 18 return; semantic completeness assertions đều đạt. |
+| MI-09 trên Windows CI | **PASS** | Snapshot sâu nhất có main cùng bốn SumList frame, gồm ba NODE argument và base case nullptr; kiểm tra source location, invocation-local p, depth, caller/child, call/return và thứ tự frame đều đạt. |
+| MI-14 trên Windows CI | **PASS** | flag=1: _ZdlPv nhận RCX, candidate khớp NODE generation 1 tại delete n;, FinishBreakpoint xác nhận deallocator return. flag=0: output 77, n=valid, không có deallocation hoàn tất cho delete n;. |
+| MI-14 STL regression | **PASS** | Vector cleanup có stack std::__new_allocator/allocator_traits, bị bỏ qua; NODE còn sống. |
 
-## 2. Xử lý MI-14 — theo dõi giải phóng bộ nhớ
+## 2. Sửa runtime deallocation
 
-Lỗi cũ gắn sự kiện deallocation với một địa chỉ số đã từng thấy. Breakpoint dùng ABI suy ra từ Python host, cài song song tên symbol demangled và mangled, lưu địa chỉ trong tập lịch sử không có generation, rồi xem việc vào `operator delete` như đủ bằng chứng giải phóng. Cách này có thể ghép nhầm event runtime hoặc giá trị thanh ghi với NODE.
+Tracer nhận ABI theo compiler target (RCX cho Windows x64, RDI cho System V x64), chỉ đăng ký symbol delete mangled của GCC, và nhận diện cả symbol có tiền tố module như libstdc++-6!_ZdlPv. Candidate phải khớp địa chỉ NODE đang sống cùng allocation generation. Event từ STL/runtime bị loại. FinishBreakpoint xác nhận operator delete đã return; trạng thái freed chỉ được commit ở snapshot kế tiếp. Khi bằng chứng thiếu hoặc mơ hồ, node không bị đánh dấu freed.
 
-Tracer hiện nhận ABI từ compiler target (`RCX` cho Windows x64, `RDI` cho System V x64), chỉ đăng ký các symbol mangled GCC, yêu cầu candidate khớp một NODE allocation đang sống và đúng generation, loại event có frame runtime/STL trung gian, rồi dùng `FinishBreakpoint` để xác nhận deallocator đã return. Chỉ sau đó event mới được commit ở snapshot trước statement kế tiếp. Candidate không đủ bằng chứng không được đánh dấu `freed`.
+FLOWLAB_DEBUG_DEALLOC=1 bật log gồm symbol, call stack, PC, register, candidate, allocation identity và source execution location.
 
-Bật chẩn đoán bằng `FLOWLAB_DEBUG_DEALLOC=1`. Mỗi event ghi symbol breakpoint, call stack, PC, candidate address, allocation identity và vị trí source thực thi. MI-14 bổ sung regression cho alias và bộ nhớ STL.
+## 3. Stack đệ quy và trace completeness
 
-## 3. Xử lý MI-09 — stack đệ quy
+Frame chỉ được đưa vào trace khi source file xác nhận là mã người dùng. Mỗi frame giữ source line riêng, tham số theo invocation, frame ID, depth và liên kết parent/child. GDB bỏ qua các file-regex skip rules đã làm mất user frame trên Windows; các frame runtime vẫn được lọc theo tên hàm và source.
 
-Run lỗi Round 3 chỉ ghi assertion tổng hợp và không lưu frame thô, vì vậy không thể xác định frame nào bị mất trong run đó. Tracer hiện chỉ đưa frame có source xác nhận thuộc `source.cpp` vào stack; mỗi frame giữ tên hàm, vị trí source, độ sâu, giá trị tham số, frame ID và liên kết parent/child. `line` được đọc theo từng frame, tham số được lưu riêng cho từng invocation, và timeline ghi sự kiện call/return khi độ sâu thay đổi.
+Golden test kiểm tra allocation/initialization, pHead/pTail, traversal, unlink, before/after delete, call/return và thay đổi nhìn thấy được. Không đặt ngưỡng cố định theo tổng snapshot. Windows CI GCC 15.2.0/GDB 17.1 và local MinGW GCC 16.1.0/GDB 17.2 có thể tạo số bước khác nhau; assertion ngữ nghĩa hiện xác nhận đầy đủ các thao tác cần thiết trên CI.
 
-MI-09 kiểm tra ít nhất ba invocation `SumList` đồng thời, đúng giá trị `p` theo từng lần gọi, thứ tự frame, liên kết caller/child và các chuyển tiếp call/return. Xác nhận trên Windows CI mới vẫn đang chờ.
+Toàn workflow có 67 executions và 48 test case duy nhất: Windows chạy 48; Linux chạy lại 11 client và 8 normalizer case.
 
-## 4. Độ đầy đủ trace và số liệu test
+## 4. Giới hạn còn lại
 
-Windows CI cũ dùng GCC `15.2.0` và GDB `17.1`; máy local dùng GCC `16.1.0` và GDB `17.2`. Golden trace tương ứng lần lượt là 29 và 161 snapshot. Bằng chứng hiện có cho thấy số lượng snapshot phụ thuộc toolchain và line stepping; nguyên nhân cụ thể chưa được cô lập hoàn toàn. CI cũ chưa có assertion ngữ nghĩa về trace completeness.
-
-Golden test hiện kiểm tra allocation/initialization, `pHead`/`pTail`, traversal, unlink, before/after delete, call/return và các thay đổi nhìn thấy được. Số snapshot chỉ được ghi nhận để chẩn đoán, không dùng làm ngưỡng PASS.
-
-Một lần chạy `npm test` tại local hiện thực thi 48 test case/48 case duy nhất; MI-12 chạy 11 client test đúng một lần trong command này. Toàn bộ hai job CI thực thi 67 case: Windows chạy 48 case, Linux chạy lại 11 client và 8 normalizer case; số case duy nhất là 48. Tài liệu không cộng các lượt chạy lặp thành test case mới.
-
-## 5. Trạng thái bàn giao
-
-Kết quả local hiện xác nhận các sửa đổi, nhưng chưa thay thế bằng chứng CI Windows bắt buộc. Không dùng trạng thái GO cho đến khi commit mới chạy xanh cả Linux lẫn Windows và log mới xác nhận MI-09, MI-14 cùng trace completeness. Không có tuyên bố triển khai an toàn cho mã C++ tùy ý.
+Runner gọi g++/gdb trên host với giới hạn và lọc đầu vào; đây chưa phải sandbox an toàn cho C++ tùy ý trên public multi-tenant. Public deployment cần process isolation mức hệ điều hành hoặc microVM. Windows Application Control có thể chặn binary tạm; khi đó run báo lỗi và test fail, không được xem là PASS.

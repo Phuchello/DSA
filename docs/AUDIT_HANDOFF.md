@@ -1,38 +1,34 @@
 # DSA FlowLab — Bàn giao kiểm toán Round 3
 
 **Ngày:** 21/10/2026
+
 **Repository:** [Phuchello/DSA](https://github.com/Phuchello/DSA)
-**Nhánh:** `dev/flowlab-p0`
-**Trạng thái:** **NO-GO cho đến khi CI mới xác nhận Windows và Linux**
 
-## Cơ sở kiểm toán
+**Nhánh:** dev/flowlab-p0
 
-Run [39438217969](https://github.com/Phuchello/DSA/actions/runs/39438217969) trên commit `3dde96678beb195073edc5eca8e133d4acaea4a6` có Linux PASS và Windows FAIL tại MI-09, MI-14. Đây là kết quả CI đã xác minh; các báo cáo Round 2 `48/48 PASS` và GO không còn là trạng thái hiện hành.
+**Runtime commit:** [9ac0acf3bf5b36c2fd1e01c10159b22e264ef880](https://github.com/Phuchello/DSA/commit/9ac0acf3bf5b36c2fd1e01c10159b22e264ef880)
 
-## Sửa lỗi trong Round 3
+**CI evidence:** [run 39530079680](https://github.com/Phuchello/DSA/actions/runs/39530079680)
+**Trạng thái:** **GO cho kiểm toán runtime correctness P0; NO-GO cho public multi-tenant deployment.**
 
-### MI-14 — deallocation chỉ khi có bằng chứng đầy đủ
+## Kết quả đã xác minh
 
-- ABI lấy theo compiler target, không suy từ Python/GDB host: Windows x64 dùng `RCX`; Linux/System V dùng `RDI`.
-- Loại các breakpoint demangled trùng với tên mangled; chặn event trùng/alias đang in-flight.
-- Candidate phải khớp NODE allocation còn sống và đúng generation.
-- Event phải xuất phát trực tiếp từ user code; frame runtime/STL trung gian bị bỏ qua.
-- `FinishBreakpoint` xác nhận `operator delete` đã return. Chỉ snapshot kế tiếp mới commit trạng thái `freed`.
-- Debug mode `FLOWLAB_DEBUG_DEALLOC=1` ghi symbol, call stack, PC, register, candidate, allocation identity và source execution location.
-- Regression bao gồm nhánh delete bỏ qua, nhánh delete thực thi, alias và `std::vector` cleanup.
+GitHub Actions Linux và Windows đều PASS trên runtime commit. Windows full suite hoàn tất 48/48 executions: baseline 12/12, normalizer 8/8, memory invariants 17/17, client 11/11 qua MI-12. Toàn workflow có 67 executions và 48 test case duy nhất.
 
-### MI-09 — frame đệ quy có nguồn và invocation riêng
+TC-GOLDEN-01 đạt semantic completeness: 161 snapshot, 7 allocation, 21 traversal, 3 unlink, 2 deallocation, 17 call, 18 return. MI-09 quan sát main và bốn SumList frame với ba NODE pointer cùng base case nullptr. MI-14 xác nhận deallocation hoàn tất chỉ ở nhánh flag=1; nhánh flag=0 giữ n=valid. STL cleanup bị bỏ qua và NODE không bị đánh dấu freed.
 
-Frame user chỉ được đưa vào trace khi source file xác nhận là mã người dùng. Mỗi frame giữ tên, source location, độ sâu, parameter values, frame ID và parent/child IDs. Tracer dùng source line riêng cho từng frame, đọc tham số cho đúng invocation và đánh dấu call/return khi stack thay đổi. Test không tạo frame giả; nó đối chiếu các giá trị `p` thực tế với ba NODE và base case `nullptr`.
+## Thay đổi chính
 
-### Trace completeness và độ trung thực của test
+- Deallocation dùng ABI theo target, symbol-aware trên GDB/MinGW Windows, allocation generation và FinishBreakpoint.
+- Stack frame giữ source, tham số theo invocation, depth, parent/child; GDB file-regex skip rules gây mất user frame đã được gỡ.
+- Golden trace test xác nhận thao tác ngữ nghĩa, không ràng buộc tổng snapshot.
+- Test runner tổng hợp PASS/FAIL theo suite, thoát nonzero khi fail và phân biệt executions với case duy nhất.
+- Implementation status, test results và known issues ghi kết quả cùng giới hạn còn lại.
 
-Golden test kiểm tra các thao tác có ý nghĩa: allocation/initialization, endpoint list, traversal, unlink, before/after delete, function call/return và diff nhìn thấy được. Không ràng buộc tổng số snapshot.
+## Rủi ro và phạm vi
 
-Local Windows đầy đủ gần nhất: 48/48 case pass; TC-GOLDEN-01 ghi 161 snapshots cùng 7 allocations, 21 traversals, 3 unlinks, 2 deallocations, 17 calls, 18 returns. CI nền ghi 29 snapshots trên GCC 15.2/GDB 17.1; local dùng GCC 16.1/GDB 17.2. Chưa kết luận rằng con số thấp tự nó là trace bị thiếu; semantic completeness phải qua assertion trong CI mới.
+Runner vẫn thực thi mã C++ trên host qua g++/gdb; chưa có sandbox đủ an toàn cho public multi-tenant. Cần cô lập tiến trình mức OS hoặc microVM trước khi triển khai công khai. Application Control có thể chặn binary tạm trên máy Windows; trạng thái này phải là test failure.
 
-Test runner báo PASS/FAIL theo từng suite, trả nonzero khi có suite fail và tách executions khỏi số case duy nhất. Toàn workflow có 67 executions nhưng 48 case duy nhất do Linux chạy lại 11 client và 8 normalizer case vốn cũng nằm trong lượt Windows qua MI-12 và `npm test`.
+## Điều kiện bàn giao
 
-## Điều kiện hoàn tất
-
-Chỉ chuyển sang GO khi commit Round 3 được push lên `dev/flowlab-p0`, workflow mới hoàn tất, Linux và Windows cùng PASS, MI-09 và MI-14 evidence xuất hiện trong log Windows, cùng golden trace semantic completeness assertions thành công. Không merge `main`, public deploy hay tuyên bố C++ execution an toàn production.
+Điều kiện kiểm toán P0 đã đạt với cả hai job CI xanh và log MI-09, MI-14, golden completeness thành công. Trạng thái này không xác nhận độ an toàn của public deployment.

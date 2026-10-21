@@ -316,7 +316,8 @@ async function runTests() {
   console.log('='.repeat(70));
   console.log('🚀 DSA FlowLab: Full Automated Verification Suite');
   console.log('='.repeat(70));
-  await runProcessTreeTests();
+  const processTreeSummary = await runProcessTreeTests();
+  console.log(`Process-tree assertions: ${processTreeSummary.passed}/${processTreeSummary.total}`);
 
   // 1. Ensure backend server is ready
   let serverProcess = null;

@@ -242,12 +242,12 @@ public static class FlowLabProcessTreeNative {
         if (-not $killer.Start()) { throw 'taskkill helper process did not start' }
         $stdoutTask = $killer.StandardOutput.ReadToEndAsync()
         $stderrTask = $killer.StandardError.ReadToEndAsync()
-        if (-not $killer.WaitForExit(2500)) {
+        if (-not $killer.WaitForExit(1500)) {
             try { $killer.Kill() } catch { }
-            $killer.WaitForExit(1000) | Out-Null
+            $killer.WaitForExit(500) | Out-Null
             $stdout = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
             $stderr = if ($stderrTask.IsCompleted) { $stderrTask.Result } else { '' }
-            throw "taskkill exceeded its 2.5s limit; stdout=$stdout stderr=$stderr"
+            throw "taskkill exceeded its 1.5s limit; stdout=$stdout stderr=$stderr"
         }
         if ($killer.ExitCode -ne 0) {
             throw "taskkill exit=$($killer.ExitCode); stdout=$($stdoutTask.Result) stderr=$($stderrTask.Result)"
@@ -257,7 +257,7 @@ public static class FlowLabProcessTreeNative {
         $primaryError = $_.Exception.Message
     }
 
-    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
     $verified = $false
     $fallbackUsed = -not $primarySucceeded
     $remaining = @()
@@ -302,7 +302,7 @@ public static class FlowLabProcessTreeNative {
                 $remaining += [pscustomobject]@{ pid = [int]$key; creation = [string]$creation; confirmed = $true }
             }
         }
-        if (-not $lastReason) { $lastReason = 'captured process identities remained after the 5s shutdown deadline' }
+        if (-not $lastReason) { $lastReason = 'captured process identities remained after the 3s shutdown deadline' }
     }
 
     $output = [pscustomobject]@{

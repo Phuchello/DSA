@@ -1,36 +1,57 @@
 # DSA FlowLab — Kết quả kiểm thử PR #1
 
-Cập nhật: 21/10/2026  
-Code candidate đã kiểm thử: [0e518054625133b56ff983f0926a89e49b0f18ed](https://github.com/Phuchello/DSA/commit/0e518054625133b56ff983f0926a89e49b0f18ed) trên `dev/flowlab-p0`.  
-PR: [#1](https://github.com/Phuchello/DSA/pull/1) — đang mở, chưa merge.  
-CI: [PR run 39606982961](https://github.com/Phuchello/DSA/actions/runs/39606982961) — Linux và Windows/native/Chrome đều PASS trên cùng code SHA.  
-Jobs: [Linux 119245616617](https://github.com/Phuchello/DSA/actions/runs/39606982961/job/119245616617), [Windows + Chrome 119246143017](https://github.com/Phuchello/DSA/actions/runs/39606982961/job/119246143017).  
-Browser artifact: [12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), 255,489 bytes, SHA-256 `0048a878be7b7abe5c4d3ba4f0ef2c21439d55e789c2cfd70dcd75296180d427`, hết hạn 04/11/2026 13:24:07 UTC.
+Cập nhật: 21/10/2026. Code và regression được xác minh: [029520f](https://github.com/Phuchello/DSA/commit/029520f35ed71b3b93cf2ed0f67aaadf477a15b1) trên dev/flowlab-p0. PR [#1](https://github.com/Phuchello/DSA/pull/1) đang mở, chưa merge.
 
-## Automated CI evidence
+## Tái hiện lỗi trước khi sửa
 
-- Linux/POSIX: build, 25 frontend Vitest assertions, 11 normalizer tests và full native suite PASS. Native suite: 17/17 baseline + 11/11 normalizer + 21/21 memory invariants + 25 client assertions qua MI-12 = **74/74 unique assertions**.
-- Windows: MinGW g++/GDB, build và full native suite PASS, **74/74 unique assertions**. Process-tree fallback và explicitly-unverified cleanup paths đều chạy trong job; MI-18 timeout, tree cleanup, temp workspace cleanup và concurrency recovery PASS.
-- MI-19 stack-vs-heap, MI-20 recursive frame pointers, MI-21 native crash/partial trace, MI-22 independent LIST roots, MI-23 allocator evidence PASS.
-- TC-GOLDEN-01, stdout chronology, MI-09, MI-14, abnormal termination và UI stale-request tests PASS.
-- Focused Windows process-tree test chạy trực tiếp trên máy kiểm tra: **9/9 assertions**. Local client suite: **25/25**; normalizer suite: **11/11**; server/client production build PASS.
+Commit regression-only [0333e4c](https://github.com/Phuchello/DSA/commit/0333e4c41c7ef3ec9d0daa9517157632842b2b88}) thêm đồng bộ liên tiến trình để: hoàn tất snapshot ban đầu, tạo child mới, rồi dùng primary tool chỉ kết thúc root. Windows run [39614137541](https://github.com/Phuchello/DSA/actions/runs/39614137541), job [119271145305](https://github.com/Phuchello/DSA/actions/runs/39614137541/job/119271145305) thất bại đúng tại regression: child PID 6116, identity creation-time 134370655205316505 vẫn sống và heartbeat tiếp tục, nhưng runner chỉ trả lỗi timeout thông thường, không phát processTreeTerminationVerified=false. Đây là false-positive cleanup mà regression chặn.
+
+## Kiểm chứng tự động mới nhất
+
+PR CI [run 39617710282](https://github.com/Phuchello/DSA/actions/runs/39617710282) chạy trên đúng SHA 029520f35ed71b3b93cf2ed0f67aaadf477a15b1; cả hai job PASS:
+
+- Linux/POSIX [job 119282888865](https://github.com/Phuchello/DSA/actions/runs/39617710282/job/119282888865): 74/74 unique assertions PASS; process-tree suite riêng 4/4.
+- Windows/MinGW g++/GDB/Chrome [job 119283457152](https://github.com/Phuchello/DSA/actions/runs/39617710282/job/119283457152): 74/74 unique assertions PASS; process-tree suite riêng 11/11.
+- Golden trace, MI-18 timeout/cleanup/concurrency recovery, MI-19 stack/heap, MI-20 frame pointers, MI-21 crash, UI/localization tests và stdout chronology đều PASS.
+
+Log Windows trên SHA này xác nhận:
+
+- Late child sau snapshot: PID 3644, creation identity 134370670073705050; child sống qua lần root-only termination và helper trả unverified cleanup, không xác nhận sai rằng cây đã sạch. Harness kiểm tra heartbeat rồi dọn child.
+- Injected Process32NextW error khác ERROR_NO_MORE_FILES: snapshot không hoàn chỉnh được báo unverified trước khi gọi primary taskkill.
+- Process-tree assertions: 11/11; MI-18 chạy tám timeout đồng thời, dọn workspace và phục hồi slot thành công.
+
+### Lịch sử run trung gian
+
+Không che giấu các lần CI đỏ trong quá trình sửa:
+
+- PR run [39615069050](https://github.com/Phuchello/DSA/actions/runs/39615069050) trên SHA 2b10986 trượt MI-18 khi một số helper bị kill ở giới hạn ngoài 12 giây. Commit [2097253](https://github.com/Phuchello/DSA/commit/209725315ee23993f6bc814c1de491dcf86dab85) giảm thời gian chờ primary/fallback; latest PR run ở trên PASS.
+- PR run [39617257621](https://github.com/Phuchello/DSA/actions/runs/39617257621) trên SHA 20972531 từng vượt phép đo 15 giây của regression process-tree khởi động đầu tiên; push run cùng SHA [39617249991](https://github.com/Phuchello/DSA/actions/runs/39617249991) PASS. Không nới phép đo. Latest PR run trên SHA 029520f35ed71b3b93cf2ed0f67aaadf477a15b1 PASS với bộ đếm 11/11 và guard lỗi nếu số assertion không khớp.
+- SHA bf56c22 từng in nhầm 11/12 dù các assertion đều qua; tổng đúng là 11. SHA 029520f35ed71b3b93cf2ed0f67aaadf477a15b1 sửa tổng và bắt CI thất bại nếu bộ đếm lệch.
+
+## Hành vi và thay đổi process-tree
+
+- [windowsProcessTree.ps1](https://github.com/Phuchello/DSA/blob/029520f35ed71b3b93cf2ed0f67aaadf477a15b1/server/src/runner/windowsProcessTree.ps1#L87-L103) chỉ coi ERROR_NO_MORE_FILES là kết thúc snapshot; lỗi khác ném diagnostic exception và handle luôn đóng trong finally.
+- Get-CurrentTree ở [windowsProcessTree.ps1](https://github.com/Phuchello/DSA/blob/029520f35ed71b3b93cf2ed0f67aaadf477a15b1/server/src/runner/windowsProcessTree.ps1#L178-L226) giữ PID cùng creation identity lịch sử. Nếu tổ tiên đã thoát/PID có thể được tái sử dụng, descendants được đánh dấu không xác nhận; không terminate theo PID phỏng đoán. Helper trả unverified nếu child như vậy vẫn quan sát được.
+- Primary taskkill tối đa 1.5 giây, chờ kết thúc taskkill tối đa thêm 0.5 giây; native verifier có deadline 3 giây. Chỉ fallback kill process được xác nhận bằng creation identity. [CppRunner](https://github.com/Phuchello/DSA/blob/029520f35ed71b3b93cf2ed0f67aaadf477a15b1/server/src/runner/cppRunner.ts#L171) áp dụng giới hạn ngoài cho helper và giữ workspace/slot nếu cleanup chưa xác minh.
+- Regression đồng bộ và injected API failure ở [processTreeTests.js](https://github.com/Phuchello/DSA/blob/029520f35ed71b3b93cf2ed0f67aaadf477a15b1/tests/processTreeTests.js#L145-L255), fixture tạo late child độc lập stdio ở [processTreeChild.js](https://github.com/Phuchello/DSA/blob/029520f35ed71b3b93cf2ed0f67aaadf477a15b1/tests/processTreeChild.js#L31-L51).
 
 ## Real-browser verification
 
-Job Windows chạy Chrome thật **155.0.8059.40** với ứng dụng local và backend C++/GDB thật; API không bị mock. Log của job ghi nhận PASS cho:
+Job Windows dùng Chrome thật 155.0.8059.40 và backend C++/GDB thật (không mock API). Log xác nhận PASS cho:
 
-- Vietnamese default UI và Beginner mode.
-- Dán/sửa mã C++ trong CodeMirror, đổi stdin, thực thi thật và stdout mong đợi `0 8`.
-- Điều hướng timeline tiến/lùi.
-- Topology linked list và các pointer `L.pHead`, `L.pTail`, `k`, `L`, `p`.
-- Advanced mode và memory inspector; quay lại Beginner tiếng Việt.
-- Sửa stdin khi request thật đang chờ: trace cũ được đánh dấu stale, response cũ bị bỏ qua, chạy lại với input hiện tại thay trace đúng.
-- Không có lỗi runtime hoặc exception ở browser console.
+- Mặc định tiếng Việt và Beginner.
+- Dán/sửa C++, đổi stdin, chạy backend thật; stdout 0 8.
+- Timeline tiến/lùi, topology linked list và pointer L.pHead, L.pTail, k, L, p.
+- Chuyển Advanced, kiểm tra memory inspector, quay lại Beginner tiếng Việt.
+- Sửa stdin khi request thật đang chờ: trace cũ bị giữ stale, response cũ với stdout 7 bị bỏ qua, chạy lại với input mới hiển thị stdout 8.
+- Không có lỗi runtime/exception trong browser console.
 
-Artifact giữ browser logs, JSON response/trace và screenshots. Đây là evidence tự động từ một headless Chrome flow, không thay cho kiểm thử trực quan rộng hơn.
+Artifact browser [12353941958](https://github.com/Phuchello/DSA/actions/runs/39617710282/artifacts/12353941958) gồm 10 log/trace/ảnh, 255,809 bytes, SHA-256 cb6f126c2360b458628d5c7431af1e0bf6ce6a6dd3d928982db2cf3b6de4d567, hết hạn 04/11/2026 14:38:34 UTC.
 
-## Kết luận kiểm toán
+## Kết luận
 
-Bốn finding của review đã có fix và regression evidence ở code candidate trên. CI của code candidate xanh trên Linux và Windows/Chrome. Các review threads vẫn để mở cho reviewer quyết định. **Khuyến nghị: NO-GO merge đến khi reviewer kiểm tra lại và có human authorization.**
+**GO cho một vòng independent review mới; NO-GO merge cho đến khi reviewer xác nhận và có human authorization.** Các thread vẫn unresolved.
 
-Không merge, không sửa `main`, không tạo tag/release, không deploy và không công khai runner. Native runner dùng quyền của host và không phải sandbox; chỉ chạy code tin cậy local.
+Giới hạn quan trọng: Windows Toolhelp snapshot không phải ownership boundary nguyên tử. Một descendant chưa xuất hiện ở lần snapshot cuối có thể lọt qua; Job Object chưa được tích hợp bằng suspended/atomic process launch. Với ancestry không chắc chắn, runner báo unverified và giữ workspace/execution slot; thao tác này an toàn theo hướng fail-closed nhưng có thể cần operator khởi động lại server và xử lý process/workspace còn lại. Không coi process-tree cleanup là sandbox.
+
+Không sửa main, không merge, không tạo tag/release, không deploy; native runner vẫn chỉ dùng local với code tin cậy.

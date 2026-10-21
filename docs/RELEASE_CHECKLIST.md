@@ -1,25 +1,26 @@
-# DSA FlowLab P0 — Checklist kiểm toán PR
+# DSA FlowLab P0 — Checklist kiểm toán PR #1
 
-Code candidate đã kiểm thử: [0e518054625133b56ff983f0926a89e49b0f18ed](https://github.com/Phuchello/DSA/commit/0e518054625133b56ff983f0926a89e49b0f18ed).  
-Pull request: [#1](https://github.com/Phuchello/DSA/pull/1).  
-CI: [run 39606982961](https://github.com/Phuchello/DSA/actions/runs/39606982961) — Linux job 119245616617 và Windows/native/Chrome job 119246143017 PASS.  
-Browser evidence: [artifact 12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), 255,489 bytes; expires 04/11/2026 13:24:07 UTC.
+Code/regression đã kiểm chứng: [029520f35ed71b3b93cf2ed0f67aaadf477a15b1](https://github.com/Phuchello/DSA/commit/029520f35ed71b3b93cf2ed0f67aaadf477a15b1).  
+PR: [#1](https://github.com/Phuchello/DSA/pull/1), đang mở, chưa merge.  
+PR CI mới nhất: [run 39617710282](https://github.com/Phuchello/DSA/actions/runs/39617710282) trên đúng SHA; Linux job 119282888865 và Windows/native/Chrome job 119283457152 PASS.
 
 ## Verification
 
-- [x] Linux/POSIX build and full native tests: 74/74 unique assertions PASS.
-- [x] Windows MinGW g++/GDB build and full native tests: 74/74 unique assertions PASS.
-- [x] Client UI/localization Vitest: 25/25; normalizer: 11/11.
-- [x] MI-18 process-tree timeout, cleanup and concurrency recovery; fallback and unverified paths exercised.
-- [x] MI-19 stack/heap evidence; MI-20 per-frame pointer identity; MI-21 crash; MI-22 multiple LIST roots; MI-23 allocation evidence.
-- [x] Real Chrome with real C++/GDB backend: editor/stdin/stdout, timeline, topology/pointers, Vietnamese Beginner/Advanced, stale-response protection and clean console.
-- [x] Browser logs, trace/JSON evidence and screenshots retained in artifact 12348299743.
+- [x] Linux/POSIX build và suite native: 74/74 unique assertions; process-tree riêng 4/4.
+- [x] Windows MinGW g++/GDB build và suite native: 74/74 unique assertions; process-tree riêng 11/11.
+- [x] Late child sau snapshot/root-only termination: child identity/heartbeat được xác nhận; runner báo unverified, không false-positive success.
+- [x] Injected Process32NextW non-EOF error: snapshot incomplete báo unverified trước primary tool.
+- [x] MI-18 tám timeout đồng thời, workspace cleanup và concurrency slot recovery PASS.
+- [x] MI-19 stack/heap, MI-20 frame identity, MI-21 crash/partial trace, Golden trace, UI/localization và stdout chronology PASS.
+- [x] Real Chrome 155.0.8059.40 với backend thật: paste/edit, stdin/stdout, timeline, topology/pointers, Beginner/Advanced tiếng Việt, pending-response stale protection và console PASS.
+- [x] Browser evidence: [artifact 12353941958](https://github.com/Phuchello/DSA/actions/runs/39617710282/artifacts/12353941958); 255,809 bytes, SHA-256 cb6f126c2360b458628d5c7431af1e0bf6ce6a6dd3d928982db2cf3b6de4d567.
 
-## Review and release boundary
+## Review và release boundary
 
-- [x] Four review findings have focused fixes and regression coverage; replies include final verification evidence.
-- [ ] Reviewer re-review/approval of all four threads. Threads remain unresolved for reviewer decision.
-- [ ] Human authorization to merge. **Not granted.**
-- [ ] Merge, tag, release, deploy or public runner. **Not performed.**
+- [x] Bằng chứng failing-before ở run 39614137541; corrective code và regression trên SHA 029520f35ed71b3b93cf2ed0f67aaadf477a15b1.
+- [x] Latest PR Linux/Windows/Chrome matrix PASS trên SHA 029520f35ed71b3b93cf2ed0f67aaadf477a15b1.
+- [ ] Independent reviewer kiểm tra lại; review threads vẫn unresolved.
+- [ ] Human authorization để merge: **chưa có**.
+- [ ] Merge, sửa main, tag, release, deploy/public runner: **không thực hiện**.
 
-**Decision: NO-GO to merge now.** Candidate is ready for reviewer re-review; native execution remains local-only and is not a sandbox.
+**Quyết định: GO cho independent review; NO-GO merge/release đến khi có review/authorization.** Native runner chạy với quyền host và không phải sandbox.

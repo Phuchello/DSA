@@ -210,7 +210,13 @@ function runNormalizerUnitTests() {
   });
 
   console.log(`Unit Test Summary: ${passed} PASS, ${failed} FAIL`);
-  if (failed > 0) throw new Error('Normalizer unit tests failed');
+  const summary = { passed, failed, total: passed + failed };
+  if (failed > 0) {
+    const error = new Error('Normalizer unit tests failed');
+    error.summary = summary;
+    throw error;
+  }
+  return summary;
 }
 
 if (require.main === module) {

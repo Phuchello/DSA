@@ -1,6 +1,7 @@
 const http = require('http');
 const path = require('path');
 const { fork } = require('child_process');
+const assert = require('assert');
 const { runNormalizerUnitTests } = require('./normalizerUnitTests.js');
 const { runMemoryInvariantTests } = require('./test_invariants.js');
 
@@ -146,6 +147,49 @@ function checkServerReady() {
   });
 }
 
+function assertTraceCompleteness(trace) {
+  assert.ok(Array.isArray(trace) && trace.length > 0, 'Golden execution must contain snapshots');
+  assert.ok(trace.every(step => step.snapshotConvention === 'before-statement'),
+    'Every golden snapshot must retain before-statement semantics');
+
+  const hasAllocation = trace.some(step => step.dsa.diff.allocatedNodes.length > 0);
+  const hasInitialization = trace.some(step => step.dsa.nodes.some(node => node.info !== null && node.status !== 'freed'));
+  const hasListEndpoints = trace.some(step => step.dsa.pointers.some(pointer => pointer.name === 'L.pHead'))
+    && trace.some(step => step.dsa.pointers.some(pointer => pointer.name === 'L.pTail'));
+  const hasTraversal = trace.some(step => step.dsa.pointers.some(pointer => pointer.name === 'p'))
+    && trace.some(step => step.dsa.diff.pointerReroutes.some(change => change.pointer === 'p'));
+  const hasUnlinking = trace.some(step => step.dsa.diff.unlinkedNodes.length > 0);
+  const deleteStepIndex = trace.findIndex(step => step.codeText.trim().startsWith('delete '));
+  const hasBeforeAfterDelete = deleteStepIndex >= 0
+    && !trace[deleteStepIndex].dsa.nodes.some(node => node.status === 'freed')
+    && trace.slice(deleteStepIndex + 1).some(step => step.dsa.diff.freedNodes.length > 0);
+  const hasFunctionCalls = trace.some(step => step.event === 'call');
+  const hasFunctionReturns = trace.slice(0, -1).some(step => step.event === 'return');
+  const hasStudentVisibleChanges = trace.some(step => step.dsa.diff.changedVariables.length > 0
+    || step.dsa.diff.allocatedNodes.length > 0
+    || step.dsa.diff.freedNodes.length > 0
+    || step.dsa.diff.unlinkedNodes.length > 0);
+
+  assert.ok(hasAllocation, 'Golden trace must show NODE allocations');
+  assert.ok(hasInitialization, 'Golden trace must show initialized NODE values');
+  assert.ok(hasListEndpoints, 'Golden trace must show pHead and pTail');
+  assert.ok(hasTraversal, 'Golden trace must show pointer traversal and movement');
+  assert.ok(hasUnlinking, 'Golden trace must show node unlinking');
+  assert.ok(hasBeforeAfterDelete, 'Golden trace must show live memory before delete and freed memory afterward');
+  assert.ok(hasFunctionCalls && hasFunctionReturns, 'Golden trace must show function calls and returns');
+  assert.ok(hasStudentVisibleChanges, 'Golden trace must retain changes visible to the student');
+
+  return {
+    snapshots: trace.length,
+    allocations: trace.filter(step => step.dsa.diff.allocatedNodes.length > 0).length,
+    traversals: trace.filter(step => step.dsa.diff.pointerReroutes.some(change => change.pointer === 'p')).length,
+    unlinkEvents: trace.filter(step => step.dsa.diff.unlinkedNodes.length > 0).length,
+    deallocationEvents: trace.filter(step => step.dsa.diff.freedNodes.length > 0).length,
+    calls: trace.filter(step => step.event === 'call').length,
+    returns: trace.filter(step => step.event === 'return').length
+  };
+}
+
 const TEST_CASES = [
   {
     id: 'TC-GOLDEN-01',
@@ -251,6 +295,10 @@ async function runTests() {
   let passed = 0;
   let failed = 0;
   const results = [];
+  let normalizerSummary = null;
+  let invariantSummary = null;
+  let clientAssertions = 0;
+  let suiteFailures = 0;
 
   try {
     // -------------------------------------------------------------
@@ -293,7 +341,12 @@ async function runTests() {
         }
 
         if (actualOutput === tc.expectedOutput) {
-          console.log(`✅ PASS (Output: "${actualOutput}", Steps: ${res.totalSteps})`);
+          if (tc.id === 'TC-GOLDEN-01') {
+            const completeness = assertTraceCompleteness(res.trace);
+            console.log(`✅ PASS (Output: "${actualOutput}"; trace complete: ${JSON.stringify(completeness)})`);
+          } else {
+            console.log(`✅ PASS (Output: "${actualOutput}")`);
+          }
           passed++;
           results.push({ id: tc.id, status: 'PASS' });
         } else {
@@ -354,16 +407,34 @@ async function runTests() {
     // PART 2: DSA Normalizer & Pointer Classification Unit Tests
     // -------------------------------------------------------------
     console.log('\n--- PHẦN 2: KIỂM THỬ ĐƠN VỊ BỘ CHUẨN HÓA & PHÂN LOẠI CON TRỎ ---');
-    runNormalizerUnitTests();
+    try {
+      normalizerSummary = runNormalizerUnitTests();
+    } catch (err) {
+      normalizerSummary = err.summary || { passed: 0, failed: 1, total: 1 };
+      suiteFailures++;
+      console.error(`Normalizer suite failed: ${err.message}`);
+    }
 
     // -------------------------------------------------------------
-    // PART 3: 12 Memory Invariant & Pointer Topology Tests
+    // PART 3: 17 Memory Invariant & Pointer Topology Tests
     // -------------------------------------------------------------
-    console.log('\n--- PHẦN 3: 12 BẤT BIẾN BỘ NHỚ & TOPO CON TRỎ (MEMORY INVARIANTS) ---');
-    await runMemoryInvariantTests();
+    console.log('\n--- PHẦN 3: 17 BẤT BIẾN BỘ NHỚ & TOPO CON TRỎ (MEMORY INVARIANTS) ---');
+    try {
+      invariantSummary = await runMemoryInvariantTests();
+    } catch (err) {
+      invariantSummary = err.summary || { passed: 0, failed: 1, total: 1, clientTestExecutions: 0 };
+      suiteFailures++;
+      console.error(`Memory invariant suite failed: ${err.message}`);
+    }
 
     console.log('\n' + '='.repeat(70));
-    console.log(`🏁 TỔNG KẾT BỘ TEST: TOÀN BỘ CÁC PHẦN ĐỀU VƯỢT QUA THÀNH CÔNG (100% PASS)`);
+    clientAssertions = invariantSummary?.clientTestExecutions || 0;
+    const backendExecutions = passed + failed + (normalizerSummary?.total || 0) + (invariantSummary?.total || 0);
+    const executions = backendExecutions + clientAssertions;
+    const uniqueAssertions = backendExecutions + clientAssertions;
+    const overallFailed = failed + (normalizerSummary?.failed || 0) + (invariantSummary?.failed || 0);
+    console.log(`🏁 TỔNG KẾT (${overallFailed ? 'FAIL' : 'PASS'}): ${passed}/${passed + failed} baseline; ${normalizerSummary?.passed || 0}/${normalizerSummary?.total || 0} normalizer; ${invariantSummary?.passed || 0}/${invariantSummary?.total || 0} invariants; ${clientAssertions} client assertions via MI-12.`);
+    console.log(`Test executions this command: ${executions}; unique assertions: ${uniqueAssertions}. MI-12 ran the ${clientAssertions} client assertions once inside this command.`);
     console.log('='.repeat(70));
   } finally {
     if (serverProcess) {
@@ -371,7 +442,7 @@ async function runTests() {
     }
   }
 
-  if (failed > 0) {
+  if (failed > 0 || suiteFailures > 0 || (normalizerSummary?.failed || 0) > 0 || (invariantSummary?.failed || 0) > 0) {
     process.exit(1);
   }
 }

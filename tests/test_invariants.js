@@ -10,6 +10,7 @@ async function runMemoryInvariantTests() {
 
   let passed = 0;
   let failed = 0;
+  let clientTestExecutions = 0;
 
   async function test(id, name, fn) {
     process.stdout.write(`Đang kiểm tra [${id}] ${name}... `);
@@ -212,6 +213,15 @@ int main() {
 
     const sharedNode = stepAfterAlias.dsa.nodes.find(n => n.address === pPtr.targetAddress);
     assert.ok(sharedNode && sharedNode.info === 99, 'Shared node must hold info=99');
+
+    const deleteStepIdx = res.trace.findIndex(s => s.codeText.trim() === 'delete p;');
+    assert.ok(deleteStepIdx >= 0 && res.trace[deleteStepIdx + 1], 'Must capture the step after alias deallocation');
+    const afterDelete = res.trace[deleteStepIdx + 1];
+    const pAfterDelete = afterDelete.dsa.pointers.find(x => x.name === 'p');
+    const qAfterDelete = afterDelete.dsa.pointers.find(x => x.name === 'q');
+    assert.strictEqual(pAfterDelete?.state, 'freed', 'Deleting through p must free the shared NODE allocation');
+    assert.strictEqual(qAfterDelete?.state, 'freed', 'The q alias must observe the same completed deallocation');
+    assert.strictEqual(pAfterDelete.targetAddress, qAfterDelete.targetAddress, 'Freed aliases must retain the same target address');
   });
 
   // -------------------------------------------------------------
@@ -387,11 +397,60 @@ int main() {
     const res = await runCppCode(code, '');
     assert.strictEqual(res.success, true, 'Code execution must succeed');
 
+    const recursiveSnapshots = res.trace.filter(s => s.funcName === 'SumList');
+    console.log(`  [MI-09 frame trace] ${JSON.stringify(recursiveSnapshots.map(step => ({
+      step: step.step,
+      line: step.line,
+      frames: step.stackToRender.map(frame => ({
+        name: frame.funcName,
+        sourceLocation: frame.sourceLocation,
+        frameDepth: frame.frameDepth,
+        parameterValues: frame.parameterValues,
+        parentFrameId: frame.parentFrameId,
+        childFrameId: frame.childFrameId
+      }))
+    })))}`);
+
     const maxFrameStep = res.trace.reduce((max, s) => s.stackToRender.length > max.stackToRender.length ? s : max, res.trace[0]);
-    assert.ok(maxFrameStep.stackToRender.length >= 3, 'Must observe at least 3 nested stack frames during recursion');
+    assert.ok(maxFrameStep.stackToRender.length >= 4, 'Must observe main and at least three nested recursive frames');
 
     const sumFrames = maxFrameStep.stackToRender.filter(f => f.funcName === 'SumList');
-    assert.ok(sumFrames.length >= 2, 'Must observe multiple SumList stack frames');
+    assert.ok(sumFrames.length >= 3, 'Must observe at least three simultaneous SumList invocations');
+    assert.ok(maxFrameStep.stackToRender.some(f => f.funcName === 'main'), 'The caller main frame must remain visible');
+
+    const deepestSumFrames = maxFrameStep.stackToRender.filter(f => f.funcName === 'SumList');
+    const mainFrame = maxFrameStep.stackToRender.find(f => f.funcName === 'main');
+    const expectedTargets = [
+      mainFrame.encodedLocals.n1[3],
+      mainFrame.encodedLocals.n2[3],
+      mainFrame.encodedLocals.n3[3],
+      '0x0'
+    ];
+    assert.ok(deepestSumFrames.length >= expectedTargets.length, 'Must capture the base-case invocation as well as the three node invocations');
+    for (const [index, frame] of deepestSumFrames.slice(0, expectedTargets.length).entries()) {
+      assert.strictEqual(frame.parameterValues.p[3], expectedTargets[index], `SumList invocation ${index} must retain its own p argument`);
+      assert.strictEqual(frame.encodedLocals.p[3], expectedTargets[index], `SumList local p must match invocation ${index}`);
+      assert.strictEqual(frame.frameDepth, index + 1, 'Frame depth must match outer-to-inner ordering');
+      assert.ok(frame.sourceLocation?.file === 'source.cpp' && frame.sourceLocation.line > 0, 'Each recursive frame needs its actual source location');
+      assert.strictEqual(frame.parentFrameId, maxFrameStep.stackToRender[index].frameId, 'Each invocation must point to its caller frame');
+      if (index + 1 < maxFrameStep.stackToRender.length) {
+        assert.strictEqual(maxFrameStep.stackToRender[index].childFrameId, frame.frameId, 'Caller and child frame links must agree');
+      }
+    }
+    assert.ok(res.trace.some(s => s.event === 'call'), 'The timeline must retain recursive function-entry events');
+    assert.ok(res.trace.slice(0, -1).some(s => s.event === 'return'), 'The timeline must retain function-return transitions before program exit');
+    for (const step of res.trace) {
+      assert.deepStrictEqual(step.stackToRender.map(f => f.frameDepth), step.stackToRender.map((_, i) => i), 'Every snapshot must preserve outer-to-inner frame order');
+    }
+    const expectedTimelineFrames = res.trace.map(s => s.stackToRender.map(f => f.frameId));
+    const forwardIndices = Array.from({ length: res.trace.length }, (_, index) => index);
+    const backwardIndices = forwardIndices.slice().reverse();
+    const navigationIndices = [...forwardIndices, ...backwardIndices, ...forwardIndices];
+    const navigatedFrames = navigationIndices.map(index => res.trace[index].stackToRender.map(f => f.frameId));
+    const traceLength = res.trace.length;
+    assert.deepStrictEqual(navigatedFrames.slice(0, traceLength), expectedTimelineFrames, 'Forward navigation must retain frame order');
+    assert.deepStrictEqual(navigatedFrames.slice(traceLength, traceLength * 2), expectedTimelineFrames.slice().reverse(), 'Backward navigation must retain frame order');
+    assert.deepStrictEqual(navigatedFrames.slice(traceLength * 2), expectedTimelineFrames, 'Forward navigation after stepping backward must restore frame order');
   });
 
   // -------------------------------------------------------------
@@ -452,9 +511,12 @@ int main() {
   await test('MI-12', 'Browser editor input, output, and timeline consistency', async () => {
     // Run the Vitest client tests
     const clientDir = path.resolve(__dirname, '../client');
-    const shellOpt = process.platform === 'win32' ? { shell: 'powershell.exe' } : {};
-    const vitestOutput = execSync('npm test', { cwd: clientDir, encoding: 'utf-8', ...shellOpt });
-    assert.ok(vitestOutput.includes('passed'), 'Vitest UI suite must pass');
+    const npmCommand = process.platform === 'win32' ? 'npm.cmd test' : 'npm test';
+    const vitestOutput = execSync(npmCommand, { cwd: clientDir, encoding: 'utf-8' });
+    const vitestSummary = /Tests\s+(\d+)\s+passed/.exec(vitestOutput);
+    assert.ok(vitestSummary, 'Vitest must report its executed test count');
+    clientTestExecutions = Number(vitestSummary[1]);
+    assert.ok(clientTestExecutions > 0, 'Vitest UI suite must execute at least one assertion');
   });
 
   // -------------------------------------------------------------
@@ -517,7 +579,40 @@ int main() {
     return 0;
 }`;
     // Branch taken: flag=1 → delete executes → n becomes nullptr → output -1
-    const resTaken = await runCppCode(code, '1');
+    const oldDebugSetting = process.env.FLOWLAB_DEBUG_DEALLOC;
+    process.env.FLOWLAB_DEBUG_DEALLOC = '1';
+    let resTaken;
+    let resSkipped;
+    let resStl;
+    try {
+      resTaken = await runCppCode(code, '1');
+      resSkipped = await runCppCode(code, '0');
+      const stlCode = `#include <iostream>
+#include <vector>
+using namespace std;
+struct NODE { int info; NODE* pNext; };
+int main() {
+    vector<int> values(256, 5);
+    NODE* n = new NODE{88, nullptr};
+    values.clear();
+    values.shrink_to_fit();
+    cout << n->info << endl;
+    return 0;
+}`;
+      resStl = await runCppCode(stlCode, '');
+    } finally {
+      if (oldDebugSetting === undefined) delete process.env.FLOWLAB_DEBUG_DEALLOC;
+      else process.env.FLOWLAB_DEBUG_DEALLOC = oldDebugSetting;
+    }
+
+    const readDiagnostics = (res) => (res.debugDiagnostics || '').split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+    const takenDiagnostics = readDiagnostics(resTaken);
+    const skippedDiagnostics = readDiagnostics(resSkipped);
+    const stlDiagnostics = readDiagnostics(resStl);
+    console.log(`  [MI-14 GDB] flag=1: ${JSON.stringify(takenDiagnostics.filter(d => d.event !== 'breakpoint-installed'))}`);
+    console.log(`  [MI-14 GDB] flag=0: ${JSON.stringify(skippedDiagnostics.filter(d => d.event !== 'breakpoint-installed'))}`);
+    console.log(`  [MI-14 GDB] STL regression: ${JSON.stringify(stlDiagnostics.filter(d => d.event !== 'breakpoint-installed'))}`);
+
     assert.strictEqual(resTaken.success, true, 'Execution must succeed with flag=1');
     const outTaken = resTaken.trace[resTaken.trace.length - 1].stdout.trim();
     assert.strictEqual(outTaken, '-1', 'With flag=1, delete taken, output must be -1');
@@ -537,9 +632,10 @@ int main() {
         }
       }
     }
+    assert.ok(takenDiagnostics.some(d => d.event === 'completed' && d.source_execution_location?.code.trim() === 'delete n;'),
+      'GDB diagnostics must confirm the direct delete n call and its completed deallocation');
 
     // Branch NOT taken: flag=0 → delete skipped → output 77
-    const resSkipped = await runCppCode(code, '0');
     assert.strictEqual(resSkipped.success, true, 'Execution must succeed with flag=0');
     const outSkipped = resSkipped.trace[resSkipped.trace.length - 1].stdout.trim();
     assert.strictEqual(outSkipped, '77', 'With flag=0, delete skipped, output must be 77');
@@ -553,6 +649,16 @@ int main() {
     assert.strictEqual(nPtrCout.state, 'valid', 'With flag=0, n must be valid (delete was skipped)');
     assert.ok(coutStep.dsa.nodes.some(n => n.info === 77 && n.status !== 'freed'),
       'Node with info=77 must remain live and active');
+    assert.strictEqual(skippedDiagnostics.filter(d => d.event === 'completed' && d.source_execution_location?.code.trim() === 'delete n;').length, 0,
+      'GDB must not report a delete completion when the conditional branch was skipped');
+
+    assert.strictEqual(resStl.success, true, 'STL deallocation regression program must execute');
+    const stlNodePtr = resStl.trace.find(s => s.codeText.includes('cout << n->info'))?.dsa.pointers.find(p => p.name === 'n');
+    assert.strictEqual(stlNodePtr?.state, 'valid', 'STL vector deallocation must not free a live NODE at a matching/ambiguous address');
+    assert.ok(resStl.trace.find(s => s.codeText.includes('cout << n->info'))?.dsa.nodes.some(n => n.info === 88 && n.status !== 'freed'),
+      'The NODE remains live after unrelated STL allocation cleanup');
+    assert.ok(stlDiagnostics.some(d => d.event === 'ignored' && d.source_execution_location?.code.includes('values.')),
+      'Diagnostics must identify and ignore the actual vector cleanup call site');
   });
 
   // -------------------------------------------------------------
@@ -637,7 +743,13 @@ int main() {
   console.log(`🏁 Memory Invariant Tests: ${passed} PASS, ${failed} FAIL trên tổng số ${passed + failed} bài kiểm tra`);
   console.log('='.repeat(70));
 
-  if (failed > 0) throw new Error('Memory invariant assertions failed');
+  const summary = { passed, failed, total: passed + failed, clientTestExecutions };
+  if (failed > 0) {
+    const error = new Error('Memory invariant assertions failed');
+    error.summary = summary;
+    throw error;
+  }
+  return summary;
 }
 
 if (require.main === module) {

@@ -2,7 +2,6 @@ import gdb
 import json
 import os
 import re
-import sys
 import time
 
 # Configure GDB parameters
@@ -24,6 +23,9 @@ STDIN_FILE = os.environ.get("FLOWLAB_STDIN_FILE", "")
 STDOUT_FILE = os.environ.get("FLOWLAB_STDOUT_FILE", "")
 TRACE_FILE = os.environ.get("FLOWLAB_TRACE_FILE", "trace.json")
 MAX_STEPS = int(os.environ.get("FLOWLAB_MAX_STEPS", "1000"))
+TARGET_ABI = os.environ.get("FLOWLAB_TARGET_ABI", "").lower()
+DEBUG_DEALLOC = os.environ.get("FLOWLAB_DEBUG_DEALLOC", "") == "1"
+DEBUG_FILE = os.environ.get("FLOWLAB_DEALLOC_DEBUG_FILE", TRACE_FILE + ".dealloc.jsonl")
 
 start_cmd = "start"
 if STDIN_FILE and os.path.exists(STDIN_FILE) and os.path.getsize(STDIN_FILE) > 0:
@@ -56,13 +58,100 @@ if not started:
 trace = []
 step_count = 0
 deleted_addresses = set()
-observed_freed_addresses = set()
-all_allocated_addresses = set()
+completed_deallocations = []
+in_flight_deallocations = set()
+node_allocation_generations = {}
+live_node_allocations = {}
 source_lines_cache = {}
 last_known_node_values = {}  # Cache of last known struct contents before deallocation
 pending_allocations = False  # Track when a new/CreateNode statement was executed
 last_stdout_size = -1
 last_stdout_cache = ""
+last_frame_ids = []
+
+def source_location(frame):
+    try:
+        sal = frame.find_sal()
+        if sal and sal.symtab and sal.symtab.filename:
+            return {
+                "file": os.path.basename(sal.symtab.filename.replace("\\", "/")),
+                "path": sal.symtab.filename,
+                "line": int(sal.line or 0)
+            }
+    except Exception:
+        pass
+    return {"file": "", "path": "", "line": 0}
+
+def debug_deallocation(event, **details):
+    if not DEBUG_DEALLOC:
+        return
+    try:
+        record = {"event": event, "time": time.time(), **details}
+        with open(DEBUG_FILE, "a", encoding="utf-8") as df:
+            df.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        pass
+
+def current_allocation_identity(address):
+    generation = node_allocation_generations.get(address)
+    if generation is None or live_node_allocations.get(address) != generation:
+        return None
+    return {"address": address, "generation": generation, "identity": f"{address}@{generation}"}
+
+def track_node_allocation(address):
+    """Track an observed live NODE address, creating a new generation only after reuse evidence."""
+    if address in deleted_addresses:
+        if not pending_allocations:
+            return False
+        deleted_addresses.discard(address)
+        node_allocation_generations[address] = node_allocation_generations.get(address, 1) + 1
+    else:
+        node_allocation_generations.setdefault(address, 1)
+    live_node_allocations[address] = node_allocation_generations[address]
+    return True
+
+def target_delete_argument_register():
+    """Use the ABI selected by the compiler target, not Python's host platform."""
+    if TARGET_ABI == "windows-x64":
+        return "rcx"
+    if TARGET_ABI == "sysv-x64":
+        return "rdi"
+    # Conservative fallback for direct/manual tracer invocations. An unknown ABI
+    # must not turn an arbitrary register value into a deallocation observation.
+    try:
+        abi = gdb.execute("show osabi", to_string=True).lower()
+        if "windows" in abi or "cygwin" in abi:
+            return "rcx"
+        if "linux" in abi or "darwin" in abi or "freebsd" in abi:
+            return "rdi"
+    except Exception:
+        pass
+    return None
+
+def deallocation_call_site(frame):
+    """Accept direct user-code delete calls, excluding allocator/STL deallocations."""
+    cur = frame
+    allowed_wrappers = ("operator delete", "operator delete[]", "_Zdl", "_Zda")
+    crossed_runtime_frame = False
+    while cur:
+        try:
+            name = cur.name() or ""
+            if any(name.startswith(prefix) for prefix in allowed_wrappers):
+                cur = cur.older()
+                continue
+            loc = source_location(cur)
+            if loc["file"] != os.path.basename(TARGET_FILE.replace("\\", "/")):
+                crossed_runtime_frame = True
+                cur = cur.older()
+                continue
+            code = read_source_line(loc["path"], loc["line"])
+            call_site = {"function": name, "location": loc, "code": code}
+            if crossed_runtime_frame:
+                return call_site, "intervening-runtime-frame"
+            return call_site, None
+        except Exception:
+            return None, "unreadable-call-site"
+    return None, "missing-user-call-site"
 
 class DeallocationBreakpoint(gdb.Breakpoint):
     """Runtime debugger-observed deallocation tracker.
@@ -71,56 +160,102 @@ class DeallocationBreakpoint(gdb.Breakpoint):
     """
     def __init__(self, spec):
         super().__init__(spec, gdb.BP_BREAKPOINT, internal=True)
+        self.spec = spec
         self.silent = True
 
     def stop(self):
+        diag = {"breakpoint_symbol": self.spec, "breakpoint_location": str(self.location)}
         try:
             f = gdb.newest_frame()
-            # Determine platform register for first argument (pointer being freed):
-            # Windows x64 (MSVC and MinGW-w64 GCC): RCX
-            # Linux / macOS x64 (System V AMD64 ABI): RDI
-            # Do NOT check RDI on Windows, because RDI is a callee-saved register
-            # that retains local variables across calls.
-            is_win = (
-                os.name == 'nt' or
-                sys.platform.startswith('win') or
-                sys.platform.startswith('msys') or
-                sys.platform.startswith('cygwin')
-            )
-            reg_name = 'rcx' if is_win else 'rdi'
+            diag["program_counter"] = hex(int(f.pc()))
+            diag["call_stack"] = []
+            cur = f
+            for _ in range(12):
+                if cur is None:
+                    break
+                try:
+                    frame_pc = hex(int(cur.pc()))
+                except Exception:
+                    frame_pc = None
+                diag["call_stack"].append({"function": cur.name() or "???", "source": source_location(cur), "pc": frame_pc})
+                cur = cur.older()
+            reg_name = target_delete_argument_register()
+            diag["target_abi"] = TARGET_ABI or "unknown"
+            diag["argument_register"] = reg_name
+            if not reg_name:
+                debug_deallocation("ignored", reason="unknown-target-abi", **diag)
+                return False
             try:
                 val = int(f.read_register(reg_name))
-                if val > 0x1000:
-                    addr_hex = f"0x{val:x}"
-                    observed_freed_addresses.add(addr_hex)
+                diag["candidate_address"] = f"0x{val:x}"
             except Exception:
-                pass
+                debug_deallocation("ignored", reason="argument-register-unavailable", **diag)
+                return False
+            addr_hex = diag["candidate_address"]
+            diag["tracked_node_allocation"] = current_allocation_identity(addr_hex)
+            call_site, rejection = deallocation_call_site(f)
+            diag["source_execution_location"] = call_site
+            if val <= 0x1000 or diag["tracked_node_allocation"] is None:
+                debug_deallocation("ignored", reason="address-not-a-live-tracked-node", **diag)
+                return False
+            if rejection:
+                debug_deallocation("ignored", reason=rejection, **diag)
+                return False
+            allocation_identity = diag["tracked_node_allocation"]["identity"]
+            if allocation_identity in in_flight_deallocations:
+                debug_deallocation("ignored", reason="duplicate-or-aliased-delete-breakpoint", **diag)
+                return False
+            in_flight_deallocations.add(allocation_identity)
+            # The breakpoint is at the operator delete entry. Record an event only
+            # after this exact deallocator frame returns successfully.
+            try:
+                DeallocationReturnBreakpoint(f, addr_hex, diag["tracked_node_allocation"], diag)
+            except Exception:
+                in_flight_deallocations.discard(allocation_identity)
+                raise
         except Exception:
-            pass
+            debug_deallocation("ignored", reason="breakpoint-inspection-error", **diag)
         return False
 
-# Register runtime deallocation breakpoints across platforms and compilers
-# NOTE: We intercept 'operator delete' and 'operator delete[]', NOT 'free'.
-# C 'free' is called internally by CRT/iostream buffers; user C++ NODE allocations
-# always invoke 'operator delete'.
+class DeallocationReturnBreakpoint(gdb.FinishBreakpoint):
+    """Confirms that a matched operator delete call returned before marking it freed."""
+    def __init__(self, frame, address, allocation, entry_diagnostic):
+        super().__init__(frame, internal=True)
+        self.address = address
+        self.allocation = allocation
+        self.entry_diagnostic = entry_diagnostic
+        self.silent = True
+
+    def stop(self):
+        current = current_allocation_identity(self.address)
+        self.in_flight_identity = self.allocation["identity"]
+        in_flight_deallocations.discard(self.in_flight_identity)
+        if current and current["identity"] == self.allocation["identity"]:
+            completed_deallocations.append(self.allocation)
+            debug_deallocation("completed", **self.entry_diagnostic)
+        else:
+            debug_deallocation("ignored-at-return", reason="allocation-generation-changed", **self.entry_diagnostic)
+        return False
+
+    def out_of_scope(self):
+        in_flight_deallocations.discard(self.allocation["identity"])
+        debug_deallocation("aborted", reason="deallocator-did-not-return", **self.entry_diagnostic)
+
+# GCC/MinGW use Itanium ABI mangled spellings. Avoid also installing the same
+# overloads through demangled names, which can create duplicate locations.
 for spec in [
-    'operator delete(void*, unsigned long long)',
-    'operator delete(void*)',
-    'operator delete(void*, unsigned long)',
-    'operator delete[](void*, unsigned long long)',
-    'operator delete[](void*)',
-    'operator delete[](void*, unsigned long)',
-    '_ZdlPv',      # GCC mangled: operator delete(void*)
-    '_ZdaPv',      # GCC mangled: operator delete[](void*)
-    '_ZdlPvy',     # GCC mangled: operator delete(void*, unsigned long long)
-    '_ZdaPvy',     # GCC mangled: operator delete[](void*, unsigned long long)
-    '_ZdlPvm',     # GCC mangled: operator delete(void*, unsigned long)
-    '_ZdaPvm',     # GCC mangled: operator delete[](void*, unsigned long)
+    '_ZdlPv',      # unsized scalar delete
+    '_ZdaPv',      # unsized array delete
+    '_ZdlPvy',     # sized scalar delete, size_t = unsigned long long
+    '_ZdaPvy',     # sized array delete
+    '_ZdlPvm',     # sized scalar delete, size_t = unsigned long
+    '_ZdaPvm',     # sized array delete
 ]:
     try:
         DeallocationBreakpoint(spec)
-    except Exception:
-        pass
+        debug_deallocation("breakpoint-installed", breakpoint_symbol=spec)
+    except Exception as exc:
+        debug_deallocation("breakpoint-unavailable", breakpoint_symbol=spec, error=str(exc))
 
 def read_source_line(filename, lineno):
     if filename not in source_lines_cache:
@@ -136,6 +271,20 @@ def read_source_line(filename, lineno):
     if 1 <= lineno <= len(lines):
         return lines[lineno - 1].strip()
     return ""
+
+def declaration_is_current_statement(symbol, line_text):
+    """Identify a local declared by the current source statement before reading its storage."""
+    try:
+        name = symbol.name
+        variable = re.search(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"\s*(?:=|;|,|\[|\{)", line_text)
+        if not variable:
+            return False
+        declared_type = str(symbol.type.strip_typedefs())
+        prefix = re.sub(r"\s+", "", line_text[:variable.start()])
+        declared_type = re.sub(r"\s+", "", declared_type)
+        return bool(declared_type and prefix.endswith(declared_type))
+    except Exception:
+        return False
 
 def read_current_stdout():
     global last_stdout_size, last_stdout_cache
@@ -252,7 +401,7 @@ while step_count < MAX_STEPS:
     sal = frame.find_sal()
     symtab = sal.symtab
     raw_fname = symtab.filename if symtab and symtab.filename else ""
-    filename = os.path.basename(raw_fname)
+    filename = os.path.basename(raw_fname.replace('\\', '/'))
     line = sal.line
     func_name = frame.name() or ""
 
@@ -263,11 +412,15 @@ while step_count < MAX_STEPS:
 
         # -------------------------------------------------------------
         # EXACT BEFORE-STATEMENT SNAPSHOT SEMANTICS:
-        # Commit deallocations observed by debugger runtime during previous step
+        # Commit only deallocations whose operator delete frame returned during
+        # the previous step, and only for the same live NODE allocation generation.
         # -------------------------------------------------------------
-        for f_addr in observed_freed_addresses:
-            if f_addr in all_allocated_addresses:
+        for allocation in completed_deallocations:
+            f_addr = allocation["address"]
+            if live_node_allocations.get(f_addr) == allocation["generation"]:
                 deleted_addresses.add(f_addr)
+                live_node_allocations.pop(f_addr, None)
+        completed_deallocations.clear()
 
         # Build stackToRender and discover active pointers
         stack_to_render = []
@@ -293,11 +446,6 @@ while step_count < MAX_STEPS:
                                 is_user = True
                     except Exception:
                         pass
-                if not is_user and cur_f.name():
-                    fname = cur_f.name()
-                    if not fname.startswith('_') and not fname.startswith('std::') and 'CRT' not in fname and 'ntdll' not in fname and 'msvcrt' not in fname and 'kernel' not in fname.lower():
-                        is_user = True
-
                 if is_user:
                     f_list.append(cur_f)
             except Exception:
@@ -311,16 +459,24 @@ while step_count < MAX_STEPS:
 
         observed_active_pointers = []
 
+        frame_ids = []
         for idx, f in enumerate(f_list):
-            f_name = f.name() or "???"
             try:
-                fp = hex(int(f.read_register("sp")))
+                frame_ids.append(hex(int(f.read_register("sp"))))
             except Exception:
                 try:
-                    fp = hex(int(f.pc()))
+                    frame_ids.append(hex(int(f.pc())))
                 except Exception:
-                    fp = f"frame_{idx}"
+                    frame_ids.append(f"frame_{idx}")
+
+        for idx, f in enumerate(f_list):
+            f_name = f.name() or "???"
+            fp = frame_ids[idx]
+            frame_source = source_location(f)
+            f_line = frame_source["line"] or line
+            f_code_text = read_source_line(frame_source["path"], f_line)
             locals_dict = {}
+            parameter_values = {}
             ordered_varnames = []
 
             try:
@@ -332,12 +488,15 @@ while step_count < MAX_STEPS:
                             ordered_varnames.append(sname)
                             try:
                                 # For innermost frame, verify if declaration line has been reached
-                                if f == frame and hasattr(sym, 'line') and sym.line and sym.line > line and not sym.is_argument:
+                                if (hasattr(sym, 'line') and sym.line and not sym.is_argument
+                                    and (sym.line > f_line or (sym.line == f_line and declaration_is_current_statement(sym, f_code_text)))):
                                     locals_dict[sname] = ["C_DATA", "0x0", "uninitialized", "?"]
                                     continue
                                 val = f.read_var(sym)
                                 parsed = parse_val(val)
                                 locals_dict[sname] = parsed
+                                if sym.is_argument:
+                                    parameter_values[sname] = parsed
 
                                 # Detect NODE pointers
                                 t_str = str(val.type.strip_typedefs())
@@ -350,7 +509,7 @@ while step_count < MAX_STEPS:
                                             if p_addr_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(p_addr_hex)
                                                 if node_val:
-                                                    all_allocated_addresses.add(p_addr_hex)
+                                                    track_node_allocation(p_addr_hex)
                                                     heap_records[p_addr_hex] = node_val
                                     except Exception:
                                         pass
@@ -363,7 +522,7 @@ while step_count < MAX_STEPS:
                                             if h_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(h_hex)
                                                 if node_val:
-                                                    all_allocated_addresses.add(h_hex)
+                                                    track_node_allocation(h_hex)
                                                     heap_records[h_hex] = node_val
                                         p_tail = val["pTail"]
                                         if int(p_tail) > 0x1000:
@@ -372,7 +531,7 @@ while step_count < MAX_STEPS:
                                             if t_hex not in deleted_addresses:
                                                 node_val = inspect_heap_node(t_hex)
                                                 if node_val:
-                                                    all_allocated_addresses.add(t_hex)
+                                                    track_node_allocation(t_hex)
                                                     heap_records[t_hex] = node_val
                                     except Exception:
                                         pass
@@ -384,8 +543,6 @@ while step_count < MAX_STEPS:
             except Exception:
                 pass
 
-            sal = f.find_sal()
-            f_line = sal.line if sal and sal.line else (f.function().line if (hasattr(f, 'function') and f.function() and hasattr(f.function(), 'line')) else line)
             stack_to_render.append({
                 "funcName": f_name,
                 "orderedVarNames": ordered_varnames,
@@ -393,7 +550,12 @@ while step_count < MAX_STEPS:
                 "frameId": fp,
                 "uniqueHash": f"{f_name}_{fp}",
                 "encodedLocals": locals_dict,
-                "line": f_line
+                "parameterValues": parameter_values,
+                "line": f_line,
+                "sourceLocation": frame_source,
+                "frameDepth": idx,
+                "parentFrameId": frame_ids[idx - 1] if idx > 0 else None,
+                "childFrameId": frame_ids[idx + 1] if idx + 1 < len(frame_ids) else None
             })
 
         # Address reuse check: if previous statement was an allocation statement,
@@ -401,9 +563,8 @@ while step_count < MAX_STEPS:
         if pending_allocations:
             for v_name, p_addr in observed_active_pointers:
                 if p_addr in deleted_addresses:
-                    deleted_addresses.discard(p_addr)
                     node_val = inspect_heap_node(p_addr)
-                    if node_val:
+                    if node_val and track_node_allocation(p_addr):
                         heap_records[p_addr] = node_val
             pending_allocations = False
 
@@ -420,7 +581,8 @@ while step_count < MAX_STEPS:
                             if next_addr not in deleted_addresses:
                                 node_val = inspect_heap_node(next_addr)
                                 if node_val:
-                                    all_allocated_addresses.add(next_addr)
+                                    if not track_node_allocation(next_addr):
+                                        continue
                                     heap_records[next_addr] = node_val
                                     check_queue.append(next_addr)
 
@@ -453,8 +615,20 @@ while step_count < MAX_STEPS:
         current_stdout = read_current_stdout()
 
         # Record this execution snapshot (BEFORE line executes)
+        current_frame_ids = frame_ids
+        event_type = "stepLine"
+        if last_frame_ids:
+            shared_prefix = 0
+            while (shared_prefix < len(last_frame_ids) and shared_prefix < len(current_frame_ids)
+                   and last_frame_ids[shared_prefix] == current_frame_ids[shared_prefix]):
+                shared_prefix += 1
+            if shared_prefix == len(last_frame_ids) and len(current_frame_ids) > len(last_frame_ids):
+                event_type = "call"
+            elif shared_prefix == len(current_frame_ids) and len(current_frame_ids) < len(last_frame_ids):
+                event_type = "return"
+
         trace.append({
-            "event": "stepLine",
+            "event": event_type,
             "line": line,
             "funcName": func_name,
             "codeText": code_text,
@@ -466,6 +640,7 @@ while step_count < MAX_STEPS:
             "deletedAddresses": list(deleted_addresses),
             "snapshotConvention": "before-statement"
         })
+        last_frame_ids = current_frame_ids
 
         # Check if THIS statement allocates memory (new or CreateNode)
         if "new " in code_text or "CreateNode" in code_text:
@@ -509,10 +684,13 @@ if step_count >= MAX_STEPS:
     termination_status = "truncated"
     termination_reason = f"Vượt quá giới hạn tối đa {MAX_STEPS} bước thực thi cho phép"
 
-# Commit any deallocations that executed on the final statement before program exit
-for f_addr in observed_freed_addresses:
-    if f_addr in all_allocated_addresses:
+# Commit completed deallocations before termination; incomplete/ambiguous entries
+# remain unclassified and therefore normalize to unknown rather than freed.
+for allocation in completed_deallocations:
+    f_addr = allocation["address"]
+    if live_node_allocations.get(f_addr) == allocation["generation"]:
         deleted_addresses.add(f_addr)
+        live_node_allocations.pop(f_addr, None)
 
 # Flush stdout buffers
 time.sleep(0.05)

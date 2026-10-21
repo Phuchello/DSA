@@ -1,77 +1,38 @@
-# DSA FlowLab: Independent Audit Remediation & Handoff Report (Round 2)
+# DSA FlowLab — Bàn giao kiểm toán Round 3
 
-**Ngày cập nhật:** 20/10/2026  
-**Kho lưu trữ chính thức:** https://github.com/Phuchello/DSA  
-**Nhánh triển khai:** `dev/flowlab-p0`  
-**Trạng thái kiểm toán:** HOÀN TẤT KHẮC PHỤC LỖI AUDIT ROUND 2 — SẴN SÀNG NGHIỆM THU (AUDIT REMEDIATED — GO)
+**Ngày:** 21/10/2026
+**Repository:** [Phuchello/DSA](https://github.com/Phuchello/DSA)
+**Nhánh:** `dev/flowlab-p0`
+**Trạng thái:** **NO-GO cho đến khi CI mới xác nhận Windows và Linux**
 
----
+## Cơ sở kiểm toán
 
-## 1. Tóm Tắt Khắc Phục Lỗi Audit Độc Lập — Vòng 2
+Run [39438217969](https://github.com/Phuchello/DSA/actions/runs/39438217969) trên commit `3dde96678beb195073edc5eca8e133d4acaea4a6` có Linux PASS và Windows FAIL tại MI-09, MI-14. Đây là kết quả CI đã xác minh; các báo cáo Round 2 `48/48 PASS` và GO không còn là trạng thái hiện hành.
 
-Dựa trên yêu cầu kiểm toán vòng 2 đối với commit `3e6c95079a023ca803afa52c4294274a9627e58e`, các lỗi kỹ thuật đã được khắc phục hoàn toàn:
+## Sửa lỗi trong Round 3
 
-### Mục A: Khắc phục GitHub Actions CI
-- Khắc phục lỗi `Dependencies lock file is not found`: Tạo và cam kết `package-lock.json` chuẩn tại thư mục gốc workspace.
-- Cấu hình CI thành 2 luồng công việc rõ ràng:
-  - **Job 1 (Linux `ubuntu-latest`):** Cài đặt phụ thuộc bằng `npm ci`, kiểm tra kiểu dữ liệu (TypeScript tsc), build client & server, chạy bộ kiểm thử UI/Localization Vitest và Normalizer Unit Tests.
-  - **Job 2 (Windows `windows-latest`):** Khởi tạo công cụ biên dịch MSYS2 MinGW (`mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-gdb`, `mingw-w64-x86_64-python`), kiểm tra rõ ràng Python-enabled GDB bằng lệnh `gdb -batch -ex "python import sys; print('GDB_PYTHON_OK:', sys.version)"`, thực thi toàn bộ 37 bài kiểm tra tích hợp backend và bất biến bộ nhớ.
-- Cờ biên dịch `-mconsole` được phân nhánh điều kiện chỉ chạy trên nền tảng Windows (`process.platform === 'win32'`), loại bỏ trên Linux.
+### MI-14 — deallocation chỉ khi có bằng chứng đầy đủ
 
-### Mục B: Ngữ nghĩa Vết Thực Thi Bộ Nhớ (Memory Trace Semantics)
-- Thay thế hoàn toàn cơ chế nhận diện `delete` bằng chuỗi regex nguồn bằng cơ chế runtime debugger `DeallocationBreakpoint`:
-  - Hook các hàm `operator delete(void*, unsigned long long)`, `operator delete(void*)`, `operator delete[](...)` ở mức thanh ghi CPU (`rcx` trên Windows x64, `rdi` trên Linux x64).
-  - Không hook C `free` để tránh nhầm lẫn với các thao tác cấp phát/giải phóng bộ đệm nội bộ của thư viện chuẩn CRT/iostream.
-  - Loại bỏ hoàn toàn dương tính giả trên các câu lệnh điều kiện như `if (flag == 1) delete n;` khi nhánh không được thực thi.
-  - Bảo toàn chặt chẽ quy ước **Before-statement snapshot**: node chỉ chuyển sang trạng thái `freed` sau khi câu lệnh giải phóng đã thực sự được CPU thực thi ở bước kế tiếp.
+- ABI lấy theo compiler target, không suy từ Python/GDB host: Windows x64 dùng `RCX`; Linux/System V dùng `RDI`.
+- Loại các breakpoint demangled trùng với tên mangled; chặn event trùng/alias đang in-flight.
+- Candidate phải khớp NODE allocation còn sống và đúng generation.
+- Event phải xuất phát trực tiếp từ user code; frame runtime/STL trung gian bị bỏ qua.
+- `FinishBreakpoint` xác nhận `operator delete` đã return. Chỉ snapshot kế tiếp mới commit trạng thái `freed`.
+- Debug mode `FLOWLAB_DEBUG_DEALLOC=1` ghi symbol, call stack, PC, register, candidate, allocation identity và source execution location.
+- Regression bao gồm nhánh delete bỏ qua, nhánh delete thực thi, alias và `std::vector` cleanup.
 
-### Mục C: Sửa Chữa Phân Loại Con Trỏ (Pointer Classification)
-- Khắc phục tình trạng con trỏ không thuộc đồ thị NODE (ví dụ con trỏ kiểu cơ sở `int*`, `char*`) bị phân loại nhầm thành dangling pointer.
-- Phân biệt rõ ràng 6 trạng thái con trỏ:
-  - `valid`: Con trỏ trỏ tới địa chỉ NODE hợp lệ đang hoạt động trên Heap.
-  - `null`: Con trỏ `nullptr` hoặc địa chỉ `0x0`.
-  - `freed`: Con trỏ trỏ tới ô nhớ đã bị thu hồi bởi `operator delete`.
-  - `dangling`: Con trỏ trỏ tới địa chỉ bất hợp lệ có bằng chứng xác thực.
-  - `uninitialized`: Con trỏ chưa khởi tạo trên stack.
-  - `unknown`: Con trỏ trỏ tới địa chỉ ngoài đồ thị NODE mà không có bằng chứng đã giải phóng (tránh dương tính giả).
+### MI-09 — frame đệ quy có nguồn và invocation riêng
 
-### Mục D: Thực Thi Kiểm Định Schema Chặt Chẽ (Enforce Trace Schema)
-- Khắc phục việc âm thầm sử dụng dữ liệu thô chưa kiểm chứng:
-  - Runner kiểm định tệp vết thô bằng `RawTraceFileSchema.safeParse`. Tệp vết bị hỏng sẽ trả về lỗi xác thực rõ ràng.
-  - Normalizer kiểm định từng bước thực thi bằng `RawExecutionPointSchema.safeParse`. Nếu một bước bị lỗi cấu trúc, normalizer phát sinh một nút sự kiện `schema_error` có kiểm soát thay vì bỏ qua âm thầm.
+Frame user chỉ được đưa vào trace khi source file xác nhận là mã người dùng. Mỗi frame giữ tên, source location, độ sâu, parameter values, frame ID và parent/child IDs. Tracer dùng source line riêng cho từng frame, đọc tham số cho đúng invocation và đánh dấu call/return khi stack thay đổi. Test không tạo frame giả; nó đối chiếu các giá trị `p` thực tế với ba NODE và base case `nullptr`.
 
-### Mục E: Củng Cố Toàn Diện Bộ Kiểm Thử
-- **MI-08 (Address Reuse):** Kiểm chứng trung thực thực tế cấp phát lại ô nhớ (nếu allocator tái sử dụng địa chỉ thì thế hệ `generation` tăng lên 2 và định danh node cũ/mới độc lập). Đồng thời kiểm chứng qua fixture tất định tại unit test.
-- **Bổ sung các bài kiểm tra mới:**
-  - `MI-13`: Con trỏ không phải NODE được phân loại là `unknown`, không phải `dangling`.
-  - `MI-14`: Câu lệnh xóa có điều kiện (`if (flag == 1) delete n;`), kiểm chứng khi `flag == 0` node không bao giờ bị giải phóng nhầm; khi `flag == 1` node được giải phóng chính xác sau bước chạy.
-  - `MI-15`: Lỗi biên dịch C++ trả về `success: false`, `trace: []` và thông báo lỗi rõ ràng của compiler.
-  - `MI-16`: Xác thực Schema từ chối dữ liệu vết lỗi và phát sinh `schema_error`.
-  - `MI-17`: Truncated trace do vòng lặp dài được gắn nhãn `terminationStatus: 'truncated'` và sự kiện `truncated` rõ ràng.
+### Trace completeness và độ trung thực của test
 
-### Mục F: An Ninh Thực Thi Cục Bộ
-- Giới hạn CORS nghiêm ngặt vào các origin phát triển cục bộ (`localhost:5173`, `127.0.0.1:5173`, `localhost:4000`, `127.0.0.1:4000`).
-- Bổ sung middleware kiểm tra Host header chống tấn công DNS rebinding.
-- Tài liệu hóa trung thực: Runner hiện tại là môi trường cục bộ phục vụ học tập, không phải sandbox multi-tenant trên môi trường đám mây công khai.
+Golden test kiểm tra các thao tác có ý nghĩa: allocation/initialization, endpoint list, traversal, unlink, before/after delete, function call/return và diff nhìn thấy được. Không ràng buộc tổng số snapshot.
 
----
+Local Windows đầy đủ gần nhất: 48/48 case pass; TC-GOLDEN-01 ghi 161 snapshots cùng 7 allocations, 21 traversals, 3 unlinks, 2 deallocations, 17 calls, 18 returns. CI nền ghi 29 snapshots trên GCC 15.2/GDB 17.1; local dùng GCC 16.1/GDB 17.2. Chưa kết luận rằng con số thấp tự nó là trace bị thiếu; semantic completeness phải qua assertion trong CI mới.
 
-## 2. Hướng Dẫn Kiểm Thử & Chạy Nghiệm Thu
+Test runner báo PASS/FAIL theo từng suite, trả nonzero khi có suite fail và tách executions khỏi số case duy nhất. Toàn workflow có 67 executions nhưng 48 case duy nhất do Linux chạy lại 11 client và 8 normalizer case vốn cũng nằm trong lượt Windows qua MI-12 và `npm test`.
 
-```bash
-# 1. Chạy toàn bộ 37 bài kiểm thử tự động backend (Baseline + Normalizer Unit + Invariants)
-npm test
+## Điều kiện hoàn tất
 
-# 2. Chạy bộ kiểm thử UI và Bản địa hóa (Vitest)
-npm --prefix client test
-
-# 3. Biên dịch toàn bộ Client và Server
-npm run build
-```
-
----
-
-## 3. Khuyến Nghị Nghiệm Thu
-
-- **Khuyến nghị:** **GO (CHẤP THUẬN NGHIỆM THU P0 — ROUND 2)**.
-- **Tiêu chuẩn thành công:** Hệ thống hoạt động tin cậy, không còn lỗi nhận diện cấp phát giả, topo con trỏ bám sát thực thi thực tế của CPU/GDB, 48/48 test tự động đạt 100%.
+Chỉ chuyển sang GO khi commit Round 3 được push lên `dev/flowlab-p0`, workflow mới hoàn tất, Linux và Windows cùng PASS, MI-09 và MI-14 evidence xuất hiện trong log Windows, cùng golden trace semantic completeness assertions thành công. Không merge `main`, public deploy hay tuyên bố C++ execution an toàn production.

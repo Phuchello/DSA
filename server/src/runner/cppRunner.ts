@@ -12,6 +12,7 @@ export interface RunResult {
   totalSteps?: number;
   terminationStatus?: string;
   terminationReason?: string;
+  debugDiagnostics?: string;
   error?: string;
 }
 
@@ -185,9 +186,13 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     const env = {
       ...process.env,
       FLOWLAB_TARGET_FILE: 'source.cpp',
+      // The debugger's Python host ABI is not necessarily the executable's ABI
+      // (notably for MinGW GDB on Windows), so pass the compiler target directly.
+      FLOWLAB_TARGET_ABI: isWin ? 'windows-x64' : 'sysv-x64',
       FLOWLAB_STDIN_FILE: stdinFile,
       FLOWLAB_STDOUT_FILE: stdoutFile,
       FLOWLAB_TRACE_FILE: traceFile,
+      FLOWLAB_DEALLOC_DEBUG_FILE: path.join(tempDir, 'deallocation-debug.jsonl'),
       FLOWLAB_MAX_STEPS: process.env.FLOWLAB_MAX_STEPS || '1000'
     };
 
@@ -244,13 +249,19 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
 
     // 8. Normalize trace for DSA Visualization
     const normalizedPoints = normalizeTrace(rawPoints);
+    const debugDiagnostics = process.env.FLOWLAB_DEBUG_DEALLOC === '1'
+      ? (fs.existsSync(env.FLOWLAB_DEALLOC_DEBUG_FILE)
+        ? fs.readFileSync(env.FLOWLAB_DEALLOC_DEBUG_FILE, 'utf-8')
+        : '')
+      : undefined;
 
     return {
       success: true,
       trace: normalizedPoints,
       totalSteps: normalizedPoints.length,
       terminationStatus: validatedTrace.termination_status || 'normal',
-      terminationReason: validatedTrace.termination_reason || ''
+      terminationReason: validatedTrace.termination_reason || '',
+      ...(debugDiagnostics === undefined ? {} : { debugDiagnostics })
     };
   } catch (err: any) {
     return {

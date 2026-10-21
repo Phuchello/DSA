@@ -1,75 +1,39 @@
-# DSA FlowLab: Full Automated Verification & Test Results (Round 2)
+# DSA FlowLab — Kết quả kiểm thử P0 Round 3
 
-**Thời gian chạy kiểm thử:** 20/10/2026  
-**Nhánh kiểm tra:** `dev/flowlab-p0`  
-**Tổng số bài kiểm tra:** 48 bài kiểm tra (100% PASS, 0 FAIL)
+**Cập nhật:** 21/10/2026
+**Nhánh:** `dev/flowlab-p0`
 
----
+## Kết quả CI của commit nền
 
-## 1. Bảng Tổng Hợp Kết Quả Toàn Diện
+[GitHub Actions run 39438217969](https://github.com/Phuchello/DSA/actions/runs/39438217969) chạy trên commit `3dde96678beb195073edc5eca8e133d4acaea4a6`:
+
+- **Linux:** PASS. Build/typecheck, 11 client test và 8 normalizer test thành công.
+- **Windows:** FAIL. Build thành công; bộ test thực thi nhưng MI-09 và MI-14 thất bại. 15/17 memory invariant khác PASS.
+- CI Windows báo MI-09 không thấy tối thiểu ba frame đệ quy và MI-14 đánh dấu `n` là `freed` khi `flag=0`.
+- Golden trace CI ghi 29 snapshot. Run dùng GCC `15.2.0`, GDB `17.1`.
+
+## Kết quả local Windows sau thay đổi Round 3
+
+Toolchain: MinGW-W64 GCC `16.1.0`, GDB `17.2`, Node `24.19.0`. Lần chạy đầy đủ gần nhất:
 
 ```
-======================================================================
-🚀 DSA FlowLab: Full Automated Verification Suite (Round 2 Remediation)
-======================================================================
-Khởi động máy chủ backend tự động trên http://127.0.0.1:4000...
-
---- PHẦN 1: 12 BÀI TOÁN CƠ SỞ (GOLDEN, EDGE CASES, SECURITY, STDIN) ---
-[TC-GOLDEN-01] IT003 TimKiemVaXoa chuẩn (Xóa 3 ở đầu và giữa)         ✅ PASS (Output: "0 8 2 4 7", Steps: 161)
-[TC-EDGE-01] Ca biên 1: Không tìm thấy k trong danh sách                ✅ PASS (Output: "2 4 7", Steps: 79)
-[TC-EDGE-02] Ca biên 2: Xóa phần tử đầu danh sách ([3,0,8], k=3)        ✅ PASS (Output: "0 8", Steps: 80)
-[TC-EDGE-03] Ca biên 3: Xóa phần tử cuối danh sách ([0,8,3], k=3)       ✅ PASS (Output: "0 8", Steps: 81)
-[TC-EDGE-04] Ca biên 4: Xóa các nút trùng lặp liên tiếp                 ✅ PASS (Output: "4", Steps: 124)
-[TC-EDGE-05] Ca biên 5: Xóa toàn bộ danh sách ([3,3,3], k=3 -> -1)      ✅ PASS (Output: "-1", Steps: 82)
-[TC-EDGE-06] Ca biên 6: Danh sách rỗng ([] -> -1)                       ✅ PASS (Output: "-1", Steps: 19)
-[TC-EDGE-07] Ca biên 7: Danh sách có đúng 1 phần tử trùng khớp ([3])     ✅ PASS (Output: "-1", Steps: 40)
-[TC-EDGE-08] Ca biên 8: Danh sách có đúng 1 phần tử không trùng ([7])   ✅ PASS (Output: "7", Steps: 39)
-[TC-SEC-01] Bảo mật: Ngăn chặn mã độc #include <windows.h>              ✅ PASS (Đã chặn an toàn)
-[TC-SEC-02] Bảo mật: Ngăn chặn hàm thực thi hệ thống system()           ✅ PASS (Đã chặn an toàn)
-[TC-STDIN-DIFF] Kiểm tra tính độc lập của stdin                         ✅ PASS (Input A -> "1 3", Input B -> "2 3")
-
---- PHẦN 2: 8 KIỂM THỬ ĐƠN VỊ BỘ CHUẨN HÓA & PHÂN LOẠI CON TRỎ ---
-1. Classifies null pointer correctly                                    ✅ PASS
-2. Classifies valid pointer to active heap node correctly               ✅ PASS
-3. Classifies freed pointer (confirmed via deletedAddresses) correctly  ✅ PASS
-4. Pointer to address NOT in heap and NOT freed is unknown              ✅ PASS
-5. Classifies uninitialized pointer correctly                           ✅ PASS
-6. Schema validation error step is emitted for malformed trace input    ✅ PASS
-7. Distinguishes main chain (allocated) vs detached vs unreachable      ✅ PASS
-8. Preserves stable identity and increments generation on address reuse ✅ PASS
-
---- PHẦN 3: 17 BẤT BIẾN BỘ NHỚ & TOPO CON TRỎ (MEMORY INVARIANTS) ---
-[MI-01] Correct pHead before and after head deletion                    ✅ PASS
-[MI-02] Correct pTail after tail deletion                               ✅ PASS
-[MI-03] Correct pNext target before and after middle-node unlinking     ✅ PASS
-[MI-04] Precise pre-delete versus post-delete memory state              ✅ PASS
-[MI-05] Two aliases pointing to one node                                ✅ PASS
-[MI-06] Dangling pointer after deallocation                             ✅ PASS
-[MI-07] Detached node still reachable through another valid pointer     ✅ PASS
-[MI-08] Memory address reuse — honest observation & generation tracking  ✅ PASS
-[MI-09] Multiple stack frames and recursion                             ✅ PASS
-[MI-10] Trace truncation and abnormal termination                       ✅ PASS
-[MI-11] Different stdin inputs using unchanged source code              ✅ PASS
-[MI-12] Browser editor input, output, and timeline consistency          ✅ PASS
-[MI-13] Non-NODE pointer classified as unknown, not false-positive      ✅ PASS
-[MI-14] Conditional delete — node freed only when condition is true     ✅ PASS
-[MI-15] Compile failure returns buildOutput and empty trace             ✅ PASS
-[MI-16] Schema validation emits error for malformed trace steps         ✅ PASS
-[MI-17] Partial trace labeled truncated, not normal                     ✅ PASS
-
---- PHẦN 4: 11 KIỂM THỬ GIAO DIỆN CLIENT & BẢN ĐỊA HÓA (VITEST) ---
-1. src/components/CodeEditor.test.tsx > renders editor tabs & console   ✅ PASS
-2. src/components/CodeEditor.test.tsx > allows tab switching & stdin ed  ✅ PASS
-3. src/components/CodeEditor.test.tsx > displays executing line marker  ✅ PASS
-4. src/components/CodeEditor.test.tsx > displays stale trace warning    ✅ PASS
-5. src/components/CodeEditor.test.tsx > displays build error & stdout   ✅ PASS
-6. src/test/LinkedListCanvas.test.tsx > renders empty list message      ✅ PASS
-7. src/test/LinkedListCanvas.test.tsx > renders main chain real edges   ✅ PASS
-8. src/test/LinkedListCanvas.test.tsx > separates detached/freed nodes  ✅ PASS
-9. src/test/LinkedListCanvas.test.tsx > special dock for nullptr/dang   ✅ PASS
-10. src/test/localization.test.tsx > translates lesson difficulty       ✅ PASS
-11. src/test/localization.test.tsx > displays Vietnamese mode labels    ✅ PASS
-======================================================================
-🏁 TỔNG SỐ BÀI KIỂM TRA: 48/48 PASS (100% ĐẠT)
-======================================================================
+12/12 baseline
+8/8 normalizer
+17/17 memory invariants
+11/11 client test qua MI-12
+48 test case executions / 48 test case checks duy nhất
 ```
+
+TC-GOLDEN-01 trả đúng `0 8 2 4 7`. Assertion trace completeness xác nhận 161 snapshot gồm 7 allocation, 21 pointer traversal, 3 unlink, 2 deallocation, 17 call và 18 return. Snapshot count được ghi để quan sát; không có ngưỡng count cố định.
+
+MI-09 ghi nhận các frame theo từng snapshot. Ở độ sâu lớn nhất có `main` và bốn `SumList` frame; các tham số `p` lần lượt trỏ tới ba NODE và `nullptr`. Frame giữ source location, depth, invocation-local parameter value và caller/child ID.
+
+MI-14 có chẩn đoán runtime: với `flag=0`, stdout là `77`, `n` là `valid`, không có deallocation `delete n`; với `flag=1`, stdout là `-1`, `_ZdlPv` nhận con trỏ qua `RCX` và FinishBreakpoint xác nhận return trước snapshot sau lệnh delete. Regression `std::vector` ghi rõ call stack STL và giữ NODE còn sống. MI-05 xác minh hai alias cùng chuyển thành `freed` sau một lần delete.
+
+## Cách tính lượt chạy trên toàn workflow
+
+Hai job GitHub hiện chạy tổng cộng 67 test case executions: Windows chạy baseline 12 + normalizer 8 + invariants 17 + client 11 (MI-12); Linux chạy lại client 11 và normalizer 8. Tổng test case duy nhất là 48. Các lượt client/normalizer chạy lại là executions lặp, không phải test case mới.
+
+## Trạng thái xác minh
+
+Kết quả local không được gọi là kết quả GitHub CI. Kết quả CI mới cho commit đã sửa chưa có ở tài liệu này; giữ **NO-GO** cho đến khi Linux và Windows cùng PASS. Lần chạy Windows local có một lần bị Application Control của máy chặn một executable tạm; lần chạy đầy đủ gần nhất sau đó hoàn tất 48/48. Không test nào bị skip hoặc chuyển thành PASS do inconclusive.

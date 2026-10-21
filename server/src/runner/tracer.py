@@ -13,8 +13,9 @@ gdb.execute("set print pretty off")
 try:
     gdb.execute("skip -rfu ^std::")
     gdb.execute("skip -rfu ^__")
-    gdb.execute("skip -gfi */include/*")
-    gdb.execute("skip -gfi *bits/*")
+    # Avoid file-regex skip rules here. MinGW/GDB versions normalize Windows
+    # source paths differently; these patterns can hide user functions too.
+    # Runtime frames remain filtered by function name and source file below.
 except Exception:
     pass
 

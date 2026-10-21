@@ -83,9 +83,26 @@ function terminateProcessTree(pid: number): Promise<void> {
     signalGroup('SIGTERM');
     setTimeout(() => {
       signalGroup('SIGKILL');
-      // Give the kernel a short interval to deliver the group-wide kill before
-      // the caller removes the run's temporary directory.
-      setTimeout(resolve, 100);
+      // Confirm that the group has disappeared before releasing the execution
+      // slot and allowing its temporary workspace to be removed. The deadline
+      // keeps cleanup bounded even if the kernel retains exited group members.
+      const deadline = Date.now() + 1200;
+      const waitForGroupExit = () => {
+        try {
+          process.kill(-pid, 0);
+        } catch (error: any) {
+          if (error?.code === 'ESRCH') {
+            resolve();
+            return;
+          }
+        }
+        if (Date.now() >= deadline) {
+          resolve();
+          return;
+        }
+        setTimeout(waitForGroupExit, 25);
+      };
+      waitForGroupExit();
     }, 100);
   });
 }

@@ -21,6 +21,11 @@ async function waitForJson(file, timeoutMs) {
 function pidIsAlive(pid) {
   try {
     process.kill(pid, 0);
+    if (process.platform !== 'win32') {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const processState = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\\s+/)[0];
+      return processState !== 'Z';
+    }
     return true;
   } catch (error) {
     return error?.code !== 'ESRCH';
@@ -46,17 +51,24 @@ async function runProcessTreeTests() {
   try {
     const pids = await waitForJson(pidFile, 1200);
     assert.ok(pids.parent > 0 && pids.child > 0, 'Fixture must publish parent and descendant PIDs');
+    if (process.platform !== 'win32') {
+      assert.strictEqual(pids.parentGroup, pids.parent,
+        `POSIX command must lead its own process group (parent ${pids.parent}, group ${pids.parentGroup})`);
+      assert.strictEqual(pids.childGroup, pids.parentGroup,
+        `Descendant must inherit the execution process group (child ${pids.child}, group ${pids.childGroup})`);
+    }
+    const startedAt = Date.now();
     await assert.rejects(command, /Quá thời gian thực thi cho phép/,
       'Timeout must settle with the configured timeout error');
+    assert.ok(Date.now() - startedAt < 5000, 'Timeout termination must settle within a bounded interval');
+    assert.ok(await waitForProcessesToExit([pids.parent, pids.child], 1000),
+      'The command and its descendant must be gone before timeout cleanup completes');
 
-    const heartbeatAfterKill = fs.existsSync(heartbeatFile) ? fs.readFileSync(heartbeatFile, 'utf8') : '';
+    const heartbeatAfterExit = fs.existsSync(heartbeatFile) ? fs.readFileSync(heartbeatFile, 'utf8') : '';
     await delay(200);
     const heartbeatAfterWait = fs.existsSync(heartbeatFile) ? fs.readFileSync(heartbeatFile, 'utf8') : '';
-    assert.strictEqual(heartbeatAfterWait, heartbeatAfterKill,
+    assert.strictEqual(heartbeatAfterWait, heartbeatAfterExit,
       'A descendant must stop writing immediately after process-tree termination');
-
-    assert.ok(await waitForProcessesToExit([pids.parent, pids.child], 3000),
-      'The command and its descendant must both exit after a timeout');
     console.log('✅ Process-tree timeout regression: group/tree terminated, Promise settled, descendant stopped');
     return { passed: 4, failed: 0, total: 4 };
   } finally {

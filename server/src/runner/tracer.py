@@ -100,10 +100,13 @@ def current_allocation_identity(address):
     return {"address": address, "generation": generation, "identity": f"{address}@{generation}"}
 
 def track_node_allocation(address):
-    """Track an observed live NODE address, creating a new generation only after reuse evidence."""
+    """Track NODE only after a live identity or an executed NODE allocation is observed."""
+    current_generation = node_allocation_generations.get(address)
+    if current_generation is not None and live_node_allocations.get(address) == current_generation:
+        return True
+    if not pending_allocations:
+        return False
     if address in deleted_addresses:
-        if not pending_allocations:
-            return False
         deleted_addresses.discard(address)
         node_allocation_generations[address] = node_allocation_generations.get(address, 1) + 1
     else:
@@ -430,6 +433,24 @@ while step_count < MAX_STEPS:
         # Build stackToRender and discover active pointers
         stack_to_render = []
         heap_records = {}
+        stack_node_records = {}
+        unknown_node_records = {}
+
+        def observe_node_address(address):
+            # A readable NODE is not evidence of a heap allocation. Stack
+            # objects were collected from frame locals in a first pass.
+            if address in stack_node_records:
+                return
+            if address in deleted_addresses and not pending_allocations:
+                return
+            node_val = inspect_heap_node(address)
+            if not node_val:
+                return
+            if track_node_allocation(address):
+                unknown_node_records.pop(address, None)
+                heap_records[address] = node_val
+            else:
+                unknown_node_records.setdefault(address, node_val)
 
         # Collect user frames from outermost down to innermost
         cur_f = frame
@@ -463,7 +484,6 @@ while step_count < MAX_STEPS:
         f_list.reverse()
 
         observed_active_pointers = []
-
         frame_ids = []
         for idx, f in enumerate(f_list):
             try:
@@ -483,70 +503,79 @@ while step_count < MAX_STEPS:
             locals_dict = {}
             parameter_values = {}
             ordered_varnames = []
+            symbols = []
+            symbol_values = {}
 
+            # Read each local once, collecting every stack NODE before looking
+            # at pointer targets. This prevents a same-snapshot &local from
+            # being mistaken for a heap address based on frame iteration order.
             try:
                 block = f.block()
                 while block:
                     for sym in block:
                         if (sym.is_argument or sym.is_variable) and sym.name not in locals_dict:
-                            sname = sym.name
-                            ordered_varnames.append(sname)
-                            try:
-                                # For innermost frame, verify if declaration line has been reached
-                                if (hasattr(sym, 'line') and sym.line and not sym.is_argument
-                                    and (sym.line > f_line or (sym.line == f_line and declaration_is_current_statement(sym, f_code_text)))):
-                                    locals_dict[sname] = ["C_DATA", "0x0", "uninitialized", "?"]
-                                    continue
-                                val = f.read_var(sym)
-                                parsed = parse_val(val)
-                                locals_dict[sname] = parsed
-                                if sym.is_argument:
-                                    parameter_values[sname] = parsed
-
-                                # Detect NODE pointers
-                                t_str = str(val.type.strip_typedefs())
-                                if "NODE" in t_str and val.type.code == gdb.TYPE_CODE_PTR:
-                                    try:
-                                        ptr_val = int(val)
-                                        if ptr_val > 0x1000:
-                                            p_addr_hex = f"0x{ptr_val:x}"
-                                            observed_active_pointers.append((sname, p_addr_hex))
-                                            if p_addr_hex not in deleted_addresses:
-                                                node_val = inspect_heap_node(p_addr_hex)
-                                                if node_val:
-                                                    track_node_allocation(p_addr_hex)
-                                                    heap_records[p_addr_hex] = node_val
-                                    except Exception:
-                                        pass
-                                elif "LIST" in t_str:
-                                    try:
-                                        p_head = val["pHead"]
-                                        if int(p_head) > 0x1000:
-                                            h_hex = f"0x{int(p_head):x}"
-                                            observed_active_pointers.append((f"{sname}.pHead", h_hex))
-                                            if h_hex not in deleted_addresses:
-                                                node_val = inspect_heap_node(h_hex)
-                                                if node_val:
-                                                    track_node_allocation(h_hex)
-                                                    heap_records[h_hex] = node_val
-                                        p_tail = val["pTail"]
-                                        if int(p_tail) > 0x1000:
-                                            t_hex = f"0x{int(p_tail):x}"
-                                            observed_active_pointers.append((f"{sname}.pTail", t_hex))
-                                            if t_hex not in deleted_addresses:
-                                                node_val = inspect_heap_node(t_hex)
-                                                if node_val:
-                                                    track_node_allocation(t_hex)
-                                                    heap_records[t_hex] = node_val
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                locals_dict[sname] = ["C_DATA", "0x0", "uninitialized", "?"]
+                            locals_dict[sym.name] = None
+                            symbols.append(sym)
+                            ordered_varnames.append(sym.name)
                     if block.function:
                         break
                     block = block.superblock
             except Exception:
                 pass
+
+            for sym in symbols:
+                sname = sym.name
+                try:
+                    if (hasattr(sym, 'line') and sym.line and not sym.is_argument
+                        and (sym.line > f_line or (sym.line == f_line and declaration_is_current_statement(sym, f_code_text)))):
+                        locals_dict[sname] = ["C_DATA", "0x0", "uninitialized", "?"]
+                        continue
+                    val = f.read_var(sym)
+                    symbol_values[sname] = val
+                    parsed = parse_val(val)
+                    locals_dict[sname] = parsed
+                    if sym.is_argument:
+                        parameter_values[sname] = parsed
+
+                    val_type = val.type.strip_typedefs()
+                    type_name = str(val_type)
+                    if val_type.code == gdb.TYPE_CODE_STRUCT and re.search(r"\bNODE\b", type_name):
+                        try:
+                            node_address = f"0x{int(val.address):x}"
+                            if parsed and parsed[0] == "C_STRUCT":
+                                stack_node_records[node_address] = parsed
+                        except Exception:
+                            pass
+                except Exception:
+                    locals_dict[sname] = ["C_DATA", "0x0", "uninitialized", "?"]
+
+            for sym in symbols:
+                sname = sym.name
+                val = symbol_values.get(sname)
+                if val is None:
+                    continue
+                try:
+                    val_type = val.type.strip_typedefs()
+                    type_name = str(val_type)
+                    if "NODE" in type_name and val_type.code == gdb.TYPE_CODE_PTR:
+                        ptr_val = int(val)
+                        if ptr_val > 0x1000:
+                            address = f"0x{ptr_val:x}"
+                            observed_active_pointers.append((sname, address))
+                            observe_node_address(address)
+                    elif "LIST" in type_name:
+                        for field_name in ("pHead", "pTail"):
+                            try:
+                                field_value = val[field_name]
+                                if int(field_value) <= 0x1000:
+                                    continue
+                                address = f"0x{int(field_value):x}"
+                                observed_active_pointers.append((f"{sname}.{field_name}", address))
+                                observe_node_address(address)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
 
             stack_to_render.append({
                 "funcName": f_name,
@@ -573,23 +602,25 @@ while step_count < MAX_STEPS:
                         heap_records[p_addr] = node_val
             pending_allocations = False
 
-        # Deep BFS discovery along pNext pointers
-        check_queue = list(heap_records.keys())
+        # Discover NODE topology without upgrading readable addresses to heap.
+        check_queue = list(dict.fromkeys(list(heap_records.keys()) + list(stack_node_records.keys()) + list(unknown_node_records.keys())))
+        visited_nodes = set()
         while check_queue:
             curr_addr = check_queue.pop(0)
-            struct_rep = heap_records.get(curr_addr)
+            if curr_addr in visited_nodes:
+                continue
+            visited_nodes.add(curr_addr)
+            struct_rep = heap_records.get(curr_addr) or stack_node_records.get(curr_addr) or unknown_node_records.get(curr_addr)
             if struct_rep and struct_rep[0] == "C_STRUCT":
                 for field in struct_rep[3:]:
                     if field[0] == "pNext" and field[1] and field[1][0] == "C_DATA":
                         next_addr = field[1][3]
-                        if next_addr and next_addr != "0x0" and next_addr not in heap_records:
-                            if next_addr not in deleted_addresses:
-                                node_val = inspect_heap_node(next_addr)
-                                if node_val:
-                                    if not track_node_allocation(next_addr):
-                                        continue
-                                    heap_records[next_addr] = node_val
-                                    check_queue.append(next_addr)
+                        if not next_addr or next_addr == "0x0":
+                            continue
+                        if next_addr not in heap_records and next_addr not in stack_node_records and next_addr not in unknown_node_records:
+                            observe_node_address(next_addr)
+                        if next_addr in heap_records or next_addr in stack_node_records or next_addr in unknown_node_records:
+                            check_queue.append(next_addr)
 
         # Include deleted nodes marked with freed status using cached data
         for d_addr in deleted_addresses:
@@ -640,6 +671,8 @@ while step_count < MAX_STEPS:
             "stackToRender": stack_to_render,
             "globals": {},
             "heap": heap_records,
+            "stackNodes": stack_node_records,
+            "unknownNodes": unknown_node_records,
             "orderedGlobals": [],
             "stdout": current_stdout,
             "deletedAddresses": list(deleted_addresses),
@@ -647,8 +680,8 @@ while step_count < MAX_STEPS:
         })
         last_frame_ids = current_frame_ids
 
-        # Check if THIS statement allocates memory (new or CreateNode)
-        if "new " in code_text or "CreateNode" in code_text:
+        # Require an executed NODE allocation statement before claiming heap membership
+        if re.search(r"\bnew\s+(?:struct\s+)?NODE\b", code_text):
             pending_allocations = True
 
     else:

@@ -4,6 +4,7 @@ import { cpp } from '@codemirror/lang-cpp';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, Decoration } from '@codemirror/view';
 import { Terminal, Code, FileText, AlertTriangle, AlertCircle } from 'lucide-react';
+import type { TerminationStatus } from '../types';
 
 interface CodeEditorProps {
   code: string;
@@ -16,6 +17,8 @@ interface CodeEditorProps {
   buildOutput?: string;
   isExecuting: boolean;
   isTraceStale?: boolean;
+  terminationStatus?: TerminationStatus;
+  terminationReason?: string;
 }
 
 const customEditorTheme = EditorView.theme({
@@ -84,6 +87,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   buildOutput,
   isExecuting,
   isTraceStale = false,
+  terminationStatus,
+  terminationReason = '',
 }) => {
   const [activeTab, setActiveTab] = useState<'code' | 'stdin'>('code');
   const editorRef = useRef<ReactCodeMirrorRef>(null);
@@ -251,6 +256,27 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         </div>
 
         <div className="flex-1 p-3 overflow-auto font-mono text-xs">
+          {terminationStatus && (
+            <div
+              data-testid="termination-status"
+              role="status"
+              className={`mb-3 rounded border px-2.5 py-2 leading-relaxed ${terminationStatus === 'normal'
+                ? 'border-emerald-700/50 bg-emerald-950/20 text-emerald-300'
+                : terminationStatus === 'crashed' || terminationStatus === 'abnormal_exit'
+                  ? 'border-red-700/50 bg-red-950/20 text-red-300'
+                  : 'border-amber-700/50 bg-amber-950/20 text-amber-300'}`}
+            >
+              <strong>
+                {terminationStatus === 'normal' && 'Chương trình kết thúc bình thường'}
+                {terminationStatus === 'crashed' && 'Chương trình gặp lỗi nghiêm trọng'}
+                {terminationStatus === 'abnormal_exit' && 'Chương trình thoát với mã lỗi'}
+                {terminationStatus === 'interrupted' && 'Chương trình bị gián đoạn'}
+                {terminationStatus === 'truncated' && 'Vết thực thi bị cắt ngắn'}
+                {terminationStatus === 'timeout' && 'Chương trình vượt quá thời gian cho phép'}
+              </strong>
+              {terminationReason && <div className="mt-1 whitespace-pre-wrap">{terminationReason}</div>}
+            </div>
+          )}
           {buildOutput ? (
             <pre data-testid="console-build-error" className="text-red-400 whitespace-pre-wrap leading-relaxed">{buildOutput}</pre>
           ) : stdout || finalStdout ? (

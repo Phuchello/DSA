@@ -4,7 +4,8 @@ export interface DsaNode {
   generation?: number;
   info: number | string | null;
   nextAddress: string | null;
-  status: 'allocated' | 'detached' | 'unreachable' | 'freed' | 'orphan';
+  status: 'allocated' | 'detached' | 'unreachable' | 'freed' | 'orphan' | 'unknown';
+  location?: 'heap' | 'stack' | 'unknown';
 }
 
 export interface DsaPointer {
@@ -13,6 +14,10 @@ export interface DsaPointer {
   state: 'valid' | 'null' | 'freed' | 'dangling' | 'uninitialized' | 'unknown';
   varAddress?: string;
   color?: string;
+  frameId?: string;
+  frameName?: string;
+  frameDepth?: number;
+  displayName?: string;
 }
 
 export interface DsaDiff {
@@ -53,4 +58,17 @@ export interface Lesson {
   difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
   code: string;
   defaultStdin: string;
+}
+
+export type TerminationStatus = 'normal' | 'crashed' | 'abnormal_exit' | 'interrupted' | 'truncated' | 'timeout';
+
+export interface ExecutionResponse {
+  success: boolean;
+  trace: NormalizedExecutionPoint[];
+  finalStdout?: string;
+  totalSteps?: number;
+  terminationStatus?: TerminationStatus;
+  terminationReason?: string;
+  buildOutput?: string;
+  error?: string;
 }

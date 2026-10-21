@@ -5,7 +5,7 @@ import { LinkedListCanvas } from './components/LinkedListCanvas';
 import { TimelineControls } from './components/TimelineControls';
 import { EducationalBanner } from './components/EducationalBanner';
 import { MemoryInspector } from './components/MemoryInspector';
-import { Lesson, NormalizedExecutionPoint } from './types';
+import type { ExecutionResponse, Lesson, NormalizedExecutionPoint, TerminationStatus } from './types';
 
 export const App: React.FC = () => {
   const [lessons, setLessons] = useState<Lesson[]>([]);
@@ -21,6 +21,8 @@ export const App: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(1);
   const [buildOutput, setBuildOutput] = useState<string>('');
+  const [terminationStatus, setTerminationStatus] = useState<TerminationStatus | null>(null);
+  const [terminationReason, setTerminationReason] = useState<string>('');
 
   const playTimerRef = useRef<any>(null);
   const latestCodeRef = useRef(code);
@@ -63,6 +65,8 @@ export const App: React.FC = () => {
       setTrace([]);
       setTraceSource(null);
       setFinalStdout('');
+      setTerminationStatus(null);
+      setTerminationReason('');
       setCurrentStepIndex(0);
       setIsPlaying(false);
       setBuildOutput('');
@@ -86,6 +90,8 @@ export const App: React.FC = () => {
     setIsRunning(true);
     setIsPlaying(false);
     setBuildOutput('');
+    setTerminationStatus(null);
+    setTerminationReason('');
 
     try {
       const response = await fetch('/api/run', {
@@ -94,31 +100,39 @@ export const App: React.FC = () => {
         body: JSON.stringify(requestSnapshot),
       });
 
-      const data = await response.json();
+      const data: ExecutionResponse = await response.json();
 
       const requestIsCurrent = requestId === latestRequestIdRef.current
         && requestSnapshot.code === latestCodeRef.current
         && requestSnapshot.stdin === latestStdinRef.current;
       if (!requestIsCurrent) return;
 
-      if (data.success && data.trace && data.trace.length > 0) {
+      const hasTrace = Array.isArray(data.trace) && data.trace.length > 0;
+      if (hasTrace) {
+        // Keep any partial trace and bind it to the exact immutable request snapshot.
         setTrace(data.trace);
         setTraceSource(requestSnapshot);
         setFinalStdout(data.finalStdout || '');
         setCurrentStepIndex(0);
-        setBuildOutput('');
       } else {
-        setBuildOutput(data.buildOutput || 'Biên dịch hoặc chạy mã thất bại.');
         setTrace([]);
         setTraceSource(null);
         setFinalStdout('');
       }
+
+      setTerminationStatus(data.terminationStatus || null);
+      setTerminationReason(data.terminationReason || '');
+      setBuildOutput(!data.success || !hasTrace
+        ? (data.buildOutput || 'Biên dịch hoặc chạy mã thất bại.')
+        : '');
     } catch (err: any) {
       const requestIsCurrent = requestId === latestRequestIdRef.current
         && requestSnapshot.code === latestCodeRef.current
         && requestSnapshot.stdin === latestStdinRef.current;
       if (!requestIsCurrent) return;
       setBuildOutput(`Lỗi kết nối tới máy chủ: ${err?.message || err}`);
+      setTerminationStatus(null);
+      setTerminationReason('');
       setTrace([]);
       setTraceSource(null);
       setFinalStdout('');
@@ -235,6 +249,8 @@ export const App: React.FC = () => {
             buildOutput={buildOutput}
             isExecuting={isRunning}
             isTraceStale={isTraceStale}
+            terminationStatus={terminationStatus || undefined}
+            terminationReason={terminationReason}
           />
         </div>
 

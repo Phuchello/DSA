@@ -8,10 +8,10 @@ on:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
-  # Job 1: Build + type-check + client unit tests (Linux, no GDB dependency)
+  # Job 1: Build, unit tests, and native C++/GDB runtime tests on POSIX
   # ─────────────────────────────────────────────────────────────────────────────
   lint-and-unit-tests:
-    name: Build, Type Check & Unit Tests (Linux)
+    name: Build, Full C++/GDB & Unit Tests (Linux/POSIX)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -52,6 +52,12 @@ jobs:
 
       - name: Run DSA Normalizer & Pointer Classification Unit Tests
         run: node tests/normalizerUnitTests.js
+
+      - name: Install native Linux toolchain (g++ and GDB)
+        run: sudo apt-get update && sudo apt-get install -y g++ gdb
+
+      - name: Run full native C++/GDB and process-tree regression suite (Linux/POSIX)
+        run: npm test
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 2: Full GDB integration tests and real Chrome smoke test. The Windows

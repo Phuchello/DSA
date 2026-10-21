@@ -6,7 +6,8 @@ export interface DsaNode {
   generation: number;
   info: number | string | null;
   nextAddress: string | null;
-  status: 'allocated' | 'detached' | 'unreachable' | 'freed';
+  status: 'allocated' | 'detached' | 'unreachable' | 'freed' | 'unknown';
+  location?: 'heap' | 'stack' | 'unknown';
 }
 
 export interface DsaPointer {
@@ -15,6 +16,10 @@ export interface DsaPointer {
   state: 'valid' | 'null' | 'freed' | 'dangling' | 'uninitialized' | 'unknown';
   varAddress?: string;
   color?: string;
+  frameId?: string;
+  frameName?: string;
+  frameDepth?: number;
+  displayName?: string;
 }
 
 export interface DsaDiff {
@@ -136,6 +141,8 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
     const rawEp = parseResult.data;
 
     const heap = rawEp.heap || {};
+    const stackNodes = rawEp.stackNodes || {};
+    const unknownNodes = rawEp.unknownNodes || {};
     const deletedInStep = rawEp.deletedAddresses || [];
 
     for (const d of deletedInStep) {
@@ -154,100 +161,81 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
     }
 
-    // 1. Discover all pointers across stack frames and globals
+    // 1. Discover pointer instances per frame. The source variable name alone
+    // is not an identity: recursive calls and callers can all have a local "p".
     const pointers: DsaPointer[] = [];
     const stackFrames = rawEp.stackToRender || [];
 
-    for (const frame of stackFrames) {
+    for (let frameIndex = 0; frameIndex < stackFrames.length; frameIndex++) {
+      const frame = stackFrames[frameIndex];
       const locals = frame.encodedLocals || {};
+      const frameId = String(frame.frameId || `${frame.funcName || 'frame'}#${frameIndex}`);
+      const frameName = String(frame.funcName || 'frame');
+      const frameDepth = Number.isFinite(frame.frameDepth) ? Number(frame.frameDepth) : frameIndex;
+      const addPointer = (
+        name: string,
+        targetAddress: string | null,
+        state: DsaPointer['state'],
+        varAddress: string | undefined,
+        color: string
+      ) => {
+        if (pointers.some(p => p.name === name && p.frameId === frameId && p.frameDepth === frameDepth)) return;
+        pointers.push({ name, targetAddress, state, varAddress, color, frameId, frameName, frameDepth });
+      };
+
       for (const [varName, val] of Object.entries(locals)) {
         if (!Array.isArray(val)) continue;
 
-        // Uninitialized variable
         if (val[0] === 'C_DATA' && val[2] === 'uninitialized') {
-          if (!pointers.some(p => p.name === varName)) {
-            pointers.push({
-              name: varName,
-              targetAddress: null,
-              state: 'uninitialized',
-              varAddress: val[1],
-              color: '#94A3B8'
-            });
-          }
+          addPointer(varName, null, 'uninitialized', val[1], '#94A3B8');
           continue;
         }
 
-        // Pointer or reference
         if (val[0] === 'C_DATA' && (val[2] === 'pointer' || val[2] === 'ref')) {
           const target = val[3] && val[3] !== '0x0' ? String(val[3]) : null;
           let state: DsaPointer['state'] = 'valid';
 
-          if (!target || target === '0x0') {
-            // Null pointer — confirmed
+          if (!target) {
             state = 'null';
           } else if (activeFreedAddresses.has(target)) {
-            // Confirmed freed: runtime observed a delete on this address
             state = 'freed';
-          } else if (heap[target]) {
-            // Address is present in the observed heap graph — confirmed live NODE
+          } else if (heap[target] || stackNodes[target]) {
             state = 'valid';
           } else {
-            // Address not in heap graph. This could mean:
-            //   (a) it's a non-NODE pointer (int*, char*, etc.) — we haven't collected its heap entry
-            //   (b) it's a pointer that wasn't traced (library allocation)
-            //   (c) it's genuinely dangling — but we have NO evidence of that
-            // Conservative classification: 'unknown' to avoid false positive dangling warnings.
+            // A readable address without allocation or stack-object evidence is unknown.
             state = 'unknown';
           }
 
-          if (!pointers.some(p => p.name === varName)) {
-            pointers.push({
-              name: varName,
-              targetAddress: target,
-              state: state,
-              varAddress: val[1],
-              color: POINTER_COLORS[varName] || '#6B7280'
-            });
-          }
+          addPointer(varName, target, state, val[1], POINTER_COLORS[varName] || '#6B7280');
         }
 
-        // Struct LIST (pHead, pTail)
         if (val[0] === 'C_STRUCT' && (val[2] === 'LIST' || val[2] === 'struct LIST')) {
           for (let f = 3; f < val.length; f++) {
             const field = val[f];
             if (field && (field[0] === 'pHead' || field[0] === 'pTail')) {
               const fieldName = `L.${field[0]}`;
               const fData = field[1];
-              if (fData && Array.isArray(fData) && fData[0] === 'C_DATA') {
-                const target = fData[3] && fData[3] !== '0x0' ? String(fData[3]) : null;
-                let state: DsaPointer['state'] = 'valid';
+              if (!fData || !Array.isArray(fData) || fData[0] !== 'C_DATA') continue;
 
-                if (!target || target === '0x0') {
-                  state = 'null';
-                } else if (activeFreedAddresses.has(target)) {
-                  state = 'freed';
-                } else if (heap[target]) {
-                  state = 'valid';
-                } else {
-                  // No positive evidence this is dangling — could be a pointer to a node
-                  // that was allocated before tracing started or in an untraceable path.
-                  state = 'unknown';
-                }
+              const target = fData[3] && fData[3] !== '0x0' ? String(fData[3]) : null;
+              let state: DsaPointer['state'] = 'valid';
+              if (!target) state = 'null';
+              else if (activeFreedAddresses.has(target)) state = 'freed';
+              else if (!heap[target] && !stackNodes[target]) state = 'unknown';
 
-                if (!pointers.some(p => p.name === fieldName)) {
-                  pointers.push({
-                    name: fieldName,
-                    targetAddress: target,
-                    state: state,
-                    varAddress: fData[1],
-                    color: POINTER_COLORS[field[0]] || '#3B82F6'
-                  });
-                }
-              }
+              addPointer(fieldName, target, state, fData[1], POINTER_COLORS[field[0]] || '#3B82F6');
             }
           }
         }
       }
+    }
+
+    const pointerNameCounts = new Map<string, number>();
+    for (const pointer of pointers) pointerNameCounts.set(pointer.name, (pointerNameCounts.get(pointer.name) || 0) + 1);
+    for (const pointer of pointers) {
+      pointer.displayName = (pointerNameCounts.get(pointer.name) || 0) > 1
+        ? `${pointer.name}@${pointer.frameName}#${pointer.frameDepth}`
+        : pointer.name;
     }
 
     // 2. Discover and track heap nodes with address reuse & generations
@@ -278,7 +266,36 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         generation: gen,
         info: info,
         nextAddress: nextAddr,
-        status: isFreed ? 'freed' : 'allocated'
+        status: isFreed ? 'freed' : 'allocated',
+        location: 'heap'
+      });
+    }
+
+    // Stack objects and readable-but-unproven NODE addresses remain distinct
+    // from confirmed heap allocations while still participating in topology.
+    for (const [addr, rawNode] of Object.entries(stackNodes)) {
+      if (nodeMap.has(addr)) continue;
+      const gen = addressGenerations.get(addr) || 1;
+      nodeMap.set(addr, {
+        id: `stack_node_${addr}`,
+        address: addr,
+        generation: gen,
+        info: extractInfo(rawNode),
+        nextAddress: extractNextAddress(rawNode),
+        status: 'allocated',
+        location: 'stack'
+      });
+    }
+    for (const [addr, rawNode] of Object.entries(unknownNodes)) {
+      if (nodeMap.has(addr)) continue;
+      nodeMap.set(addr, {
+        id: `unknown_node_${addr}`,
+        address: addr,
+        generation: 1,
+        info: extractInfo(rawNode),
+        nextAddress: extractNextAddress(rawNode),
+        status: 'unknown',
+        location: 'unknown'
       });
     }
 
@@ -292,7 +309,8 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
           generation: gen,
           info: null,
           nextAddress: null,
-          status: 'freed'
+          status: 'freed',
+          location: 'heap'
         });
       }
     }
@@ -326,7 +344,8 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
     }
 
-    // Classify node status accurately
+    // Classify node status without treating stack objects or unproven memory as
+    // heap allocations or leaks.
     const detachedNodes: DsaNode[] = [];
     const unreachableNodes: DsaNode[] = [];
     const freedNodes: DsaNode[] = [];
@@ -334,24 +353,29 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
     for (const [addr, node] of nodeMap.entries()) {
       if (node.status === 'freed') {
         freedNodes.push(node);
+      } else if (node.location === 'unknown') {
+        node.status = 'unknown';
       } else if (mainChainAddresses.has(addr)) {
         node.status = 'allocated';
+      } else if (node.location === 'stack') {
+        node.status = 'allocated';
       } else if (otherReachableAddresses.has(addr)) {
-        // Still reachable via another stack pointer (e.g. temp or detached list)
         node.status = 'detached';
         detachedNodes.push(node);
       } else {
-        // Not reachable by ANY stack pointer or main list (memory leak candidate!)
         node.status = 'unreachable';
         unreachableNodes.push(node);
       }
     }
 
+    const categorizedIds = new Set([...mainChain, ...detachedNodes, ...unreachableNodes, ...freedNodes].map(node => node.id));
+    const additionalNodes = [...nodeMap.values()].filter(node => !categorizedIds.has(node.id));
     const allOrderedNodes: DsaNode[] = [
       ...mainChain,
       ...detachedNodes,
       ...unreachableNodes,
-      ...freedNodes
+      ...freedNodes,
+      ...additionalNodes
     ];
 
     // 4. Calculate diff from previous step
@@ -366,14 +390,14 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
     if (prevPoint) {
       // Check node allocations
       for (const node of allOrderedNodes) {
-        if (!prevPoint.dsa.nodes.some(n => n.address === node.address && n.generation === node.generation)) {
+        if (node.location === 'heap' && !prevPoint.dsa.nodes.some(n => n.location === 'heap' && n.address === node.address && n.generation === node.generation)) {
           diff.allocatedNodes.push(node.address);
         }
       }
       // Check node deallocations
       for (const prevNode of prevPoint.dsa.nodes) {
         const currNode = allOrderedNodes.find(n => n.address === prevNode.address && n.generation === prevNode.generation);
-        if (currNode && currNode.status === 'freed' && prevNode.status !== 'freed') {
+        if (prevNode.location === 'heap' && currNode?.location === 'heap' && currNode.status === 'freed' && prevNode.status !== 'freed') {
           diff.freedNodes.push(prevNode.address);
         }
       }
@@ -385,14 +409,14 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
       // Check pointer movements
       for (const ptr of pointers) {
-        const prevPtr = prevPoint.dsa.pointers.find(p => p.name === ptr.name);
+        const prevPtr = prevPoint.dsa.pointers.find(p => p.name === ptr.name && p.frameId === ptr.frameId && p.frameDepth === ptr.frameDepth && p.frameDepth === ptr.frameDepth);
         if (prevPtr && prevPtr.targetAddress !== ptr.targetAddress) {
           diff.pointerReroutes.push({
-            pointer: ptr.name,
+            pointer: ptr.displayName || ptr.name,
             from: prevPtr.targetAddress,
             to: ptr.targetAddress
           });
-          diff.changedVariables.push(ptr.name);
+          diff.changedVariables.push(ptr.displayName || ptr.name);
         }
       }
     }
@@ -461,7 +485,7 @@ export function generateVietnameseExplanation(
   // Pre-delete line
   if (trimmed.startsWith('delete ')) {
     const varName = trimmed.replace('delete ', '').replace(';', '').trim();
-    const ptr = pointers.find(p => p.name === varName);
+    const ptr = [...pointers].reverse().find(p => p.name === varName);
     explanation = `Chuẩn bị giải phóng bộ nhớ qua lệnh: ${trimmed}. Con trỏ ${varName} đang giữ địa chỉ ${ptr?.targetAddress || '???'}.`;
     advanced = `Ngữ nghĩa trước câu lệnh: Bộ nhớ tại địa chỉ trên vẫn hợp lệ và có thể truy xuất cho đến khi lệnh delete được hoàn tất ở bước kế tiếp.`;
     return { explanation, advanced };
@@ -483,7 +507,7 @@ export function generateVietnameseExplanation(
 
   // Loop traversal
   if (trimmed.startsWith('while') || trimmed.startsWith('for')) {
-    const pPtr = pointers.find(p => p.name === 'p');
+    const pPtr = [...pointers].reverse().find(p => p.name === 'p');
     explanation = `Kiểm tra điều kiện lặp: ${trimmed}. Con trỏ duyệt p đang ở địa chỉ ${pPtr?.targetAddress || 'nullptr'}.`;
     advanced = `Nếu p != nullptr, vòng lặp tiếp tục xử lý nút hiện tại. Khi p trỏ tới nullptr, quá trình duyệt kết thúc an toàn.`;
     return { explanation, advanced };

@@ -4,6 +4,7 @@ const { fork } = require('child_process');
 const assert = require('assert');
 const { runNormalizerUnitTests } = require('./normalizerUnitTests.js');
 const { runMemoryInvariantTests } = require('./test_invariants.js');
+const { runProcessTreeTests } = require('./processTreeTests.js');
 
 const BASE_GOLDEN_CODE = `#include <iostream>
 using namespace std;
@@ -315,6 +316,7 @@ async function runTests() {
   console.log('='.repeat(70));
   console.log('🚀 DSA FlowLab: Full Automated Verification Suite');
   console.log('='.repeat(70));
+  await runProcessTreeTests();
 
   // 1. Ensure backend server is ready
   let serverProcess = null;
@@ -479,7 +481,7 @@ async function runTests() {
     }
 
     // -------------------------------------------------------------
-    // PART 3: 17 Memory Invariant & Pointer Topology Tests
+    // PART 3: 21 Memory Invariant & Pointer Topology Tests
     // -------------------------------------------------------------
     console.log('\n--- PHẦN 3: 17 BẤT BIẾN BỘ NHỚ & TOPO CON TRỎ (MEMORY INVARIANTS) ---');
     try {

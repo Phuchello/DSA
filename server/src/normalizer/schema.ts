@@ -16,6 +16,8 @@ export const RawExecutionPointSchema = z.object({
   stackToRender: z.array(z.record(z.string(), z.any())).optional().default([]),
   globals: z.record(z.string(), z.any()).optional().default({}),
   heap: z.record(z.string(), z.any()).optional().default({}),
+  stackNodes: z.record(z.string(), z.any()).optional().default({}),
+  unknownNodes: z.record(z.string(), z.any()).optional().default({}),
   orderedGlobals: z.array(z.any()).optional().default([]),
   deletedAddresses: z.array(z.string()).optional().default([]),
   snapshotConvention: z.string().optional().default('before-statement'),

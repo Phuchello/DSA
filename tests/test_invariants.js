@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
 const { runCppCode } = require('../server/dist/runner/cppRunner.js');
 const { execSync } = require('child_process');
 const path = require('path');
@@ -745,6 +747,173 @@ int main() {
         delete process.env.FLOWLAB_MAX_STEPS;
       }
     }
+  });
+
+
+  // -------------------------------------------------------------
+  // MI-18: POSIX/Windows timeout kills descendants, cleans resources, and frees slots
+  // -------------------------------------------------------------
+  await test('MI-18', 'Timeout kills the execution tree, removes temp workspaces, and recovers concurrency slots', async () => {
+    const oldTimeout = process.env.FLOWLAB_GDB_TIMEOUT_MS;
+    const oldMaxSteps = process.env.FLOWLAB_MAX_STEPS;
+    const tempRoot = path.join(process.env.USERPROFILE || process.env.HOME || os.homedir(), '.dsa_flowlab_tmp');
+    fs.mkdirSync(tempRoot, { recursive: true });
+    const before = new Set(fs.readdirSync(tempRoot));
+    process.env.FLOWLAB_GDB_TIMEOUT_MS = '1500';
+    process.env.FLOWLAB_MAX_STEPS = '1000000000';
+    try {
+      const loopingCode = `int main() {
+  volatile unsigned long counter = 0;
+  while (true) { ++counter; }
+  return 0;
+}`;
+      const timeoutStartedAt = Date.now();
+      const activeRuns = Array.from({ length: 8 }, () => runCppCode(loopingCode, ''));
+      const saturated = await runCppCode('#include <iostream>\\nint main() { return 0; }', '');
+      assert.strictEqual(saturated.success, false, 'The ninth concurrent request must be rejected at the configured limit');
+      assert.ok(saturated.buildOutput.includes('đang bận'), 'Concurrency rejection must remain explicit');
+
+      const outcomes = await Promise.all(activeRuns);
+      assert.ok(Date.now() - timeoutStartedAt < 20000, 'Timeout tree termination and all eight promises must settle within a bounded interval');
+      assert.ok(outcomes.every(result => result.success === false), 'Every timed-out GDB run must settle as a failure');
+      assert.ok(outcomes.every(result => result.terminationStatus === 'timeout'),
+        'Each killed GDB process tree must report timeout');
+      assert.ok(outcomes.every(result => result.trace.length === 0), 'A killed tracer must not fabricate a partial trace');
+      const after = new Set(fs.readdirSync(tempRoot));
+      assert.deepStrictEqual([...after].filter(name => !before.has(name)), [],
+        'Every timed-out execution must remove its temporary workspace');
+
+      const recovered = await runCppCode('#include <iostream>\\nint main() { std::cout << 9; return 0; }', '');
+      assert.strictEqual(recovered.success, true, 'A new request must run after timed-out slots are released');
+      assert.strictEqual(recovered.finalStdout.trim(), '9');
+    } finally {
+      if (oldTimeout === undefined) delete process.env.FLOWLAB_GDB_TIMEOUT_MS;
+      else process.env.FLOWLAB_GDB_TIMEOUT_MS = oldTimeout;
+      if (oldMaxSteps === undefined) delete process.env.FLOWLAB_MAX_STEPS;
+      else process.env.FLOWLAB_MAX_STEPS = oldMaxSteps;
+    }
+  });
+
+  // -------------------------------------------------------------
+  // MI-19: Readable stack NODE objects are not heap allocations
+  // -------------------------------------------------------------
+  await test('MI-19', 'Separates stack NODE objects from true heap NODE allocations and preserves links', async () => {
+    const code = `#include <iostream>
+struct NODE {
+  int info;
+  NODE* pNext;
+};
+int main() {
+  NODE local{1, nullptr};
+  NODE* p = &local;
+  NODE* heapNode = new NODE{2, p};
+  heapNode->pNext = p;
+  std::cout << heapNode->info;
+  return 0;
+}`;
+    const res = await runCppCode(code, '');
+    assert.strictEqual(res.success, true, 'Mixed stack/heap NODE program must run');
+
+    const pDeclarationIndex = res.trace.findIndex(step => step.codeText.includes('NODE* p = &local'));
+    assert.ok(pDeclarationIndex >= 0 && res.trace[pDeclarationIndex + 1],
+      'Trace must include the snapshot after p is assigned to the stack local');
+    const stackPoint = res.trace[pDeclarationIndex + 1];
+    const mainFrame = stackPoint.stackToRender.find(frame => frame.funcName === 'main');
+    const localValue = mainFrame?.encodedLocals?.local;
+    assert.ok(Array.isArray(localValue) && localValue[0] === 'C_STRUCT', 'local must remain visible as a stack struct');
+    const localAddress = localValue[1];
+    const stackNode = stackPoint.dsa.nodes.find(node => node.address === localAddress);
+    const stackPointer = stackPoint.dsa.pointers.find(pointer => pointer.name === 'p' && pointer.frameId === mainFrame.frameId);
+    assert.strictEqual(stackNode?.location, 'stack', 'The NODE local must be explicitly classified on the stack');
+    assert.strictEqual(stackPointer?.targetAddress, localAddress, 'p must retain its address relationship to local');
+    assert.strictEqual(stackPointer?.state, 'valid', 'A known stack NODE target is a valid pointer');
+    assert.strictEqual(Object.keys(stackPoint.heap).length, 0, 'A stack NODE must not appear in the heap table');
+
+    const heapStep = res.trace.find(step => step.codeText.includes('std::cout << heapNode->info'));
+    assert.ok(heapStep, 'Trace must reach the statement after heap allocation');
+    const heapPointer = heapStep.dsa.pointers.find(pointer => pointer.name === 'heapNode');
+    assert.ok(heapPointer?.targetAddress, 'heapNode pointer must retain its target');
+    const heapNode = heapStep.dsa.nodes.find(node => node.address === heapPointer.targetAddress);
+    assert.strictEqual(heapNode?.location, 'heap', 'The new NODE must have allocation evidence and remain on the heap');
+    assert.strictEqual(heapNode?.nextAddress, localAddress, 'Heap-to-stack pNext topology must remain intact');
+    assert.ok(heapStep.heap[localAddress] === undefined, 'The stack local must never be copied into heap records');
+  });
+
+  // -------------------------------------------------------------
+  // MI-20: Identically named pointer variables remain frame-qualified
+  // -------------------------------------------------------------
+  await test('MI-20', 'Keeps caller and recursive p pointers independent in native GDB traces', async () => {
+    const code = `#include <iostream>
+struct NODE { int info; NODE* pNext; };
+NODE* CreateNode(int value) {
+  NODE* p = new NODE{value, nullptr};
+  return p;
+}
+int SumList(NODE* p) {
+  if (p == nullptr) return 0;
+  return p->info + SumList(p->pNext);
+}
+int main() {
+  NODE* p = CreateNode(1);
+  NODE* second = CreateNode(2);
+  p->pNext = second;
+  int total = SumList(p);
+  std::cout << total;
+  return 0;
+}`;
+    const res = await runCppCode(code, '');
+    assert.strictEqual(res.success, true, 'CreateNode and recursive SumList program must run');
+
+    const createNodeStep = res.trace.find(step => {
+      const callee = step.stackToRender.find(frame => frame.funcName === 'CreateNode');
+      return callee?.encodedLocals?.p?.[2] === 'pointer' && callee.encodedLocals.p[3] !== '0x0';
+    });
+    assert.ok(createNodeStep, 'Must capture CreateNode after its local p has received the allocated node');
+    const createFrame = createNodeStep.stackToRender.find(frame => frame.funcName === 'CreateNode');
+    const callerFrame = createNodeStep.stackToRender.find(frame => frame.funcName === 'main');
+    const createPointer = createNodeStep.dsa.pointers.find(pointer => pointer.name === 'p' && pointer.frameId === createFrame.frameId);
+    const callerPointer = createNodeStep.dsa.pointers.find(pointer => pointer.name === 'p' && pointer.frameId === callerFrame.frameId);
+    assert.strictEqual(createPointer?.state, 'valid', 'CreateNode local p must retain the live node pointer');
+    assert.strictEqual(callerPointer?.state, 'uninitialized', 'main caller p must remain uninitialized before return');
+    assert.notStrictEqual(createPointer?.displayName, callerPointer?.displayName,
+      'The UI label must disambiguate same-named pointer instances');
+
+    const recursiveStep = res.trace.find(step => step.stackToRender.filter(frame => frame.funcName === 'SumList').length >= 3);
+    assert.ok(recursiveStep, 'Must capture at least three recursive SumList frames');
+    const recursiveFrames = recursiveStep.stackToRender.filter(frame => frame.funcName === 'SumList');
+    const recursivePointers = recursiveFrames.map(frame =>
+      recursiveStep.dsa.pointers.find(pointer => pointer.name === 'p' && pointer.frameId === frame.frameId)
+    );
+    assert.ok(recursivePointers.every(Boolean), 'Every recursive frame must retain its own p pointer');
+    assert.strictEqual(new Set(recursivePointers.map(pointer => pointer.frameId)).size, recursiveFrames.length,
+      'Recursive p instances must have frame-qualified identities');
+    recursiveFrames.forEach((frame, index) => {
+      assert.strictEqual(recursivePointers[index].targetAddress, frame.encodedLocals.p[3],
+        `SumList frame ${index} must display its own p target`);
+    });
+    assert.strictEqual(new Set(recursivePointers.map(pointer => pointer.displayName)).size, recursiveFrames.length,
+      'The linked-list canvas must distinguish recursive p labels');
+  });
+
+
+  // -------------------------------------------------------------
+  // MI-21: Real GDB-detected crash preserves the partial trace
+  // -------------------------------------------------------------
+  await test('MI-21', 'Native segmentation fault is reported as a crash with its partial trace', async () => {
+    const code = `#include <iostream>
+int main() {
+  int* pointer = nullptr;
+  *pointer = 42;
+  return 0;
+}`;
+    const res = await runCppCode(code, '');
+    assert.strictEqual(res.success, true, 'A debuggable crash with snapshots must preserve its trace response');
+    assert.strictEqual(res.terminationStatus, 'crashed', `Expected crashed status, got ${res.terminationStatus}`);
+    assert.ok(res.terminationReason.includes('SIGSEGV') || res.terminationReason.includes('Segmentation'),
+      'Crash response must include a clear signal or segmentation reason');
+    assert.ok(res.trace.length > 0, 'Crash response must retain snapshots captured before the fault');
+    assert.strictEqual(res.trace[res.trace.length - 1].event, 'crashed',
+      'Final partial snapshot must identify abnormal termination');
   });
 
   console.log('='.repeat(70));

@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { CodeEditor } from './CodeEditor';
+import type { TerminationStatus } from '../types';
 
 describe('CodeEditor Component', () => {
   it('renders editor tabs and console correctly', () => {
@@ -139,4 +140,35 @@ describe('CodeEditor Component', () => {
     expect(screen.getByTestId('console-final-stdout').textContent).toBe('early output\nlate output\n');
     expect(screen.getByText('Đầu ra cuối cùng sau khi chương trình kết thúc')).toBeTruthy();
   });
+  it.each([
+    ['normal', 'Chương trình kết thúc bình thường'],
+    ['crashed', 'Chương trình gặp lỗi nghiêm trọng'],
+    ['abnormal_exit', 'Chương trình thoát với mã lỗi'],
+    ['interrupted', 'Chương trình bị gián đoạn'],
+    ['truncated', 'Vết thực thi bị cắt ngắn'],
+    ['timeout', 'Chương trình vượt quá thời gian cho phép'],
+  ] as Array<[TerminationStatus, string]>)('labels %s distinctly with the supplied reason', (status, label) => {
+    render(
+      <CodeEditor
+        code="int main() { return 0; }"
+        onChangeCode={vi.fn()}
+        stdin=""
+        onChangeStdin={vi.fn()}
+        currentLine={1}
+        stdout="partial output"
+        isExecuting={false}
+        terminationStatus={status}
+        terminationReason="Lý do kết thúc đã ghi nhận"
+      />
+    );
+
+    const statusBanner = screen.getByTestId('termination-status');
+    expect(statusBanner.textContent).toContain(label);
+    expect(statusBanner.textContent).toContain('Lý do kết thúc đã ghi nhận');
+    if (status !== 'normal') {
+      expect(statusBanner.textContent).not.toContain('kết thúc bình thường');
+    }
+    expect(screen.getByTestId('console-stdout').textContent).toBe('partial output');
+  });
+
 });

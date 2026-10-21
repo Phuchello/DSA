@@ -1,4 +1,4 @@
-import { exec, ChildProcess } from 'child_process';
+import { exec, execFile, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -35,24 +35,123 @@ const FORBIDDEN_PATTERNS = [
 let activeExecutions = 0;
 const MAX_CONCURRENT_EXECUTIONS = 8;
 
-function killProcessTree(pid: number) {
-  try {
-    if (process.platform === 'win32') {
-      exec(`taskkill /pid ${pid} /T /F`, () => {});
-    } else {
-      try {
-        process.kill(-pid, 'SIGKILL');
-      } catch {
+function terminateProcessTree(pid: number): Promise<void> {
+  if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(fallback);
+        resolve();
+      };
+      const killRootFallback = () => {
         try {
           process.kill(pid, 'SIGKILL');
         } catch {
-          // Process already terminated
+          // The root command may already have exited.
         }
+        finish();
+      };
+      // taskkill /T terminates the shell, GDB, and the inferior as one tree.
+      const fallback = setTimeout(killRootFallback, 1500);
+      const killer = execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (error) => {
+        if (error) killRootFallback();
+        else finish();
+      });
+      killer.once('error', killRootFallback);
+    });
+  }
+
+  const signalGroup = (signal: NodeJS.Signals) => {
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      try {
+        // If the child was not assigned the expected group, still terminate its
+        // root process; detached POSIX children normally take the group branch.
+        process.kill(pid, signal);
+      } catch {
+        // The command may have exited between the group and process signals.
       }
     }
-  } catch {
-    // Process may have already terminated
-  }
+  };
+
+  return new Promise((resolve) => {
+    // execWithTimeout starts a detached child on POSIX, so its PID is also the
+    // process-group ID inherited by the shell, GDB, and the debuggee.
+    signalGroup('SIGTERM');
+    setTimeout(() => {
+      signalGroup('SIGKILL');
+      // Give the kernel a short interval to deliver the group-wide kill before
+      // the caller removes the run's temporary directory.
+      setTimeout(resolve, 100);
+    }, 100);
+  });
+}
+
+type ExecCallback = (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => void;
+type StartCommand = (callback: ExecCallback) => ChildProcess;
+
+function runCommandWithTimeout(start: StartCommand, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    let child: ChildProcess | null = null;
+    let timer: NodeJS.Timeout | null = null;
+    let timedOut = false;
+    let settled = false;
+    let termination: Promise<void> | null = null;
+    let capturedStdout = '';
+    let capturedStderr = '';
+
+    const finish = (error?: Error, stdout = capturedStdout, stderr = capturedStderr) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (error) {
+        const errObj: any = new Error(timedOut ? error.message : (stderr || stdout || error.message));
+        errObj.stdout = stdout;
+        errObj.stderr = stderr;
+        reject(errObj);
+      } else {
+        resolve({ stdout, stderr });
+      }
+    };
+
+    const finishTimedOut = () => {
+      const error: any = new Error(`Quá thời gian thực thi cho phép (${timeoutMs / 1000}s)`);
+      error.stdout = capturedStdout;
+      error.stderr = capturedStderr;
+      finish(error, capturedStdout, capturedStderr);
+    };
+
+    try {
+      child = start((error, stdout, stderr) => {
+        capturedStdout = String(stdout || '');
+        capturedStderr = String(stderr || '');
+        if (timedOut) return;
+        if (error) finish(error, capturedStdout, capturedStderr);
+        else finish(undefined, capturedStdout, capturedStderr);
+      });
+
+      child.once('error', (error) => {
+        if (timedOut) return;
+        finish(error);
+      });
+
+      if (!settled) {
+        timer = setTimeout(() => {
+          if (settled) return;
+          timedOut = true;
+          termination = child?.pid ? terminateProcessTree(child.pid) : Promise.resolve();
+          // Do not wait for exec's callback: inherited stdio from an orphaned
+          // descendant must not keep this promise, the slot, or temp files alive.
+          void termination.then(finishTimedOut, finishTimedOut);
+        }, timeoutMs);
+      }
+    } catch (error: any) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 function execWithTimeout(
@@ -60,36 +159,27 @@ function execWithTimeout(
   options: { cwd: string; env?: NodeJS.ProcessEnv },
   timeoutMs: number
 ): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    let child: ChildProcess;
-    let timer: NodeJS.Timeout | null = null;
-    let timedOut = false;
+  return runCommandWithTimeout(
+    (callback) => exec(command, { ...options, detached: process.platform !== 'win32' }, callback),
+    timeoutMs
+  );
+}
 
-    try {
-      child = exec(command, options, (error, stdout, stderr) => {
-        if (timer) clearTimeout(timer);
-        if (timedOut) {
-          return reject(new Error(`Quá thời gian thực thi cho phép (${timeoutMs / 1000}s)`));
-        }
-        if (error) {
-          const errObj: any = new Error(stderr || stdout || error.message);
-          errObj.stdout = stdout;
-          errObj.stderr = stderr;
-          return reject(errObj);
-        }
-        resolve({ stdout: String(stdout), stderr: String(stderr) });
-      });
-
-      if (child.pid) {
-        timer = setTimeout(() => {
-          timedOut = true;
-          if (child.pid) killProcessTree(child.pid);
-        }, timeoutMs);
-      }
-    } catch (e) {
-      reject(e);
-    }
-  });
+/** Exported for regression tests that verify descendant termination on both platforms. */
+export function execFileWithTimeout(
+  file: string,
+  args: string[],
+  options: { cwd: string; env?: NodeJS.ProcessEnv },
+  timeoutMs: number
+): Promise<{ stdout: string; stderr: string }> {
+  return runCommandWithTimeout(
+    (callback) => execFile(file, args, {
+      ...options,
+      detached: process.platform !== 'win32',
+      windowsHide: true
+    }, callback),
+    timeoutMs
+  );
 }
 
 export async function runCppCode(code: string, stdinText: string = ''): Promise<RunResult> {
@@ -198,18 +288,26 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     };
 
     const gdbCmd = `gdb -batch -q -x tracer.py ${outputBinary}`;
+    const configuredGdbTimeout = Number.parseInt(process.env.FLOWLAB_GDB_TIMEOUT_MS || '', 10);
+    const gdbTimeoutMs = Number.isFinite(configuredGdbTimeout) && configuredGdbTimeout > 0
+      ? Math.min(configuredGdbTimeout, 35000)
+      : 35000;
+    let gdbExecutionError = '';
     try {
-      await execWithTimeout(gdbCmd, { env, cwd: tempDir }, 35000);
+      await execWithTimeout(gdbCmd, { env, cwd: tempDir }, gdbTimeoutMs);
     } catch (gdbErr: any) {
-      // GDB might exit when user code crashes or times out; we proceed to inspect traceFile
+      // Preserve a bounded timeout/interruption reason if GDB could not write a trace.
+      gdbExecutionError = gdbErr?.message || String(gdbErr);
     }
 
     // 7. Read trace.json
     if (!fs.existsSync(traceFile)) {
       return {
         success: false,
-        buildOutput: 'Lỗi thực thi: Không thể tạo vết thực thi (Execution Trace). Có thể chương trình gặp lỗi bộ nhớ nghiêm trọng (Segmentation Fault) hoặc quá thời gian xử lý.',
-        trace: []
+        buildOutput: `Lỗi thực thi: Không thể tạo vết thực thi (Execution Trace). ${gdbExecutionError || 'Có thể chương trình gặp lỗi bộ nhớ nghiêm trọng (Segmentation Fault) hoặc quá thời gian xử lý.'}`,
+        trace: [],
+        terminationStatus: gdbExecutionError.includes('Quá thời gian') ? 'timeout' : 'interrupted',
+        terminationReason: gdbExecutionError || 'GDB không tạo được vết thực thi.'
       };
     }
 

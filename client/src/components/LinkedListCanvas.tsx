@@ -46,8 +46,16 @@ export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
 
   // 2. Detached nodes: reachable by other stack pointer, not in main chain
   const detachedNodes = nodes.filter(
-    (n) => n.status === 'detached' || (!visitedMain.has(n.address) && n.status === 'allocated' && (pointersByTarget.get(n.address)?.length || 0) > 0)
+    (n) => n.status === 'detached' || (
+      n.location !== 'stack'
+      && n.location !== 'unknown'
+      && !visitedMain.has(n.address)
+      && n.status === 'allocated'
+      && (pointersByTarget.get(n.address)?.length || 0) > 0
+    )
   );
+  const stackNodes = nodes.filter((n) => n.location === 'stack' && !visitedMain.has(n.address));
+  const unknownLocationNodes = nodes.filter((n) => n.location === 'unknown' && !visitedMain.has(n.address));
 
   // 3. Unreachable nodes: active on heap, not in main chain, no stack pointer
   const unreachableNodes = nodes.filter(
@@ -194,7 +202,37 @@ export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
           </div>
         )}
 
-        {/* SECTION 3: UNREACHABLE NODES (MEMORY LEAKS) */}
+        {stackNodes.length > 0 && (
+          <div data-testid="stack-node-section" className="bg-cyan-950/20 border border-cyan-800/40 rounded-xl p-4">
+            <div className="text-xs font-bold text-cyan-300 uppercase tracking-wider mb-3">
+              Nút NODE nằm trên Stack
+            </div>
+            <div className="flex items-center gap-4 py-2 overflow-x-auto min-w-full">
+              {stackNodes.map((node) => (
+                <div key={node.id} className="flex items-center flex-shrink-0">
+                  <NodeCard node={node} pointers={pointersByTarget.get(node.address) || []} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {unknownLocationNodes.length > 0 && (
+          <div data-testid="unknown-node-section" className="bg-slate-800/30 border border-slate-700 rounded-xl p-4">
+            <div className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">
+              Nút NODE chưa xác định vùng nhớ
+            </div>
+            <div className="flex items-center gap-4 py-2 overflow-x-auto min-w-full">
+              {unknownLocationNodes.map((node) => (
+                <div key={node.id} className="flex items-center flex-shrink-0">
+                  <NodeCard node={node} pointers={pointersByTarget.get(node.address) || []} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* SECTION 3: UNREACHABLE NODES (MEMORY LEAKS) */
         {unreachableNodes.length > 0 && (
           <div className="bg-orange-950/20 border border-orange-800/50 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
@@ -257,11 +295,11 @@ export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
             <div className="flex flex-wrap items-center gap-2">
               {specialPointers.map((p) => (
                 <span
-                  key={p.name}
+                  key={p.displayName || `${p.name}:${p.frameId || ''}`}
                   style={{ backgroundColor: p.color || '#64748B' }}
                   className="px-2 py-0.5 rounded text-[11px] font-bold text-white shadow-sm flex items-center gap-1"
                 >
-                  <span>{p.name}:</span>
+                  <span>{p.displayName || p.name}:</span>
                   <span className="opacity-90 font-mono text-[10px]">
                     {p.state === 'null' ? 'nullptr (0x0)' : p.state === 'uninitialized' ? 'chưa gán (?)' : 'lơ lửng (dangling)'}
                   </span>
@@ -296,13 +334,13 @@ const NodeCard: React.FC<NodeCardProps> = ({
       <div className="min-h-[44px] flex flex-col items-center justify-end gap-1 mb-2">
         {pointers.map((ptr) => (
           <div
-            key={ptr.name}
+            key={ptr.displayName || `${ptr.name}:${ptr.frameId || ''}`}
             style={{ backgroundColor: ptr.color || '#3B82F6' }}
             className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white shadow-lg flex items-center gap-1 ${
               ptr.state === 'freed' ? 'border-2 border-red-400 animate-pulse' : ''
             }`}
           >
-            <span>{ptr.name}</span>
+            <span>{ptr.displayName || ptr.name}</span>
             <span className="text-[9px] opacity-80">➔</span>
             {ptr.state === 'freed' && (
               <span className="text-[9px] bg-red-600 px-1 rounded ml-0.5">dangling</span>
@@ -335,7 +373,9 @@ const NodeCard: React.FC<NodeCardProps> = ({
               : 'bg-slate-800/60 text-slate-400 border-slate-700/50'
           }`}
         >
-          <span className="text-[10px] text-slate-500">Đ/C Heap:</span>
+          <span className="text-[10px] text-slate-500">
+            Đ/C {node.location === 'stack' ? 'Stack' : node.location === 'unknown' ? 'chưa rõ' : 'Heap'}:
+          </span>
           <span className="font-semibold">{node.address}</span>
         </div>
 

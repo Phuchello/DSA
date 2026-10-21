@@ -209,6 +209,78 @@ function runNormalizerUnitTests() {
     assert.strictEqual(n3.status, 'allocated');
   });
 
+
+  test('Preserves same-named pointer instances across caller and recursive frames', () => {
+    const raw = [{
+      event: 'call',
+      line: 4,
+      funcName: 'SumList',
+      stackToRender: [
+        {
+          funcName: 'main', frameId: 'main-frame', frameDepth: 0, isHighlighted: false,
+          encodedLocals: {
+            p: ['C_DATA', '0x10', 'uninitialized', '?'],
+            L: ['C_STRUCT', '0x20', 'LIST', ['pHead', ['C_DATA', '0x20', 'pointer', '0x100']]]
+          }
+        },
+        {
+          funcName: 'SumList', frameId: 'sum-frame-1', frameDepth: 1, isHighlighted: false,
+          encodedLocals: { p: ['C_DATA', '0x30', 'pointer', '0x100'] }
+        },
+        {
+          funcName: 'SumList', frameId: 'sum-frame-2', frameDepth: 2, isHighlighted: true,
+          encodedLocals: { p: ['C_DATA', '0x40', 'pointer', '0x200'] }
+        }
+      ],
+      heap: {
+        '0x100': ['C_STRUCT', '0x100', 'NODE', ['info', ['C_DATA', '0x100', 'int', 1]], ['pNext', ['C_DATA', '0x0', 'pointer', '0x0']]],
+        '0x200': ['C_STRUCT', '0x200', 'NODE', ['info', ['C_DATA', '0x200', 'int', 2]], ['pNext', ['C_DATA', '0x0', 'pointer', '0x0']]]
+      },
+      stackNodes: {},
+      deletedAddresses: []
+    }];
+
+    const point = normalizeTrace(raw)[0];
+    const pInstances = point.dsa.pointers.filter(pointer => pointer.name === 'p');
+    assert.strictEqual(pInstances.length, 3, 'Caller and both recursive frames must retain their own p');
+    assert.strictEqual(pInstances.find(pointer => pointer.frameId === 'main-frame').state, 'uninitialized');
+    assert.strictEqual(pInstances.find(pointer => pointer.frameId === 'sum-frame-1').targetAddress, '0x100');
+    assert.strictEqual(pInstances.find(pointer => pointer.frameId === 'sum-frame-2').targetAddress, '0x200');
+    assert.strictEqual(new Set(pInstances.map(pointer => pointer.displayName)).size, 3,
+      'Canvas labels must distinguish pointer instances by frame');
+    assert.strictEqual(point.dsa.mainChain[0].address, '0x100',
+      'The caller LIST root must remain the first node in the main chain');
+  });
+
+  test('Keeps caller uninitialized p separate from live CreateNode local p', () => {
+    const point = normalizeTrace([{
+      event: 'call', line: 7, funcName: 'CreateNode',
+      stackToRender: [
+        {
+          funcName: 'main', frameId: 'main-call', frameDepth: 0,
+          encodedLocals: { p: ['C_DATA', '0x10', 'uninitialized', '?'] }
+        },
+        {
+          funcName: 'CreateNode', frameId: 'create-local', frameDepth: 1,
+          encodedLocals: { p: ['C_DATA', '0x20', 'pointer', '0x5000'] }
+        }
+      ],
+      heap: {
+        '0x5000': ['C_STRUCT', '0x5000', 'NODE', ['info', ['C_DATA', '0x5000', 'int', 42]], ['pNext', ['C_DATA', '0x0', 'pointer', '0x0']]]
+      },
+      stackNodes: {},
+      deletedAddresses: []
+    }])[0];
+
+    const callerPointer = point.dsa.pointers.find(pointer => pointer.frameId === 'main-call' && pointer.name === 'p');
+    const localPointer = point.dsa.pointers.find(pointer => pointer.frameId === 'create-local' && pointer.name === 'p');
+    assert.strictEqual(callerPointer?.state, 'uninitialized');
+    assert.strictEqual(localPointer?.state, 'valid');
+    assert.strictEqual(localPointer?.targetAddress, '0x5000');
+    assert.notStrictEqual(callerPointer?.displayName, localPointer?.displayName);
+    assert.strictEqual(point.dsa.mainChain.length, 0);
+  });
+
   console.log(`Unit Test Summary: ${passed} PASS, ${failed} FAIL`);
   const summary = { passed, failed, total: passed + failed };
   if (failed > 0) {

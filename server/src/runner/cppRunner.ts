@@ -1,4 +1,4 @@
-import { exec, execFile, ChildProcess } from 'child_process';
+import { execFile, spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -107,8 +107,8 @@ function terminateProcessTree(pid: number): Promise<void> {
   });
 }
 
-type ExecCallback = (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => void;
-type StartCommand = (callback: ExecCallback) => ChildProcess;
+type StartCommand = () => ChildProcess;
+const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 
 function runCommandWithTimeout(start: StartCommand, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -120,51 +120,57 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number): Promise<
     let capturedStdout = '';
     let capturedStderr = '';
 
-    const finish = (error?: Error, stdout = capturedStdout, stderr = capturedStderr) => {
+    const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       if (error) {
-        const errObj: any = new Error(timedOut ? error.message : (stderr || stdout || error.message));
-        errObj.stdout = stdout;
-        errObj.stderr = stderr;
+        const preserveReason = timedOut || error.message.includes('maxBuffer');
+        const errObj: any = new Error(preserveReason ? error.message : (capturedStderr || capturedStdout || error.message));
+        errObj.stdout = capturedStdout;
+        errObj.stderr = capturedStderr;
         reject(errObj);
       } else {
-        resolve({ stdout, stderr });
+        resolve({ stdout: capturedStdout, stderr: capturedStderr });
       }
     };
 
-    const finishTimedOut = () => {
-      const error: any = new Error(`Quá thời gian thực thi cho phép (${timeoutMs / 1000}s)`);
-      error.stdout = capturedStdout;
-      error.stderr = capturedStderr;
-      finish(error, capturedStdout, capturedStderr);
+    const stopAndFinish = (error: Error, isTimeout = false) => {
+      if (settled || termination) return;
+      timedOut = isTimeout;
+      termination = child?.pid ? terminateProcessTree(child.pid) : Promise.resolve();
+      void termination.then(() => finish(error), () => finish(error));
+    };
+
+    const capture = (stream: 'stdout' | 'stderr', chunk: Buffer | string) => {
+      const current = stream === 'stdout' ? capturedStdout : capturedStderr;
+      const input = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const remaining = Math.max(0, MAX_COMMAND_OUTPUT_BYTES - Buffer.byteLength(current));
+      const accepted = input.subarray(0, remaining).toString('utf8');
+      if (stream === 'stdout') capturedStdout += accepted;
+      else capturedStderr += accepted;
+      if (input.length > remaining) {
+        stopAndFinish(new Error(stream + ' maxBuffer length exceeded'));
+      }
     };
 
     try {
-      child = start((error, stdout, stderr) => {
-        capturedStdout = String(stdout || '');
-        capturedStderr = String(stderr || '');
-        if (timedOut) return;
-        if (error) finish(error, capturedStdout, capturedStderr);
-        else finish(undefined, capturedStdout, capturedStderr);
-      });
-
+      child = start();
+      child.stdout?.on('data', (chunk: Buffer | string) => capture('stdout', chunk));
+      child.stderr?.on('data', (chunk: Buffer | string) => capture('stderr', chunk));
       child.once('error', (error) => {
-        if (timedOut) return;
-        finish(error);
+        if (!termination) finish(error);
+      });
+      child.once('close', (code, signal) => {
+        if (settled || termination) return;
+        if (code === 0 && signal === null) finish();
+        else finish(new Error(signal ? 'Command terminated by signal ' + signal : 'Command failed with exit code ' + code));
       });
 
-      if (!settled) {
-        timer = setTimeout(() => {
-          if (settled) return;
-          timedOut = true;
-          termination = child?.pid ? terminateProcessTree(child.pid) : Promise.resolve();
-          // Do not wait for exec's callback: inherited stdio from an orphaned
-          // descendant must not keep this promise, the slot, or temp files alive.
-          void termination.then(finishTimedOut, finishTimedOut);
-        }, timeoutMs);
-      }
+      timer = setTimeout(() => {
+        if (settled || termination) return;
+        stopAndFinish(new Error('Quá thời gian thực thi cho phép (' + timeoutMs / 1000 + 's)'), true);
+      }, timeoutMs);
     } catch (error: any) {
       finish(error instanceof Error ? error : new Error(String(error)));
     }
@@ -177,7 +183,13 @@ function execWithTimeout(
   timeoutMs: number
 ): Promise<{ stdout: string; stderr: string }> {
   return runCommandWithTimeout(
-    (callback) => exec(command, { ...options, detached: process.platform !== 'win32' } as Parameters<typeof exec>[1], callback),
+    () => spawn(command, {
+      ...options,
+      shell: true,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }),
     timeoutMs
   );
 }
@@ -190,11 +202,12 @@ export function execFileWithTimeout(
   timeoutMs: number
 ): Promise<{ stdout: string; stderr: string }> {
   return runCommandWithTimeout(
-    (callback) => execFile(file, args, {
+    () => spawn(file, args, {
       ...options,
       detached: process.platform !== 'win32',
-      windowsHide: true
-    } as Parameters<typeof execFile>[2], callback),
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }),
     timeoutMs
   );
 }

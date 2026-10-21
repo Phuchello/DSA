@@ -160,7 +160,7 @@ function execWithTimeout(
   timeoutMs: number
 ): Promise<{ stdout: string; stderr: string }> {
   return runCommandWithTimeout(
-    (callback) => exec(command, { ...options, detached: process.platform !== 'win32' }, callback),
+    (callback) => exec(command, { ...options, detached: process.platform !== 'win32' } as Parameters<typeof exec>[1], callback),
     timeoutMs
   );
 }
@@ -177,7 +177,7 @@ export function execFileWithTimeout(
       ...options,
       detached: process.platform !== 'win32',
       windowsHide: true
-    }, callback),
+    } as Parameters<typeof execFile>[2], callback),
     timeoutMs
   );
 }

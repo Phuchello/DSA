@@ -1,25 +1,24 @@
 # DSA FlowLab: Hạn chế kỹ thuật đã biết
 
-**Cập nhật:** 21/10/2026  
-**Candidate CI:** [run 39578131020](https://github.com/Phuchello/DSA/actions/runs/39578131020) PASS.  
-**Browser artifact:** [12335352037](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037), retention 14 ngày.
+Cập nhật: 21/10/2026  
+Code candidate: [6a5430a0e538c0b4a3c54d360844d149ae0166a5](https://github.com/Phuchello/DSA/commit/6a5430a0e538c0b4a3c54d360844d149ae0166a5)  
+CI: [run 39586265810](https://github.com/Phuchello/DSA/actions/runs/39586265810) PASS cả Linux và Windows/Chrome.  
+Browser artifact: [12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851), retention đến 04/11/2026 10:44:49 UTC.
 
 ## 1. Cô lập mã C++
-
-Runner gọi g++/GDB trên host với quyền của tài khoản hiện tại. Lọc tĩnh, giới hạn kích thước, timeout, concurrency, CORS, Host validation và loopback mặc định không tạo sandbox. Chỉ chạy mã đáng tin cậy tại local. Không deploy công khai hoặc multi-tenant trước khi có cô lập OS/microVM được đánh giá.
+Runner gọi g++/GDB trên host với quyền tài khoản hiện tại. Static filter, size/time/concurrency limits, CORS, Host validation, process-tree termination và loopback mặc định không tạo sandbox. Chỉ chạy code tin cậy local; không public/multi-tenant trước khi OS/microVM isolation được đánh giá.
 
 ## 2. Thời điểm stdout bị buffer
-
-Stdout được đọc tại snapshot khi dữ liệu được flush/quan sát. Nếu chương trình flush khi thoát, tracer không gán byte đó cho câu lệnh cụ thể; byte nằm trong `finalStdout` và UI gắn nhãn output cuối. `TC-STDOUT-CHRONOLOGY` PASS trong run 39578131020.
+Stdout giữ tại snapshot khi tracer quan sát. Nếu buffer chỉ flush lúc thoát, tracer không quy byte đó cho câu lệnh; output được hiển thị riêng với nhãn cuối. TC-STDOUT-CHRONOLOGY PASS run 39586265810.
 
 ## 3. Trace và trạng thái con trỏ
-
-Trace gắn với snapshot code/stdin và request ID. Khi đầu vào đổi, trace trước stale; response cũ không thay trace hiện tại. Deallocation thiếu bằng chứng rõ ràng tiếp tục được phân loại bảo thủ là unknown. Golden và 17 memory invariants PASS trong run 39578131020.
+Trace thuộc về code/stdin snapshot và request ID. Input đổi thì trace cũ stale và response cũ không thay trace hiện tại. Crash/truncation giữ partial trace và termination status/reason. Pointer identity theo frame phân biệt cùng tên trong recursion. Heap NODE chỉ phân loại khi có allocation evidence; thiếu evidence thì unknown. Normalizer, MI-17, MI-19–21 và MI-12 pass run 39586265810.
 
 ## 4. Hành vi toolchain
-
-Số bước và thông tin debug có thể đổi theo compiler/GDB. CI xác minh build trên Linux và native integration trên Windows MinGW-w64. Không tuyên bố full native trace coverage trên mọi nền tảng/toolchain.
+Số bước có thể khác theo compiler/GDB/OS. Golden trace báo 162 snapshots Linux và 161 Windows, trong khi các event/allocation/invariant quan trọng được kiểm chứng trên cả hai. Contract là semantics/topology đã test, không phải trace byte-identical trên mọi toolchain.
 
 ## 5. Browser smoke scope
+Real Chrome evidence [artifact 12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851) đến từ headless Chrome 155.0.8059.85 trên Windows CI với app/backend thật. Artifact giữ logs, JSON, response trace và screenshots. Coverage gồm golden linked-list flow, pointer topology, timeline, Vietnamese modes và pending stdin-response race. Chưa bao phủ mọi browser/version/device/lesson, không thay visual review thật. Chrome version theo hosted runner image, không pin cố định.
 
-[Real Chrome smoke](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037) chạy headless trên Windows CI, app/backend thật, Chrome 155.0.8059.85. Artifact chứa log, JSON evidence, actual trace và screenshots; expires 04/11/2026. Coverage gồm một golden linked-list flow và race stdin. Chưa bao phủ mọi browser/version/device/lesson, và không thay thế visual review trên màn hình thật.
+## 6. Evidence retention
+GitHub Actions artifact giữ 14 ngày; hết hạn thì cần chạy lại để tái tạo bằng chứng.

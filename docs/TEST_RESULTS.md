@@ -1,61 +1,61 @@
-# DSA FlowLab — Kết quả kiểm thử release candidate P0
+# DSA FlowLab — Kết quả kiểm thử review remediation P0
 
-**Cập nhật:** 21/10/2026  
-**Branch head được xác minh:** [`9b36e90260449e99647516974abf0233d23b4a00`](https://github.com/Phuchello/DSA/commit/9b36e90260449e99647516974abf0233d23b4a00) — `dev/flowlab-p0`  
-**GitHub Actions:** [run 39578131020](https://github.com/Phuchello/DSA/actions/runs/39578131020) — Linux PASS; Windows native C++/GDB và real Chrome PASS.  
-**Browser artifact:** [browser-smoke-evidence-39578131020-1](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037) — 252,886 bytes; hết hạn 04/11/2026 09:38 UTC.
+Cập nhật: 21/10/2026  
+Code candidate đã xác minh: [6a5430a0e538c0b4a3c54d360844d149ae0166a5](https://github.com/Phuchello/DSA/commit/6a5430a0e538c0b4a3c54d360844d149ae0166a5) trên dev/flowlab-p0.  
+GitHub Actions: [PR run 39586265810](https://github.com/Phuchello/DSA/actions/runs/39586265810) — Linux/POSIX PASS và Windows + real Chrome PASS trên cùng SHA.  
+Jobs: Linux [119175818493](https://github.com/Phuchello/DSA/actions/runs/39586265810/job/119175818493); Windows [119176349541](https://github.com/Phuchello/DSA/actions/runs/39586265810/job/119176349541).  
+Browser artifact: [12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851), 253,465 bytes; hết hạn 04/11/2026 10:44:49 UTC.
 
-## Automated tests — CI
+## Kiểm thử tự động — CI
 
-Run 39578131020 được gắn với đúng candidate commit 9b36e90260449e99647516974abf0233d23b4a00.
-
-### Linux job — build, type-check và unit tests
-
+### Linux/POSIX
 - Client build/type-check: PASS.
-- Vitest: **14/14 tests**, 4 test files PASS.
+- Vitest: 23 tests, 4 files PASS.
 - Server TypeScript build: PASS.
-- Normalizer/pointer classification: **8/8 PASS**.
+- DSA normalizer/pointer classification: 10/10 PASS.
+- Full native g++/GDB and process-tree suite: 15/15 baseline, 10/10 normalizer, 21/21 memory invariants, 23 client assertions through MI-12; 69 unique assertions PASS.
+- TC-GOLDEN-01, TC-STDOUT-CHRONOLOGY, MI-09, MI-14, MI-18–MI-21: PASS. Golden trace reported 162 snapshots, 7 allocations, 21 traversals, 3 unlinks, 2 deallocations, 17 calls and 18 returns.
 
-### Windows job — native g++/GDB
+### Windows native C++/GDB
+- MSYS2 MinGW-w64 g++, GDB/Python integration and server/client builds: PASS.
+- Full automated suite: 69/69 unique assertions PASS: 15 baseline, 10 normalizer, 21 memory invariants and 23 client assertions through MI-12.
+- MI-18 timeout/process-tree termination, workspace cleanup and concurrency recovery: PASS.
+- MI-19 stack NODE versus heap NODE and links: PASS.
+- MI-20 same-named pointers in caller/recursive GDB frames: PASS.
+- MI-21 segmentation fault, abnormal termination and partial trace: PASS.
+- TC-STDOUT-CHRONOLOGY, MI-09, MI-14 and golden trace: PASS. Golden trace reported 161 snapshots; other reported event counts matched Linux. Platform-specific stepping can differ; tested semantics and topology are the contract, not byte-identical traces.
+- Host regressions: localhost accepted (HTTP 200); lookalike hostname rejected (HTTP 403).
 
-- MSYS2 MinGW-w64 g++, GDB và Python GDB support: PASS.
-- Server/client build: PASS.
-- Full `npm test`: **54/54 unique assertions PASS**:
-  - 15/15 baseline (13 API/runtime cases và 2 Host-header regression checks).
-  - 8/8 normalizer.
-  - 17/17 memory invariants.
-  - 14 client assertions qua MI-12, chạy một lần trong command này.
-- `TC-STDOUT-CHRONOLOGY`: PASS — snapshot trước câu `cout` không có output của chính câu đó; buffered output nằm riêng ở `finalStdout`.
-- `TC-GOLDEN-01`: PASS — 161 snapshots, 7 allocation, 21 traversal, 3 unlink, 2 deallocation, 17 call, 18 return.
-- MI-09 và MI-14: PASS trong bộ 17 memory invariants.
-- Host regression: `localhost:4000` → HTTP 200; `localhost.attacker.example:4000` → HTTP 403.
+The 23 Linux Vitest cases are separate from the 23 frontend assertions exercised inside the full native-suite command; they are not added to the 69 unique assertion count.
 
-Không cộng 14 Vitest tests của Linux vào 14 client assertions đã chạy bên trong full Windows suite; đó là hai lần chạy độc lập ở hai job.
+## Real-browser verification — Chrome thật, backend thật
 
-## Real-browser smoke — Chrome thật, backend thật
+Windows CI launched headless Chrome 155.0.8059.85, the local application and real native g++/GDB backend. The execution API was not mocked. Browser log and artifact confirm:
+- Pasted and edited C++ in CodeMirror; the real request included the edit.
+- Changed stdin, executed C++ and observed actual stdout 0 8.
+- Moved timeline forward and backward.
+- Inspected linked-list topology and pHead, pTail and traversal pointers.
+- Switched Vietnamese Tập sự / Chuyên sâu modes and inspected memory view.
+- Edited stdin while a real request was pending. The old response actually contained stdout 7, but did not replace current trace/output. Rerunning changed input produced stdout 8 and cleared stale state.
+- Returned to Vietnamese Beginner mode; no browser runtime exceptions or console errors.
 
-Windows CI chạy Chrome headless trên `windows-latest` cùng app và g++/GDB native qua loopback. Không mock `/api/run`. Log ghi Chrome **155.0.8059.85**. Các assertions đều PASS:
+Artifact preserves browser/server/Vite logs, structured JSON evidence, response trace and screenshots. Retention is 14 days.
 
-- Mở app, tiếng Việt mặc định và chế độ Tập sự.
-- Paste rồi edit C++ trong CodeMirror; request thực chứa source đã sửa.
-- Đổi stdin sang `3\n3 0 8\n3`, chạy C++ thật và đọc stdout `0 8`.
-- Điều hướng timeline tiến/lùi.
-- Xem topology có node đã cấp phát và các pointer `L.pHead`, `L.pTail`, `p`.
-- Chuyển sang Chuyên sâu, kiểm tra memory inspector, rồi quay lại Tập sự.
-- Khi request thứ hai còn pending, đổi stdin từ `1\n7\n3` sang `1\n8\n3`. Response thật của input cũ trả stdout `7` nhưng không làm trace hiện tại hết stale và không ghi đè output.
-- Chạy lại input hiện tại, nhận stdout `8`, stale marker được xóa.
-- Không có runtime exception hoặc console error trong trình duyệt.
+## Bốn review findings
 
-Artifact giữ structured JSON evidence, log Chrome/server/Vite, response trace đầu tiên và screenshots topology, Advanced view, pending stale trace, current trace. Upload bước artifact PASS, 252,886 bytes; retention 14 ngày.
+| Finding | Fix and regression evidence |
+|---|---|
+| P1 process-tree termination | Detached POSIX process group with bounded termination/escalation; Windows taskkill /T /F waits for root close. Promise settlement, cleanup retries and concurrency recovery are tested. Process-tree regression and MI-18 PASS on both jobs. |
+| P1 frame-qualified pointer identity | Frame-scoped stable instances preserve recursive p and caller/CreateNode locals. Normalizer regressions and native MI-20 GDB scenario PASS. |
+| P2 abnormal termination | Response/UI preserve termination status, reason and partial trace; crash/truncation differ from success. Frontend tests, MI-17 and MI-21 PASS. |
+| P2 stack versus heap NODE | Allocation evidence gates heap classification; insufficient evidence remains unknown while true allocation/deallocation and aliases are retained. Normalizer and mixed-location native MI-19 PASS. |
 
-## Bằng chứng trước đó
-
-Run [39541439517](https://github.com/Phuchello/DSA/actions/runs/39541439517) xanh trên commit trước candidate. Candidate mới đã chạy lại toàn bộ matrix ở run 39578131020; chỉ dùng run 39578131020 làm bằng chứng cho Host fix và version metadata.
+Review replies record evidence; threads remain unresolved until reviewers decide.
 
 ## Giới hạn còn lại
-
-- Runner biên dịch/chạy C++ trên host; **không phải sandbox** và chỉ dành cho code đáng tin cậy tại local. Không mở API ra Internet hoặc dùng multi-tenant.
-- Visualizer hỗ trợ một tập con trạng thái C++ và các tình huống đã kiểm thử; không khẳng định tương thích phổ quát.
-- Stdout đã flush được ghi theo thời điểm quan sát; buffered output khi thoát chỉ có nhãn output cuối, không có thời điểm câu lệnh chính xác.
-- Browser smoke là headless Chrome trên một luồng golden linked-list; không thay visual review trên màn hình vật lý hoặc matrix nhiều browser/thiết bị/bài học.
-- Phiên bản Chrome đi theo hosted runner image, không pin cố định.
+- Native runner executes host C++ with current process privileges and is not a sandbox. Keep it local and use trusted source; do not expose publicly or multi-tenant.
+- Visualizer covers tested C++ and linked-list states, not general C++ semantics.
+- Buffered stdout without a precise observed flush is labeled final output rather than attributed to a source line.
+- Browser coverage is headless Chrome on one Windows runner image, one Chrome version per run and one golden flow; it does not replace broader browser/device/visual review.
+- Native integration is Linux POSIX plus Windows MinGW/GDB, not every compiler or OS configuration.
+- CI artifact expires after 14 days; rerun to recreate evidence after expiry.

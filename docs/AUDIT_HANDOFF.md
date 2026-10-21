@@ -1,36 +1,27 @@
-# DSA FlowLab — Bàn giao kiểm toán chất lượng P0
+# DSA FlowLab — Bàn giao audit remediation P0
 
-**Ngày:** 21/10/2026  
-**Repository:** [Phuchello/DSA](https://github.com/Phuchello/DSA)  
-**Nhánh:** `dev/flowlab-p0`  
-**Candidate commit:** [`9b36e90260449e99647516974abf0233d23b4a00`](https://github.com/Phuchello/DSA/commit/9b36e90260449e99647516974abf0233d23b4a00)  
-**CI:** [run 39578131020](https://github.com/Phuchello/DSA/actions/runs/39578131020) — Linux và Windows + real Chrome PASS.  
-**Artifact:** [12335352037](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037) — log, JSON evidence, trace và ảnh chụp.
+Ngày: 21/10/2026  
+Repository: [Phuchello/DSA](https://github.com/Phuchello/DSA)  
+PR review: [#1](https://github.com/Phuchello/DSA/pull/1), đang Draft trong lúc cập nhật bằng chứng mới nhất.  
+Branch: dev/flowlab-p0  
+Code candidate đã kiểm thử: [6a5430a0e538c0b4a3c54d360844d149ae0166a5](https://github.com/Phuchello/DSA/commit/6a5430a0e538c0b4a3c54d360844d149ae0166a5)  
+CI matrix: [run 39586265810](https://github.com/Phuchello/DSA/actions/runs/39586265810) — Linux job 119175818493 và Windows/native/Chrome job 119176349541 PASS.  
+Browser artifact: [12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851), 253,465 bytes, retention 14 ngày.
 
-## Kết quả audit
+## Bốn review findings
+1. Process tree: POSIX detached group with bounded TERM/KILL escalation; Windows taskkill /T /F awaits root close. Timeout races settle, workspaces clean up and concurrency recovers. Process-tree regression and MI-18 pass on both OS jobs.
+2. Pointer identity: stable pointer instances include stack-frame scope. Caller/recursive p and CreateNode-local p remain independent. Normalizer regressions and native MI-20 pass.
+3. Abnormal termination: response/UI preserve termination status, reason and partial trace; crash/truncation differ from success. Frontend tests, MI-17 and native MI-21 pass.
+4. Stack/heap NODE: readable stack objects alone are not heap evidence. Insufficient evidence remains unknown; native and normalizer mixed-location MI-19 pass.
 
-So sánh `main...dev/flowlab-p0`: nhánh dev ahead 18 commits, behind 0; merge base là `b0478a027993516a2580b744f4d9685027ad6e77`. Diff bao gồm ứng dụng P0, tracer, normalizer, tests, CI và tài liệu. Main không thay đổi trong quá trình chuẩn bị.
+## Evidence categories
+- Automated unit/build: Linux client/server builds, 23 Vitest tests and 10 normalizer tests pass.
+- Automated native runtime: Linux/POSIX and Windows MinGW/GDB each report 15 baseline + 10 normalizer + 21 memory invariants + 23 frontend assertions via MI-12 = 69 unique assertions. TC-GOLDEN-01, stdout chronology, MI-09/14 and MI-18–21 pass.
+- Real browser: Chrome 155.0.8059.85 on Windows CI against real loopback C++/GDB backend. Paste/edit, stdin/stdout, topology/pointers, forward/back timeline, Vietnamese modes and pending-request stale protection pass. Artifact retains logs, JSON, actual trace and screenshots.
 
-- Tracer giữ semantics `before-statement`; không backfill stdout cuối vào snapshot trước. Output buffered khi thoát nằm riêng trong `finalStdout`.
-- App gắn trace với snapshot code/stdin và request ID. Response cũ hoặc out-of-order không được đánh dấu hiện hành khi đầu vào đã đổi.
-- CodeMirror, stdin, timeline hai chiều, topology `pHead`/`pTail`/`pNext`, pointer duyệt và mode tiếng Việt được xác minh bằng real Chrome trên backend C++/GDB thật.
-- Bộ kiểm tra Host từng dùng prefix matching. Candidate đổi sang parse hostname và so khớp chính xác; regression kiểm tra localhost hợp lệ và hostname lookalike bị HTTP 403.
-- CORS allowlist, loopback mặc định, giới hạn input, timeout và concurrency vẫn được giữ. Đây là các kiểm soát cấu hình/tài nguyên, không phải sandbox.
-- Metadata package root/client/server và lockfiles thống nhất ở `0.1.0-p0`.
+See [TEST_RESULTS.md](TEST_RESULTS.md), [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for detailed evidence and limitations.
 
-## Bằng chứng
+## Security and release boundary
+Main was not modified; PR is not merged. No auto-merge, tag, release or deployment was created. Native execution remains local-only for trusted code and is not an OS-isolated sandbox. Do not expose to untrusted/public or multi-tenant input.
 
-- Linux: client build/type-check, 14 Vitest tests, server build, 8 normalizer tests — PASS.
-- Windows: build, native C++/GDB, **54/54 unique assertions** — PASS; gồm 15 baseline, 8 normalizer, 17 memory invariants, 14 client assertions qua MI-12. MI-09, MI-14, golden trace và stdout chronology PASS.
-- Real Chrome: edit/paste C++, stdin, stdout `0 8`, timeline, pointer topology, Beginner/Advanced tiếng Việt, pending response stdout `7` bị bỏ qua sau khi input đổi, rerun stdout `8`, browser console sạch — PASS.
-- Artifact [12335352037](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037) được upload thành công, 252,886 bytes, retention 14 ngày.
-
-Chi tiết test ở [TEST_RESULTS.md](TEST_RESULTS.md).
-
-## Rủi ro và giới hạn
-
-Runner chạy binary C++ bản địa bằng g++/GDB với quyền của tiến trình host. Static denylist, timeout, CORS, Host validation, size/concurrency limits và localhost binding không phải sandbox. Không mở runner công khai hoặc multi-tenant cho đến khi có cô lập OS/microVM được đánh giá. Coverage trace/browser hữu hạn như liệt kê trong TEST_RESULTS và KNOWN_ISSUES.
-
-## Trạng thái phát hành
-
-Đã chuẩn bị release docs và manifest đề xuất cho `v0.1.0-p0`; chưa có tag, GitHub Release hay deployment. PR hướng `dev/flowlab-p0` → `main` được tạo để con người review. **Không merge nếu chưa có human approval.**
+Human review and merge/release authorization remain outstanding.

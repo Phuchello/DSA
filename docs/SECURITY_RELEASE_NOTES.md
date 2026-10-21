@@ -2,7 +2,7 @@
 
 ## Phạm vi an toàn
 
-Backend mặc định bind `127.0.0.1`; CORS cho allowlist origin localhost. Host header parse URL và so khớp hostname chính xác: `localhost`, `127.0.0.1`, `[::1]`. Candidate regression test: `localhost:4000` → HTTP 200 và `localhost.attacker.example:4000` → HTTP 403; PASS trong [run 39578131020](https://github.com/Phuchello/DSA/actions/runs/39578131020).
+Backend mặc định bind `127.0.0.1`; CORS cho allowlist origin localhost. Host header parse URL và so khớp hostname chính xác: `localhost`, `127.0.0.1`, `[::1]`. Candidate regression test: `localhost:4000` → HTTP 200 và `localhost.attacker.example:4000` → HTTP 403; PASS trong [run 39586265810](https://github.com/Phuchello/DSA/actions/runs/39586265810).
 
 Body, source, stdin, compile/debug duration và concurrency có giới hạn ứng dụng. Các biện pháp này giảm một số rủi ro cấu hình/tải nhưng không cô lập mã. Denylist không thể bao quát mọi API hệ thống; timeout không giới hạn toàn diện CPU/RAM/filesystem/side effects. C++ chạy trên host với quyền hiện tại.
 

@@ -384,7 +384,8 @@ using namespace std;
 struct NODE { int info; NODE* pNext; };
 int SumList(NODE* p) {
     if (p == nullptr) return 0;
-    return p->info + SumList(p->pNext);
+    int nextSum = SumList(p->pNext);
+    return p->info + nextSum;
 }
 int main() {
     NODE* n3 = new NODE{3, nullptr};
@@ -397,11 +398,14 @@ int main() {
     const res = await runCppCode(code, '');
     assert.strictEqual(res.success, true, 'Code execution must succeed');
 
-    const recursiveSnapshots = res.trace.filter(s => s.funcName === 'SumList');
-    console.log(`  [MI-09 frame trace] ${JSON.stringify(recursiveSnapshots.map(step => ({
+    const canonicalFunctionName = (name) => String(name || '').split('!').pop().split('(')[0].trim();
+    const recursiveSnapshots = res.trace.filter(s => canonicalFunctionName(s.funcName) === 'SumList');
+    console.log(`  [MI-09 trace evidence] ${JSON.stringify(res.trace.map(step => ({
       step: step.step,
       line: step.line,
-      frames: step.stackToRender.map(frame => ({
+      funcName: step.funcName,
+      codeText: step.codeText,
+      frames: (step.stackToRender || []).map(frame => ({
         name: frame.funcName,
         sourceLocation: frame.sourceLocation,
         frameDepth: frame.frameDepth,
@@ -414,11 +418,11 @@ int main() {
     const maxFrameStep = res.trace.reduce((max, s) => s.stackToRender.length > max.stackToRender.length ? s : max, res.trace[0]);
     assert.ok(maxFrameStep.stackToRender.length >= 4, 'Must observe main and at least three nested recursive frames');
 
-    const sumFrames = maxFrameStep.stackToRender.filter(f => f.funcName === 'SumList');
+    const sumFrames = maxFrameStep.stackToRender.filter(f => canonicalFunctionName(f.funcName) === 'SumList');
     assert.ok(sumFrames.length >= 3, 'Must observe at least three simultaneous SumList invocations');
     assert.ok(maxFrameStep.stackToRender.some(f => f.funcName === 'main'), 'The caller main frame must remain visible');
 
-    const deepestSumFrames = maxFrameStep.stackToRender.filter(f => f.funcName === 'SumList');
+    const deepestSumFrames = maxFrameStep.stackToRender.filter(f => canonicalFunctionName(f.funcName) === 'SumList');
     const mainFrame = maxFrameStep.stackToRender.find(f => f.funcName === 'main');
     const expectedTargets = [
       mainFrame.encodedLocals.n1[3],
@@ -512,9 +516,13 @@ int main() {
     // Run the Vitest client tests
     const clientDir = path.resolve(__dirname, '../client');
     const npmCommand = process.platform === 'win32' ? 'npm.cmd test' : 'npm test';
-    const vitestOutput = execSync(npmCommand, { cwd: clientDir, encoding: 'utf-8' });
-    const vitestSummary = /Tests\s+(\d+)\s+passed/.exec(vitestOutput);
-    assert.ok(vitestSummary, 'Vitest must report its executed test count');
+    const vitestOutput = execSync(npmCommand, {
+      cwd: clientDir,
+      encoding: 'utf-8',
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }
+    }).replace(/\u001b\[[0-9;]*m/g, '');
+    const vitestSummary = /Tests\s+(\d+)\s+passed\b/i.exec(vitestOutput);
+    assert.ok(vitestSummary, `Vitest must report its executed test count; output tail: ${vitestOutput.slice(-2000)}`);
     clientTestExecutions = Number(vitestSummary[1]);
     assert.ok(clientTestExecutions > 0, 'Vitest UI suite must execute at least one assertion');
   });

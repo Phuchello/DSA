@@ -170,6 +170,19 @@ function assertTraceCompleteness(trace) {
     || step.dsa.diff.freedNodes.length > 0
     || step.dsa.diff.unlinkedNodes.length > 0);
 
+  if (!hasTraversal) {
+    console.log(`  [TC-GOLDEN-01 traversal evidence] ${JSON.stringify(trace.map(step => ({
+      funcName: step.funcName,
+      line: step.line,
+      codeText: step.codeText,
+      pointers: step.dsa.pointers.filter(pointer => pointer.name === 'p').map(pointer => ({
+        targetAddress: pointer.targetAddress,
+        state: pointer.state
+      })),
+      reroutes: step.dsa.diff.pointerReroutes.filter(change => change.pointer === 'p')
+    })))}`);
+  }
+
   assert.ok(hasAllocation, 'Golden trace must show NODE allocations');
   assert.ok(hasInitialization, 'Golden trace must show initialized NODE values');
   assert.ok(hasListEndpoints, 'Golden trace must show pHead and pTail');

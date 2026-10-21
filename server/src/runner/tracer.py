@@ -136,7 +136,11 @@ def deallocation_call_site(frame):
     while cur:
         try:
             name = cur.name() or ""
-            if any(name.startswith(prefix) for prefix in allowed_wrappers):
+            # MinGW/GDB on Windows may qualify symbols with the shared-library
+            # name (for example, ``libstdc++-6!_ZdlPv``). Strip that qualifier
+            # before recognizing the operator-delete entry frame.
+            symbol_name = name.rsplit("!", 1)[-1]
+            if any(symbol_name.startswith(prefix) for prefix in allowed_wrappers):
                 cur = cur.older()
                 continue
             loc = source_location(cur)

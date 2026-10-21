@@ -35,8 +35,10 @@ const FORBIDDEN_PATTERNS = [
 let activeExecutions = 0;
 const MAX_CONCURRENT_EXECUTIONS = 8;
 
+const closedChildProcesses = new WeakSet<ChildProcess>();
+
 function waitForChildClose(child: ChildProcess | undefined, timeoutMs: number): Promise<boolean> {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  if (!child || closedChildProcesses.has(child)) return Promise.resolve(true);
   return new Promise((resolve) => {
     let finished = false;
     let timer: NodeJS.Timeout;
@@ -47,10 +49,13 @@ function waitForChildClose(child: ChildProcess | undefined, timeoutMs: number): 
       child.removeListener('close', onClose);
       resolve(closed);
     };
-    const onClose = () => finish(true);
+    const onClose = () => {
+      closedChildProcesses.add(child);
+      finish(true);
+    };
     timer = setTimeout(() => finish(false), timeoutMs);
     child.once('close', onClose);
-    if (child.exitCode !== null || child.signalCode !== null) finish(true);
+    if (closedChildProcesses.has(child)) finish(true);
   });
 }
 
@@ -58,50 +63,48 @@ function terminateProcessTree(pid: number, rootProcess?: ChildProcess): Promise<
   if (process.platform === 'win32') {
     return new Promise((resolve) => {
       let finished = false;
-      let waitingForRootClose = false;
-      let killer: ChildProcess | null = null;
-      let taskkillTimer: NodeJS.Timeout;
+      let waitingForClose = false;
       const finish = () => {
         if (finished) return;
         finished = true;
-        clearTimeout(taskkillTimer);
         resolve();
       };
-      const waitForRootClose = async () => {
-        if (finished || waitingForRootClose) return;
-        waitingForRootClose = true;
-        clearTimeout(taskkillTimer);
-        const closed = await waitForChildClose(rootProcess, 1500);
-        if (!closed) {
+      const killRoot = () => {
+        if (rootProcess && rootProcess.exitCode === null && rootProcess.signalCode === null) {
           try {
-            process.kill(pid, 'SIGKILL');
+            rootProcess.kill('SIGKILL');
           } catch {
             // The root command may already have exited.
           }
-          try {
-            rootProcess?.kill('SIGKILL');
-          } catch {
-            // The process handle may no longer be signalable.
-          }
-        }
-        finish();
-      };
-      const forceKillRoot = () => {
-        try {
-          process.kill(pid, 'SIGKILL');
-        } catch {
-          // The root command may already have exited.
         }
         void waitForRootClose();
       };
+      const waitForRootClose = async () => {
+        if (finished || waitingForClose) return;
+        waitingForClose = true;
+        // Wait for the actual close event. exitCode alone is insufficient when
+        // descendants still hold the command's stdout/stderr pipes open.
+        let closed = await waitForChildClose(rootProcess, 3000);
+        if (!closed) {
+          killRoot();
+          closed = await waitForChildClose(rootProcess, 1500);
+        }
+        finish();
+      };
 
-      // taskkill /T terminates the shell, GDB, and the inferior as one tree.
-      taskkillTimer = setTimeout(forceKillRoot, 1500);
-      killer = execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (error) => {
-        if (error) forceKillRoot();
-        else void waitForRootClose();
+      // taskkill /T terminates the shell, GDB, and inferior as one tree. Its
+      // own timeout/error path still kills the root and settles this Promise.
+      const killer = execFile('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        timeout: 2500
+      }, (error) => {
+        if (error) {
+          killRoot();
+          return;
+        }
+        void waitForRootClose();
       });
-      killer.once('error', forceKillRoot);
+      killer.once('error', killRoot);
     });
   }
 
@@ -204,6 +207,7 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number): Promise<
         if (!termination) finish(error);
       });
       child.once('close', (code, signal) => {
+        closedChildProcesses.add(child!);
         if (settled || termination) return;
         if (code === 0 && signal === null) finish();
         else finish(new Error(signal ? 'Command terminated by signal ' + signal : 'Command failed with exit code ' + code));
@@ -443,11 +447,8 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     };
   } finally {
     activeExecutions = Math.max(0, activeExecutions - 1);
-    // Cleanup temp directory safely
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    } catch {
-      // Ignore cleanup error
-    }
+    // Await bounded retries after all command pipes and descendants have closed.
+    // Surface a cleanup failure instead of silently leaking an execution workspace.
+    await fs.promises.rm(tempDir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 }

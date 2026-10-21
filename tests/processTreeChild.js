@@ -12,7 +12,7 @@ function processGroupId(pid) {
 if (mode === 'leaf') {
   setInterval(() => fs.appendFileSync(heartbeatFile, '.'), 25);
 } else {
-  const child = spawn(process.execPath, [__filename, 'leaf', '', heartbeatFile], { stdio: 'ignore' });
+  const child = spawn(process.execPath, [__filename, 'leaf', '', heartbeatFile], { stdio: 'inherit' });
   fs.writeFileSync(pidFile, JSON.stringify({ parent: process.pid, child: child.pid, parentGroup: processGroupId(process.pid), childGroup: processGroupId(child.pid) }));
   setInterval(() => {}, 1000);
 }

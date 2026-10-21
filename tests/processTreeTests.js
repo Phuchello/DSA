@@ -23,7 +23,7 @@ function pidIsAlive(pid) {
     process.kill(pid, 0);
     if (process.platform !== 'win32') {
       const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-      const processState = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\\s+/)[0];
+      const processState = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)[0];
       return processState !== 'Z';
     }
     return true;

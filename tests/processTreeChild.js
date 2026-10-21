@@ -6,7 +6,7 @@ const [mode, pidFile, heartbeatFile] = process.argv.slice(2);
 function processGroupId(pid) {
   if (process.platform === 'win32') return null;
   const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-  return Number(stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\\s+/)[2]);
+  return Number(stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)[2]);
 }
 
 if (mode === 'leaf') {

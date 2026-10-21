@@ -1,45 +1,61 @@
-# DSA FlowLab — Kết quả kiểm thử quality gate P0
+# DSA FlowLab — Kết quả kiểm thử release candidate P0
 
 **Cập nhật:** 21/10/2026  
-**Nhánh:** `dev/flowlab-p0`  
-**Implementation commit:** [a3ade7e6e414ce36a2799ffdbb7a31d376d3f2ec](https://github.com/Phuchello/DSA/commit/a3ade7e6e414ce36a2799ffdbb7a31d376d3f2ec)  
-**GitHub Actions:** [run 39540945050](https://github.com/Phuchello/DSA/actions/runs/39540945050) — Linux PASS, Windows + real Chrome PASS.
+**Branch head được xác minh:** [`9b36e90260449e99647516974abf0233d23b4a00`](https://github.com/Phuchello/DSA/commit/9b36e90260449e99647516974abf0233d23b4a00) — `dev/flowlab-p0`  
+**GitHub Actions:** [run 39578131020](https://github.com/Phuchello/DSA/actions/runs/39578131020) — Linux PASS; Windows native C++/GDB và real Chrome PASS.  
+**Browser artifact:** [browser-smoke-evidence-39578131020-1](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037) — 252,886 bytes; hết hạn 04/11/2026 09:38 UTC.
 
-## Automated tests — Windows local
+## Automated tests — CI
 
-- `npm --prefix client run build`: TypeScript check và Vite build PASS.
-- `npm --prefix server run build`: TypeScript build PASS.
-- `npm --prefix client test`: **14/14 PASS** trên 4 test files. Gồm edit stdin khi request đang pending, response đến sai thứ tự và nhãn stdout cuối riêng.
-- `npm test`: **52/52 assertions PASS** — 13/13 baseline, 8/8 normalizer, 17/17 memory invariants, 14 client assertions qua MI-12.
-- `TC-STDOUT-CHRONOLOGY`: **PASS** — snapshot `before-statement` của dòng `cout` không có sentinel từ chính câu đó; API vẫn trả output thật ở `finalStdout`.
-- `TC-GOLDEN-01`: **PASS**, 161 snapshot, 7 allocation, 21 traversal, 3 unlink, 2 deallocation, 17 call, 18 return.
-- `MI-09`: **PASS**, trace đệ quy giữ main cùng bốn frame `SumList`, tham số `p`, source line và caller/child links.
-- `MI-14`: **PASS**, nhánh flag=1 hoàn tất `_ZdlPv` tại `delete n;` với RCX và allocation generation 1; flag=0 không hoàn tất deallocation. Vector cleanup của STL bị bỏ qua.
+Run 39578131020 được gắn với đúng candidate commit 9b36e90260449e99647516974abf0233d23b4a00.
 
-## Real-browser verification — Chrome local and CI
+### Linux job — build, type-check và unit tests
 
-`npm run test:browser` **PASS** locally with Chrome 155.0.8059.85, and in CI with Chrome 155.0.8059.40 on `windows-latest`. Both runs use headless Chrome and start the real app plus the C++/GDB backend on loopback; `/api/run` is not mocked:
+- Client build/type-check: PASS.
+- Vitest: **14/14 tests**, 4 test files PASS.
+- Server TypeScript build: PASS.
+- Normalizer/pointer classification: **8/8 PASS**.
 
-- Paste and edit C++ in CodeMirror; the captured `/api/run` request body contains that source and the edited stdin.
-- Run native C++ with stdin `3\n3 0 8\n3`; actual stdout is `0 8`.
-- Move the timeline forward and backward, then inspect a snapshot with allocated nodes plus `pHead`, `pTail`, and `p`.
-- Switch from Vietnamese Beginner mode to Advanced memory inspection and back.
-- For a deterministic pending-request race, Chrome pauses the **real backend response** after execution. While the request is still pending in the UI, change stdin from `1\n7\n3` to `1\n8\n3`. The returned old response contains stdout `7`, is ignored, and leaves the stale marker visible. The matching third request produces `8` and clears the marker.
-- Verify all three request bodies and result ownership; the browser console has no runtime exceptions or errors.
+### Windows job — native g++/GDB
 
-CI artifact [browser-smoke-evidence-39540945050-1](https://github.com/Phuchello/DSA/actions/runs/39540945050/artifacts/12318909653) (artifact ID `12318909653`, 253,092 bytes, expires 2026-11-04) contains the structured evidence JSON, browser/server/Vite logs, first real response trace, and four screenshots: topology, Advanced view, pending stale trace, and current matching trace.
+- MSYS2 MinGW-w64 g++, GDB và Python GDB support: PASS.
+- Server/client build: PASS.
+- Full `npm test`: **54/54 unique assertions PASS**:
+  - 15/15 baseline (13 API/runtime cases và 2 Host-header regression checks).
+  - 8/8 normalizer.
+  - 17/17 memory invariants.
+  - 14 client assertions qua MI-12, chạy một lần trong command này.
+- `TC-STDOUT-CHRONOLOGY`: PASS — snapshot trước câu `cout` không có output của chính câu đó; buffered output nằm riêng ở `finalStdout`.
+- `TC-GOLDEN-01`: PASS — 161 snapshots, 7 allocation, 21 traversal, 3 unlink, 2 deallocation, 17 call, 18 return.
+- MI-09 và MI-14: PASS trong bộ 17 memory invariants.
+- Host regression: `localhost:4000` → HTTP 200; `localhost.attacker.example:4000` → HTTP 403.
 
-## GitHub Actions
+Không cộng 14 Vitest tests của Linux vào 14 client assertions đã chạy bên trong full Windows suite; đó là hai lần chạy độc lập ở hai job.
 
-Run [39540945050](https://github.com/Phuchello/DSA/actions/runs/39540945050) completed green on implementation commit [a3ade7e6e414ce36a2799ffdbb7a31d376d3f2ec](https://github.com/Phuchello/DSA/commit/a3ade7e6e414ce36a2799ffdbb7a31d376d3f2ec):
+## Real-browser smoke — Chrome thật, backend thật
 
-- Linux **PASS:** client build/typecheck, 14 Vitest tests, server build, 8 normalizer tests.
-- Windows **PASS:** full build; 52/52 assertions — 13/13 baseline, 8/8 normalizer, 17/17 invariants, 14 client assertions via MI-12. `TC-STDOUT-CHRONOLOGY`, 161-snapshot golden trace, MI-09, and MI-14 all PASS.
-- Real Chrome smoke **PASS** in the same Windows job, using hosted Chrome and the MSYS2 MinGW g++/GDB toolchain. The evidence artifact above was uploaded successfully.
+Windows CI chạy Chrome headless trên `windows-latest` cùng app và g++/GDB native qua loopback. Không mock `/api/run`. Log ghi Chrome **155.0.8059.85**. Các assertions đều PASS:
 
-The preceding CI attempt [39540508595](https://github.com/Phuchello/DSA/actions/runs/39540508595) passed Linux and Windows automated tests but exposed a browser-test selection issue: the first allocated-nodes/head/tail snapshot did not yet contain traversal pointer `p`. The harness was corrected to select one snapshot containing all required elements and now preserves the full response trace; assertions were not relaxed. Run 39540945050 is the green retry.
+- Mở app, tiếng Việt mặc định và chế độ Tập sự.
+- Paste rồi edit C++ trong CodeMirror; request thực chứa source đã sửa.
+- Đổi stdin sang `3\n3 0 8\n3`, chạy C++ thật và đọc stdout `0 8`.
+- Điều hướng timeline tiến/lùi.
+- Xem topology có node đã cấp phát và các pointer `L.pHead`, `L.pTail`, `p`.
+- Chuyển sang Chuyên sâu, kiểm tra memory inspector, rồi quay lại Tập sự.
+- Khi request thứ hai còn pending, đổi stdin từ `1\n7\n3` sang `1\n8\n3`. Response thật của input cũ trả stdout `7` nhưng không làm trace hiện tại hết stale và không ghi đè output.
+- Chạy lại input hiện tại, nhận stdout `8`, stale marker được xóa.
+- Không có runtime exception hoặc console error trong trình duyệt.
+
+Artifact giữ structured JSON evidence, log Chrome/server/Vite, response trace đầu tiên và screenshots topology, Advanced view, pending stale trace, current trace. Upload bước artifact PASS, 252,886 bytes; retention 14 ngày.
+
+## Bằng chứng trước đó
+
+Run [39541439517](https://github.com/Phuchello/DSA/actions/runs/39541439517) xanh trên commit trước candidate. Candidate mới đã chạy lại toàn bộ matrix ở run 39578131020; chỉ dùng run 39578131020 làm bằng chứng cho Host fix và version metadata.
 
 ## Giới hạn còn lại
 
-Output cuối chỉ có timing chính xác tới mức tracer quan sát được; dữ liệu được buffer đến khi thoát được gắn nhãn final thay vì gán cho một dòng sớm hơn. Browser smoke chạy headless trên một bài linked-list golden flow và không thay thế kiểm thử tương tác nhiều thiết bị/trình duyệt. Chrome version đến từ hosted runner và được ghi vào artifact, không pin version. Native C++ runner vẫn không an toàn cho public multi-tenant; không deploy công khai.
-
+- Runner biên dịch/chạy C++ trên host; **không phải sandbox** và chỉ dành cho code đáng tin cậy tại local. Không mở API ra Internet hoặc dùng multi-tenant.
+- Visualizer hỗ trợ một tập con trạng thái C++ và các tình huống đã kiểm thử; không khẳng định tương thích phổ quát.
+- Stdout đã flush được ghi theo thời điểm quan sát; buffered output khi thoát chỉ có nhãn output cuối, không có thời điểm câu lệnh chính xác.
+- Browser smoke là headless Chrome trên một luồng golden linked-list; không thay visual review trên màn hình vật lý hoặc matrix nhiều browser/thiết bị/bài học.
+- Phiên bản Chrome đi theo hosted runner image, không pin cố định.

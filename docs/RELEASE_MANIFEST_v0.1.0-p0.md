@@ -1,27 +1,27 @@
 # Manifest phát hành đề xuất — v0.1.0-p0
 
-**Trạng thái:** đề xuất; chưa tạo tag hoặc GitHub Release.
+**Trạng thái:** đề xuất, chưa tạo tag hoặc GitHub Release.
 
 | Trường | Giá trị |
 |---|---|
 | Repository | `Phuchello/DSA` |
 | Source branch | `dev/flowlab-p0` |
+| Candidate source commit | [`9b36e90260449e99647516974abf0233d23b4a00`](https://github.com/Phuchello/DSA/commit/9b36e90260449e99647516974abf0233d23b4a00) |
 | Target branch | `main` |
-| Version | `0.1.0-p0` |
-| Tag | `v0.1.0-p0` |
+| Version / tag | `0.1.0-p0` / `v0.1.0-p0` |
 | Release title | `DSA FlowLab v0.1.0-p0 — Web P0` |
-| Release type | GitHub prerelease |
-| Target commit | Commit trên `main` sau khi được human review/merge; hiện chưa xác định |
-| Release notes | [docs/RELEASE_NOTES_v0.1.0-p0.md](RELEASE_NOTES_v0.1.0-p0.md) |
-| Assets | Không có binary runner; source archive chỉ sau khi tag được human-approved |
-| Draft/release state | Chưa tạo draft vì thao tác draft có thể tạo tag |
+| Type | GitHub prerelease |
+| Target commit | Chỉ commit trên `main` sau human review/merge; hiện chưa xác định |
+| Release notes | [RELEASE_NOTES_v0.1.0-p0.md](RELEASE_NOTES_v0.1.0-p0.md) |
+| Assets | Không có binary runner |
+| Draft/tag state | Chưa tạo draft vì thao tác draft có thể tự tạo official tag |
 
-## Quy trình bắt buộc
+## Điều kiện
 
 1. Human review và phê duyệt PR.
 2. Human cho phép merge vào `main`.
-3. CI xác minh commit đã merge.
-4. Human cho phép tag trên đúng commit `main`.
+3. CI xác minh merge commit.
+4. Human cho phép tạo tag trên đúng commit `main`.
 5. Human cho phép publish prerelease.
 
-Manifest không cấp quyền cho các hành động trên.
+Manifest không cấp quyền cho các bước trên.

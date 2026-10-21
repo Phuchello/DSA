@@ -3,32 +3,34 @@
 **Ngày:** 21/10/2026  
 **Repository:** [Phuchello/DSA](https://github.com/Phuchello/DSA)  
 **Nhánh:** `dev/flowlab-p0`  
-**Implementation commit:** [a3ade7e6e414ce36a2799ffdbb7a31d376d3f2ec](https://github.com/Phuchello/DSA/commit/a3ade7e6e414ce36a2799ffdbb7a31d376d3f2ec)  
-**CI run:** [39540945050](https://github.com/Phuchello/DSA/actions/runs/39540945050) — Linux, Windows native tests, and real Chrome PASS.
+**Candidate commit:** [`9b36e90260449e99647516974abf0233d23b4a00`](https://github.com/Phuchello/DSA/commit/9b36e90260449e99647516974abf0233d23b4a00)  
+**CI:** [run 39578131020](https://github.com/Phuchello/DSA/actions/runs/39578131020) — Linux và Windows + real Chrome PASS.  
+**Artifact:** [12335352037](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037) — log, JSON evidence, trace và ảnh chụp.
 
-## Trạng thái
+## Kết quả audit
 
-Runtime P0 đã được sửa và kiểm thử local; Linux và Windows + Chrome jobs đều PASS trên implementation commit. Không merge vào `main` và không triển khai native C++ runner công khai.
+So sánh `main...dev/flowlab-p0`: nhánh dev ahead 18 commits, behind 0; merge base là `b0478a027993516a2580b744f4d9685027ad6e77`. Diff bao gồm ứng dụng P0, tracer, normalizer, tests, CI và tài liệu. Main không thay đổi trong quá trình chuẩn bị.
 
-## Các sửa lỗi P0
-
-- Snapshot giữ quy ước `before-statement`. Tracer không chép stdout cuối ngược lên các bước trước; stdout được quan sát ở bước nào thì ở snapshot đó. Output còn trong buffer khi chương trình thoát được đưa riêng vào `finalStdout` và UI ghi nhãn là đầu ra cuối cùng.
-- Mỗi yêu cầu chạy lưu bản chụp bất biến của code và stdin. Trace chỉ được nhận nếu request ID mới nhất và cả hai đầu vào hiện tại vẫn khớp với bản chụp. Trace giữ nguồn đầu vào để trạng thái cũ được tính tự động; phản hồi cũ hoặc đến sai thứ tự không thể ghi đè kết quả mới.
-- Thêm regression test cho `cout` trước thời điểm chạy, chỉnh stdin trong lúc chờ, và phản hồi chạy đến sai thứ tự.
-- Thêm browser smoke tự động qua Chrome CDP để chạy luồng UI thật trên loopback; workflow Windows lưu log, JSON evidence, response trace và screenshots thành artifact.
+- Tracer giữ semantics `before-statement`; không backfill stdout cuối vào snapshot trước. Output buffered khi thoát nằm riêng trong `finalStdout`.
+- App gắn trace với snapshot code/stdin và request ID. Response cũ hoặc out-of-order không được đánh dấu hiện hành khi đầu vào đã đổi.
+- CodeMirror, stdin, timeline hai chiều, topology `pHead`/`pTail`/`pNext`, pointer duyệt và mode tiếng Việt được xác minh bằng real Chrome trên backend C++/GDB thật.
+- Bộ kiểm tra Host từng dùng prefix matching. Candidate đổi sang parse hostname và so khớp chính xác; regression kiểm tra localhost hợp lệ và hostname lookalike bị HTTP 403.
+- CORS allowlist, loopback mặc định, giới hạn input, timeout và concurrency vẫn được giữ. Đây là các kiểm soát cấu hình/tài nguyên, không phải sandbox.
+- Metadata package root/client/server và lockfiles thống nhất ở `0.1.0-p0`.
 
 ## Bằng chứng
 
-- **Automated tests local:** Windows full suite PASS, 52/52 assertions: 13/13 baseline (gồm `TC-STDOUT-CHRONOLOGY`), 8/8 normalizer, 17/17 memory invariants và 14 client assertions. Client build/type-check và server build đều PASS.
-- **Real-browser verification:** local Chrome 155.0.8059.85 and CI Chrome 155.0.8059.40 PASS against the real C++/GDB backend. The smoke pastes/edits C++, runs stdin `3\n3 0 8\n3` to stdout `0 8`, navigates both timeline directions, inspects allocated nodes plus `p`, `pHead`, `pTail`, and switches Vietnamese Beginner/Advanced modes. It pauses a genuine response containing stdout `7`, edits stdin to `8` while the UI request is pending, confirms the old response leaves the trace stale, then runs the matching input and sees `8` with the stale marker cleared.
-- **GitHub Actions:** run [39540945050](https://github.com/Phuchello/DSA/actions/runs/39540945050) — Linux PASS; Windows native suite 52/52 PASS; real Chrome PASS. Evidence is retained in [artifact 12318909653](https://github.com/Phuchello/DSA/actions/runs/39540945050/artifacts/12318909653) through 2026-11-04.
-- **Retry record:** run [39540508595](https://github.com/Phuchello/DSA/actions/runs/39540508595) caught an overly early topology-step selection in the smoke harness. The selection now requires all topology pointers in one snapshot; run 39540945050 verifies that stricter condition.
+- Linux: client build/type-check, 14 Vitest tests, server build, 8 normalizer tests — PASS.
+- Windows: build, native C++/GDB, **54/54 unique assertions** — PASS; gồm 15 baseline, 8 normalizer, 17 memory invariants, 14 client assertions qua MI-12. MI-09, MI-14, golden trace và stdout chronology PASS.
+- Real Chrome: edit/paste C++, stdin, stdout `0 8`, timeline, pointer topology, Beginner/Advanced tiếng Việt, pending response stdout `7` bị bỏ qua sau khi input đổi, rerun stdout `8`, browser console sạch — PASS.
+- Artifact [12335352037](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037) được upload thành công, 252,886 bytes, retention 14 ngày.
 
-## Rủi ro còn lại
+Chi tiết test ở [TEST_RESULTS.md](TEST_RESULTS.md).
 
-Runner vẫn biên dịch và chạy mã C++ trên host bằng g++/gdb. Lọc tĩnh, timeout và giới hạn đồng thời không phải sandbox an toàn cho multi-tenant; không đưa runner ra public cho đến khi có cô lập tiến trình mức OS hoặc microVM. Với stdout bị buffer đến lúc thoát, thời điểm chính xác trong trace không xác định; UI vì thế trình bày nó như đầu ra cuối cùng riêng.
+## Rủi ro và giới hạn
 
-## Quyết định bàn giao
+Runner chạy binary C++ bản địa bằng g++/GDB với quyền của tiến trình host. Static denylist, timeout, CORS, Host validation, size/concurrency limits và localhost binding không phải sandbox. Không mở runner công khai hoặc multi-tenant cho đến khi có cô lập OS/microVM được đánh giá. Coverage trace/browser hữu hạn như liệt kê trong TEST_RESULTS và KNOWN_ISSUES.
 
-P0 runtime and browser release-readiness checks pass for `dev/flowlab-p0`. Linux tests, Windows native C++/GDB tests, and the real-browser smoke all pass in CI. This does not approve merging or public deployment; the runner still lacks an OS-level sandbox for untrusted multi-tenant execution.
+## Trạng thái phát hành
 
+Đã chuẩn bị release docs và manifest đề xuất cho `v0.1.0-p0`; chưa có tag, GitHub Release hay deployment. PR hướng `dev/flowlab-p0` → `main` được tạo để con người review. **Không merge nếu chưa có human approval.**

@@ -1,31 +1,28 @@
 # DSA FlowLab: Trạng thái kiểm toán chất lượng P0
 
-**Cập nhật:** 21/10/2026  
-**Nhánh:** `dev/flowlab-p0`  
-**Implementation commit:** [a3ade7e6e414ce36a2799ffdbb7a31d376d3f2ec](https://github.com/Phuchello/DSA/commit/a3ade7e6e414ce36a2799ffdbb7a31d376d3f2ec)  
-**GitHub Actions:** [run 39540945050](https://github.com/Phuchello/DSA/actions/runs/39540945050) — Linux PASS, Windows + browser PASS.
+**Candidate commit:** [`9b36e90260449e99647516974abf0233d23b4a00`](https://github.com/Phuchello/DSA/commit/9b36e90260449e99647516974abf0233d23b4a00)  
+**GitHub Actions:** [run 39578131020](https://github.com/Phuchello/DSA/actions/runs/39578131020) — cả hai job PASS.  
+**Browser evidence:** [artifact 12335352037](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037).
 
 ## Gate P0
 
-| Hạng mục | Trạng thái | Bằng chứng |
+| Hạng mục | Kết quả | Bằng chứng |
 |---|---|---|
-| Stdout theo dòng thời gian | PASS local | Snapshot trước câu `cout` không chứa sentinel từ câu đó; `finalStdout` giữ output thực sau khi chương trình thoát. Không còn backfill vào năm snapshot trước. |
-| Quyền sở hữu request/trace | PASS local | Bản chụp code + stdin và request ID; đổi stdin trong request pending không làm trace thành hiện tại. Response cũ đến sau bị bỏ qua. |
-| Automated frontend tests | PASS local | `npm --prefix client test`: 14/14, gồm hai regression test concurrency và test nhãn output cuối. |
-| Automated backend/native tests | PASS local | `npm test`: 52/52 assertions; golden 161 snapshot, baseline 13/13, normalizer 8/8, memory invariants 17/17, client 14 assertions qua MI-12. |
-| Real-browser smoke | PASS local + CI | Real Chrome 155.0.8059.85 local / 155.0.8059.40 CI against the C++/GDB backend; stdout `0 8`, pending old stdout `7` ignored after stdin edit, matching stdin produces `8`; timeline, nodes, `p`/`pHead`/`pTail`, Vietnamese Beginner/Advanced verified. |
-| GitHub Actions Linux | PASS | Run 39540945050: client build/typecheck, 14 Vitest tests, server build and 8 normalizer tests. |
-| GitHub Actions Windows + browser | PASS | Run 39540945050: full build; 52/52 assertions, including stdout chronology, golden, MI-09, MI-14 and MI-12; Chrome smoke also PASS. [Evidence artifact](https://github.com/Phuchello/DSA/actions/runs/39540945050/artifacts/12318909653). |
+| Stdout chronology | PASS | Snapshot trước `cout` không chứa output chưa thực thi; buffered output ở `finalStdout`. |
+| Trace/request ownership | PASS | Immutable code/stdin snapshot + request ID; response cũ không ghi đè trace hiện tại. |
+| Host-header validation | PASS | Localhost trả HTTP 200; `localhost.attacker.example` trả HTTP 403. |
+| Linux CI | PASS | Client build/type-check, 14 Vitest tests, server build, 8 normalizer tests. |
+| Windows native CI | PASS | 54/54 unique assertions; 15 baseline, 8 normalizer, 17 invariants, 14 client assertions qua MI-12. |
+| Golden/MI coverage | PASS | Golden trace 161 snapshots; MI-09 recursion và MI-14 conditional delete được xác minh. |
+| Real Chrome | PASS | Chrome thật + native g++/GDB; editor/stdin/stdout, pointer topology, timeline, tiếng Việt, stale-response protection. |
+| Artifact retention | PASS | [12335352037](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037), upload thành công, retention 14 ngày. |
 
-The first browser CI attempt, [39540508595](https://github.com/Phuchello/DSA/actions/runs/39540508595), found that the harness selected an allocated-node snapshot before pointer `p` was visible. The harness now chooses a snapshot containing nodes, both endpoints, and `p` together; the assertion remains intact and the retry is green.
+Số 14 Vitest tests ở Linux là một lần chạy riêng; không cộng vào 14 client assertions đã chạy một lần bên trong Windows full suite.
 
-## Chi tiết runtime
+## Bằng chứng runtime
 
-Trace giữ `snapshotConvention: before-statement`; mỗi trường `stdout` chỉ là dữ liệu đã quan sát lúc snapshot. Phần stdout chưa flush đến khi inferior kết thúc được truyền bằng `finalStdout` riêng và hiển thị dưới nhãn “Đầu ra cuối cùng sau khi chương trình kết thúc”.
+Trace giữ `snapshotConvention: before-statement`. Output chỉ xuất hiện tại snapshot khi tracer quan sát được; buffered output sau khi inferior thoát nằm ở `finalStdout` với nhãn “Đầu ra cuối cùng sau khi chương trình kết thúc”. Trace source lưu code/stdin; stale state được so với editor hiện tại.
 
-`traceSource` ghi chính xác code và stdin đã tạo trace. `isTraceStale` được suy ra bằng cách so sánh bản chụp đó với editor hiện tại. Request ID bảo vệ khỏi kết quả đến sai thứ tự; response cũng bị bỏ nếu input hiện tại không còn khớp.
+## Phạm vi và giới hạn
 
-## Phạm vi triển khai
-
-P0 runtime and browser correctness pass. This does not imply public deployment safety. The runner still invokes g++/gdb on the host; OS-level or microVM isolation is required before accepting untrusted C++ from multiple tenants. The browser test is headless and exercises the golden linked-list flow; it does not cover every browser/version/device combination.
-
+P0 là công cụ học tập local cho tập con C++ đã kiểm thử, đặc biệt là linked-list golden flow. Không tuyên bố C++ phổ quát hoặc an toàn để chạy mã không tin cậy. Browser smoke chỉ bao phủ một luồng headless Chrome; xem [KNOWN_ISSUES](KNOWN_ISSUES.md).

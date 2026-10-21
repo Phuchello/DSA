@@ -35,31 +35,73 @@ const FORBIDDEN_PATTERNS = [
 let activeExecutions = 0;
 const MAX_CONCURRENT_EXECUTIONS = 8;
 
-function terminateProcessTree(pid: number): Promise<void> {
+function waitForChildClose(child: ChildProcess | undefined, timeoutMs: number): Promise<boolean> {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let finished = false;
+    let timer: NodeJS.Timeout;
+    const finish = (closed: boolean) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      child.removeListener('close', onClose);
+      resolve(closed);
+    };
+    const onClose = () => finish(true);
+    timer = setTimeout(() => finish(false), timeoutMs);
+    child.once('close', onClose);
+    if (child.exitCode !== null || child.signalCode !== null) finish(true);
+  });
+}
+
+function terminateProcessTree(pid: number, rootProcess?: ChildProcess): Promise<void> {
   if (process.platform === 'win32') {
     return new Promise((resolve) => {
       let finished = false;
+      let waitingForRootClose = false;
+      let killer: ChildProcess | null = null;
+      let taskkillTimer: NodeJS.Timeout;
       const finish = () => {
         if (finished) return;
         finished = true;
-        clearTimeout(fallback);
+        clearTimeout(taskkillTimer);
         resolve();
       };
-      const killRootFallback = () => {
+      const waitForRootClose = async () => {
+        if (finished || waitingForRootClose) return;
+        waitingForRootClose = true;
+        clearTimeout(taskkillTimer);
+        const closed = await waitForChildClose(rootProcess, 1500);
+        if (!closed) {
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch {
+            // The root command may already have exited.
+          }
+          try {
+            rootProcess?.kill('SIGKILL');
+          } catch {
+            // The process handle may no longer be signalable.
+          }
+        }
+        finish();
+      };
+      const forceKillRoot = () => {
         try {
           process.kill(pid, 'SIGKILL');
         } catch {
           // The root command may already have exited.
         }
-        finish();
+        void waitForRootClose();
       };
+
       // taskkill /T terminates the shell, GDB, and the inferior as one tree.
-      const fallback = setTimeout(killRootFallback, 1500);
-      const killer = execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (error) => {
-        if (error) killRootFallback();
-        else finish();
+      taskkillTimer = setTimeout(forceKillRoot, 1500);
+      killer = execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (error) => {
+        if (error) forceKillRoot();
+        else void waitForRootClose();
       });
-      killer.once('error', killRootFallback);
+      killer.once('error', forceKillRoot);
     });
   }
 
@@ -138,7 +180,7 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number): Promise<
     const stopAndFinish = (error: Error, isTimeout = false) => {
       if (settled || termination) return;
       timedOut = isTimeout;
-      termination = child?.pid ? terminateProcessTree(child.pid) : Promise.resolve();
+      termination = child?.pid ? terminateProcessTree(child.pid, child) : Promise.resolve();
       void termination.then(() => finish(error), () => finish(error));
     };
 
@@ -403,7 +445,7 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     activeExecutions = Math.max(0, activeExecutions - 1);
     // Cleanup temp directory safely
     try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     } catch {
       // Ignore cleanup error
     }

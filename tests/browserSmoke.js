@@ -137,7 +137,8 @@ function findAllocatedTopologyStep(trace) {
     const pointerNames = (point.dsa?.pointers || []).map(pointer => pointer.name);
     return liveNodes.length >= 2
       && pointerNames.some(name => name === 'L.pHead' || name === 'pHead')
-      && pointerNames.some(name => name === 'L.pTail' || name === 'pTail');
+      && pointerNames.some(name => name === 'L.pTail' || name === 'pTail')
+      && pointerNames.includes('p');
   });
 }
 
@@ -360,9 +361,10 @@ async function runBrowserSmoke() {
       ? Buffer.from(firstResponseBody.body, 'base64').toString('utf8')
       : firstResponseBody.body;
     const firstRunResult = JSON.parse(firstResponseText);
+    fs.writeFileSync(path.join(ARTIFACT_DIR, 'first-run-response.json'), `${JSON.stringify(firstRunResult, null, 2)}\n`);
     assert.strictEqual(firstRunResult.finalStdout.trim(), '0 8');
     const topologyStep = findAllocatedTopologyStep(firstRunResult.trace);
-    assert.ok(topologyStep >= 0, 'The executed trace must contain a linked-list step with nodes, pHead, and pTail.');
+    assert.ok(topologyStep >= 0, `The executed trace must contain a single linked-list step with allocated nodes, pHead, pTail, and p. Observed pointer sets: ${JSON.stringify(firstRunResult.trace.map((point, index) => ({ index, nodes: point.dsa?.nodes?.filter(node => node.status === 'allocated').length || 0, pointers: (point.dsa?.pointers || []).map(pointer => pointer.name) })).filter(step => step.nodes >= 2))}`);
     const topologyPointerNames = firstRunResult.trace[topologyStep].dsa.pointers.map(pointer => pointer.name);
     assert.ok(topologyPointerNames.includes('p'), 'The topology snapshot must include the traversal pointer p.');
     evidence.requests[0].actualStdout = firstRunResult.finalStdout.trim();
@@ -504,3 +506,4 @@ runBrowserSmoke().catch(error => {
   writeEvidence();
   process.exitCode = 1;
 });
+

@@ -88,15 +88,18 @@ function runPowerShell(script: string, timeoutMs: number, env?: NodeJS.ProcessEn
       if (settled) return;
       settled = true;
       if (error) {
-        const details = [stderr, stdout].filter(Boolean).join(' ').trim() || `exit=${(error as any).code ?? (error as any).signal ?? 'unknown'}`;
+        const details = `${[stderr, stdout].filter(Boolean).join(' ').trim() || `exit=${(error as any).code ?? (error as any).signal ?? 'unknown'}`} (helper: ${helperExecutable})`;
         reject(new Error(`Windows process-tree helper failed: ${details}`));
       }
       else resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
     };
-    const helperExecutable = env?.FLOWLAB_POWERSHELL_EXE || process.env.FLOWLAB_POWERSHELL_EXE || 'powershell.exe';
+    const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT;
+    const defaultPowerShell = systemRoot ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : 'powershell.exe';
+    const helperExecutable = env?.FLOWLAB_POWERSHELL_EXE || process.env.FLOWLAB_POWERSHELL_EXE || defaultPowerShell;
+    const diagnosticScript = `$ErrorActionPreference = 'Stop'\ntry {\n${script}\n} catch {\n  [Console]::Error.WriteLine($_.Exception.ToString())\n  exit 90\n}\n`;
     const child = execFile(helperExecutable, [
       '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-      '-EncodedCommand', encodePowerShell(script)
+      '-EncodedCommand', encodePowerShell(diagnosticScript)
     ], { windowsHide: true, timeout: timeoutMs, maxBuffer: 1024 * 1024, ...(env ? { env } : {}) }, (error, stdout, stderr) => {
       finish(error, stdout, stderr);
     });
@@ -243,7 +246,10 @@ async function taskkillWindowsTree(pid: number, env?: NodeJS.ProcessEnv): Promis
       if (error) reject(error);
       else resolve();
     };
-    const killer = execFile('taskkill', ['/PID', String(pid), '/T', '/F'], {
+    const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT;
+    const defaultTaskkill = systemRoot ? path.join(systemRoot, 'System32', 'taskkill.exe') : 'taskkill';
+    const taskkillExecutable = env?.FLOWLAB_TASKKILL_EXE || process.env.FLOWLAB_TASKKILL_EXE || defaultTaskkill;
+    const killer = execFile(taskkillExecutable, ['/PID', String(pid), '/T', '/F'], {
       windowsHide: true,
       timeout: 3000,
       maxBuffer: 256 * 1024,

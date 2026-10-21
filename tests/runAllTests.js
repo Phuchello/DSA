@@ -468,6 +468,101 @@ async function runTests() {
       results.push({ id: 'TC-STDOUT-CHRONOLOGY', status: 'FAIL', error: err.message });
     }
 
+
+    process.stdout.write('Đang chạy [TC-MI-22-LIST-ROOTS] Kiểm tra hai LIST độc lập trong cùng stack frame... ');
+    try {
+      const code = `#include <iostream>
+struct NODE { int info; NODE* pNext; };
+struct LIST { NODE* pHead; NODE* pTail; };
+int main() {
+  NODE firstA{11, nullptr};
+  NODE firstB{12, nullptr};
+  NODE secondA{21, nullptr};
+  NODE secondB{22, nullptr};
+  firstA.pNext = &firstB;
+  secondA.pNext = &secondB;
+  LIST first{&firstA, &firstB};
+  LIST second{&secondA, &secondB};
+  first.pHead = first.pHead->pNext;
+  std::cout << "LIST_ROOTS:" << second.pHead->info << std::endl;
+  return 0;
+}`;
+      const result = await callApiRun(code, '');
+      assert.ok(result.success, `Execution failed: ${result.buildOutput || 'unknown error'}`);
+      const snapshot = result.trace.find(step => step.codeText.includes('LIST_ROOTS:'));
+      assert.ok(snapshot, 'Trace must contain the output statement snapshot');
+      const first = snapshot.dsa.listRoots.find(root => root.name === 'first');
+      const second = snapshot.dsa.listRoots.find(root => root.name === 'second');
+      assert.ok(first && second, 'Both LIST variables must produce separate list roots');
+      assert.notStrictEqual(first.headAddress, second.headAddress, 'List heads must retain distinct addresses');
+      assert.notStrictEqual(first.tailAddress, second.tailAddress, 'List tails must retain distinct addresses');
+      assert.deepStrictEqual(first.nodes.map(node => node.info), [12], 'Updating first must expose only its updated chain');
+      assert.deepStrictEqual(second.nodes.map(node => node.info), [21, 22], 'The second chain must remain unchanged and reachable');
+      assert.ok(second.nodes.every(node => node.status === 'allocated'), 'Second-list nodes must not be reported as leaked');
+      assert.ok(['first.pHead', 'first.pTail', 'second.pHead', 'second.pTail'].every(name => snapshot.dsa.pointers.some(pointer => pointer.name === name)),
+        'Canonical LIST pointer names must include the variable name');
+      assert.strictEqual(readFinalOutput(result), 'LIST_ROOTS:21');
+      console.log('✅ PASS (two independent roots, chains, and reachable nodes)');
+      passed++;
+      results.push({ id: 'TC-MI-22-LIST-ROOTS', status: 'PASS' });
+    } catch (err) {
+      console.log(`❌ FAIL (${err.message})`);
+      failed++;
+      results.push({ id: 'TC-MI-22-LIST-ROOTS', status: 'FAIL', error: err.message });
+    }
+
+    process.stdout.write('Đang chạy [TC-MI-23-ALLOC-EVIDENCE] Kiểm tra địa chỉ NODE do GDB xác nhận... ');
+    try {
+      const code = `#include <iostream>
+struct NODE { int info; NODE* pNext; };
+void retainStackAddress(NODE** out) {
+  NODE local{17, nullptr};
+  *out = &local;
+}
+int main() {
+  NODE stackLocal{30, nullptr};
+  NODE* stackAlias = &stackLocal;
+  NODE* escaped = nullptr;
+  retainStackAddress(&escaped);
+  NODE* first = new NODE{40, &stackLocal};
+  NODE* firstAlias = first;
+  NODE* second = new NODE{50, nullptr};
+  std::cout << "ALLOC_EVIDENCE" << std::endl;
+  delete first;
+  delete second;
+  return 0;
+}`;
+      const result = await callApiRun(code, '');
+      assert.ok(result.success, `Execution failed: ${result.buildOutput || 'unknown error'}`);
+      const snapshot = result.trace.find(step => step.codeText.includes('ALLOC_EVIDENCE'));
+      assert.ok(snapshot, 'Trace must contain the output statement snapshot');
+      const pointer = name => snapshot.dsa.pointers.find(candidate => candidate.name === name);
+      const escaped = pointer('escaped');
+      const first = pointer('first');
+      const firstAlias = pointer('firstAlias');
+      const second = pointer('second');
+      const stackAlias = pointer('stackAlias');
+      assert.ok(escaped?.targetAddress, 'Retained address from the expired nested-scope NODE must remain observable');
+      assert.ok(first?.targetAddress && second?.targetAddress, 'Both actual new NODE allocations must remain observable');
+      assert.strictEqual(first.targetAddress, firstAlias.targetAddress, 'Pointer aliases must preserve one allocation identity');
+      assert.strictEqual(stackAlias?.state, 'valid', 'A pointer to a live stack NODE must remain valid');
+      const byAddress = address => snapshot.dsa.nodes.find(node => node.address === address);
+      assert.notStrictEqual(byAddress(escaped.targetAddress)?.location, 'heap', 'The escaped stack address must never be promoted to heap');
+      assert.strictEqual(escaped.state, 'unknown', 'An expired stack address without ownership evidence must remain unknown');
+      assert.strictEqual(byAddress(first.targetAddress)?.location, 'heap', 'GDB-observed operator-new return address must be classified as heap');
+      assert.strictEqual(byAddress(second.targetAddress)?.location, 'heap', 'A second distinct allocation must also be classified as heap');
+      assert.strictEqual(byAddress(stackAlias.targetAddress)?.location, 'stack', 'The live local NODE must retain stack location');
+      assert.strictEqual(byAddress(first.targetAddress)?.nextAddress, stackAlias.targetAddress, 'A heap-to-stack edge must retain its target');
+      assert.strictEqual(readFinalOutput(result), 'ALLOC_EVIDENCE');
+      console.log('✅ PASS (escaped stack address unknown; exact allocator returns heap; alias, multiple allocation and mixed link preserved)');
+      passed++;
+      results.push({ id: 'TC-MI-23-ALLOC-EVIDENCE', status: 'PASS' });
+    } catch (err) {
+      console.log(`❌ FAIL (${err.message})`);
+      failed++;
+      results.push({ id: 'TC-MI-23-ALLOC-EVIDENCE', status: 'FAIL', error: err.message });
+    }
+
     // -------------------------------------------------------------
     // PART 2: DSA Normalizer & Pointer Classification Unit Tests
     // -------------------------------------------------------------

@@ -20,6 +20,19 @@ export interface DsaPointer {
   displayName?: string;
 }
 
+export interface DsaListRoot {
+  name: string;
+  displayName: string;
+  headPointer: string;
+  tailPointer: string | null;
+  frameId?: string;
+  frameName?: string;
+  frameDepth?: number;
+  headAddress: string | null;
+  tailAddress: string | null;
+  nodes: DsaNode[];
+}
+
 export interface DsaDiff {
   changedVariables: string[];
   allocatedNodes: string[];
@@ -41,6 +54,7 @@ export interface NormalizedExecutionPoint {
   dsa: {
     nodes: DsaNode[];
     mainChain?: DsaNode[];
+    listRoots?: DsaListRoot[];
     detachedNodes?: DsaNode[];
     unreachableNodes?: DsaNode[];
     freedNodes?: DsaNode[];

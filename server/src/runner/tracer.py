@@ -9,6 +9,7 @@ gdb.execute("set pagination off")
 gdb.execute("set confirm off")
 gdb.execute("set print address on")
 gdb.execute("set print pretty off")
+gdb.execute("set breakpoint pending on")
 
 try:
     gdb.execute("skip -rfu ^std::")
@@ -65,7 +66,6 @@ node_allocation_generations = {}
 live_node_allocations = {}
 source_lines_cache = {}
 last_known_node_values = {}  # Cache of last known struct contents before deallocation
-pending_allocations = False  # Track when a new/CreateNode statement was executed
 last_stdout_size = -1
 last_stdout_cache = ""
 last_frame_ids = []
@@ -100,18 +100,24 @@ def current_allocation_identity(address):
     return {"address": address, "generation": generation, "identity": f"{address}@{generation}"}
 
 def track_node_allocation(address):
-    """Track NODE only after a live identity or an executed NODE allocation is observed."""
+    """Return true only for an address registered from operator new's return value."""
     current_generation = node_allocation_generations.get(address)
-    if current_generation is not None and live_node_allocations.get(address) == current_generation:
-        return True
-    if not pending_allocations:
+    return current_generation is not None and live_node_allocations.get(address) == current_generation
+
+
+def register_node_allocation(address):
+    """Bind positive GDB allocation-return evidence to the exact NODE address."""
+    if not address or address == "0x0":
         return False
+    if track_node_allocation(address):
+        return True
     if address in deleted_addresses:
         deleted_addresses.discard(address)
-        node_allocation_generations[address] = node_allocation_generations.get(address, 1) + 1
+        generation = node_allocation_generations.get(address, 1) + 1
     else:
-        node_allocation_generations.setdefault(address, 1)
-    live_node_allocations[address] = node_allocation_generations[address]
+        generation = node_allocation_generations.setdefault(address, 1)
+    node_allocation_generations[address] = generation
+    live_node_allocations[address] = generation
     return True
 
 def target_delete_argument_register():
@@ -279,6 +285,89 @@ def read_source_line(filename, lineno):
     if 1 <= lineno <= len(lines):
         return lines[lineno - 1].strip()
     return ""
+
+class NodeAllocationReturnBreakpoint(gdb.FinishBreakpoint):
+    """Records the precise address returned by a confirmed scalar operator new."""
+    def __init__(self, frame, entry_diagnostic):
+        super().__init__(frame, internal=True)
+        self.entry_diagnostic = entry_diagnostic
+        self.silent = True
+
+    def stop(self):
+        try:
+            returned_value = self.return_value
+            if returned_value is None:
+                # MinGW GDB may not load a return type for libstdc++'s
+                # operator new symbol; the target ABI still defines RAX.
+                return_register = "rax" if TARGET_ABI in ("windows-x64", "sysv-x64") else "eax"
+                returned_value = gdb.parse_and_eval("$" + return_register)
+            address = f"0x{int(returned_value):x}"
+            if int(address, 16) > 0x1000:
+                register_node_allocation(address)
+                debug_deallocation("node-allocation-returned", address=address, **self.entry_diagnostic)
+        except Exception as exc:
+            debug_deallocation("node-allocation-return-unavailable", error=str(exc), **self.entry_diagnostic)
+        return False
+
+    def out_of_scope(self):
+        debug_deallocation("node-allocation-aborted", **self.entry_diagnostic)
+
+
+class NodeAllocationBreakpoint(gdb.Breakpoint):
+    """Correlates a NODE-sized allocator call with its exact returned address."""
+    def __init__(self, spec):
+        super().__init__(spec, gdb.BP_BREAKPOINT, internal=True)
+        self.spec = spec
+        self.silent = True
+
+    def stop(self):
+        try:
+            if TARGET_ABI == "windows-x64":
+                size_register = "rcx"
+            elif TARGET_ABI == "sysv-x64":
+                size_register = "rdi"
+            else:
+                return False
+            requested_size = int(gdb.parse_and_eval("$" + size_register))
+            try:
+                node_type = gdb.lookup_type("NODE")
+            except Exception:
+                node_type = gdb.lookup_type("struct NODE")
+            if requested_size != int(node_type.sizeof):
+                return False
+
+            allocator_frame = gdb.newest_frame()
+            caller = allocator_frame.older() if allocator_frame else None
+            call_site = None
+            while caller:
+                location = source_location(caller)
+                if location["file"] == TARGET_FILE:
+                    source_text = read_source_line(location["path"], location["line"])
+                    # The source expression is corroboration only. Heap identity is
+                    # created solely from the matching operator-new return address.
+                    if re.search(r"\bnew\s+(?:struct\s+)?NODE\b", source_text):
+                        call_site = location
+                        break
+                try:
+                    caller = caller.older()
+                except Exception:
+                    break
+            if not call_site:
+                return False
+
+            diagnostic = {"breakpoint_symbol": self.spec, "call_site": call_site}
+            NodeAllocationReturnBreakpoint(allocator_frame, diagnostic)
+        except Exception as exc:
+            debug_deallocation("node-allocation-breakpoint-ignored", breakpoint_symbol=self.spec, error=str(exc))
+        return False
+
+
+for allocation_spec in ("_Znwm", "_Znwy", "_Znwj"):
+    try:
+        NodeAllocationBreakpoint(allocation_spec)
+        debug_deallocation("node-allocation-breakpoint-installed", breakpoint_symbol=allocation_spec)
+    except Exception as exc:
+        debug_deallocation("node-allocation-breakpoint-unavailable", breakpoint_symbol=allocation_spec, error=str(exc))
 
 def declaration_is_current_statement(symbol, line_text):
     """Identify a local declared by the current source statement before reading its storage."""
@@ -457,7 +546,7 @@ while step_count < MAX_STEPS:
             # objects were collected from frame locals in a first pass.
             if address in stack_node_records:
                 return
-            if address in deleted_addresses and not pending_allocations:
+            if address in deleted_addresses:
                 return
             node_val = inspect_heap_node(address)
             if not node_val:
@@ -499,7 +588,6 @@ while step_count < MAX_STEPS:
                 break
         f_list.reverse()
 
-        observed_active_pointers = []
         frame_ids = []
         for idx, f in enumerate(f_list):
             try:
@@ -577,7 +665,6 @@ while step_count < MAX_STEPS:
                         ptr_val = int(val)
                         if ptr_val > 0x1000:
                             address = f"0x{ptr_val:x}"
-                            observed_active_pointers.append((sname, address))
                             observe_node_address(address)
                     elif "LIST" in type_name:
                         for field_name in ("pHead", "pTail"):
@@ -586,7 +673,6 @@ while step_count < MAX_STEPS:
                                 if int(field_value) <= 0x1000:
                                     continue
                                 address = f"0x{int(field_value):x}"
-                                observed_active_pointers.append((f"{sname}.{field_name}", address))
                                 observe_node_address(address)
                             except Exception:
                                 pass
@@ -607,16 +693,6 @@ while step_count < MAX_STEPS:
                 "parentFrameId": frame_ids[idx - 1] if idx > 0 else None,
                 "childFrameId": frame_ids[idx + 1] if idx + 1 < len(frame_ids) else None
             })
-
-        # Address reuse check: if previous statement was an allocation statement,
-        # any active pointer now referencing a previously deleted address indicates reuse!
-        if pending_allocations:
-            for v_name, p_addr in observed_active_pointers:
-                if p_addr in deleted_addresses:
-                    node_val = inspect_heap_node(p_addr)
-                    if node_val and track_node_allocation(p_addr):
-                        heap_records[p_addr] = node_val
-            pending_allocations = False
 
         # Discover NODE topology without upgrading readable addresses to heap.
         check_queue = list(dict.fromkeys(list(heap_records.keys()) + list(stack_node_records.keys()) + list(unknown_node_records.keys())))
@@ -695,10 +771,6 @@ while step_count < MAX_STEPS:
             "snapshotConvention": "before-statement"
         })
         last_frame_ids = current_frame_ids
-
-        # Require an executed NODE allocation statement before claiming heap membership
-        if re.search(r"\bnew\s+(?:struct\s+)?NODE\b", code_text):
-            pending_allocations = True
 
     else:
         # Foreign file (STL or CRT)

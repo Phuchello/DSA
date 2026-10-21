@@ -1,16 +1,18 @@
 import React from 'react';
-import { DsaNode, DsaPointer } from '../types';
+import { DsaListRoot, DsaNode, DsaPointer } from '../types';
 import { ArrowRight, Trash2, AlertCircle, AlertTriangle, CornerDownRight, CheckCircle2 } from 'lucide-react';
 
 interface LinkedListCanvasProps {
   nodes: DsaNode[];
   pointers: DsaPointer[];
+  listRoots?: DsaListRoot[];
   currentLine?: number;
 }
 
 export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
   nodes,
   pointers,
+  listRoots,
 }) => {
   // Pointers grouped by target address
   const pointersByTarget = new Map<string, DsaPointer[]>();
@@ -30,19 +32,48 @@ export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
   const nodeMap = new Map<string, DsaNode>();
   nodes.forEach((n) => nodeMap.set(n.address, n));
 
-  // 1. Main chain starting from pHead
-  const pHeadPtr = pointers.find((p) => p.name === 'L.pHead' || p.name === 'pHead' || p.name === 'head');
-  const mainChain: DsaNode[] = [];
-  const visitedMain = new Set<string>();
-
-  let currAddr = pHeadPtr?.targetAddress;
-  while (currAddr && nodeMap.has(currAddr) && !visitedMain.has(currAddr)) {
-    const node = nodeMap.get(currAddr)!;
-    if (node.status === 'freed') break;
-    visitedMain.add(currAddr);
-    mainChain.push(node);
-    currAddr = node.nextAddress;
-  }
+  // Each LIST head gets its own chain and section. Older responses without
+  // listRoots are reconstructed from canonical pointer names for compatibility.
+  const deriveChain = (headAddress: string | null): DsaNode[] => {
+    const chain: DsaNode[] = [];
+    const visited = new Set<string>();
+    let address = headAddress;
+    while (address && nodeMap.has(address) && !visited.has(address)) {
+      const node = nodeMap.get(address)!;
+      if (node.status === 'freed') break;
+      visited.add(address);
+      chain.push(node);
+      address = node.nextAddress;
+    }
+    return chain;
+  };
+  const fallbackRoots: DsaListRoot[] = pointers
+    .filter((pointer) => /(?:^|\.)(?:pHead|head)$/.test(pointer.name))
+    .map((head) => {
+      const suffix = head.name.endsWith('.pHead') ? '.pHead' : head.name.endsWith('.head') ? '.head' : '';
+      const name = suffix ? head.name.slice(0, -suffix.length) : head.name;
+      const tailName = suffix ? `${name}.${suffix === '.head' ? 'tail' : 'pTail'}` : (head.name === 'head' ? 'tail' : 'pTail');
+      const tail = pointers.find((pointer) => pointer.name === tailName && pointer.frameId === head.frameId && pointer.frameDepth === head.frameDepth);
+      return {
+        name: name || head.name,
+        displayName: name || head.name,
+        headPointer: head.displayName || head.name,
+        tailPointer: tail?.displayName || tail?.name || null,
+        frameId: head.frameId,
+        frameName: head.frameName,
+        frameDepth: head.frameDepth,
+        headAddress: head.targetAddress,
+        tailAddress: tail?.targetAddress || null,
+        nodes: deriveChain(head.targetAddress),
+      };
+    });
+  const roots = listRoots?.length ? listRoots : (fallbackRoots.length ? fallbackRoots : [{
+    name: 'L', displayName: 'L', headPointer: 'pHead', tailPointer: null,
+    headAddress: null, tailAddress: null, nodes: [],
+  }]);
+  const renderedRoots = roots.map((root) => ({ root, chain: root.nodes || deriveChain(root.headAddress) }));
+  const mainChain = renderedRoots[0]?.chain || [];
+  const visitedMain = new Set(renderedRoots.flatMap(({ chain }) => chain.map((node) => node.address)));
 
   // 2. Detached nodes: reachable by other stack pointer, not in main chain
   const detachedNodes = nodes.filter(
@@ -77,7 +108,7 @@ export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
             </span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Mỗi khối biểu diễn một biến struct NODE được cấp phát động trên vùng nhớ Heap
+            Mỗi khối biểu diễn một đối tượng NODE. Tùy cách tạo, NODE có thể nằm trên Stack, Heap hoặc chưa xác định được vùng nhớ.
           </p>
         </div>
 
@@ -107,65 +138,64 @@ export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
       </div>
 
       <div className="flex-1 flex flex-col gap-6">
-        {/* SECTION 1: MAIN CHAIN */}
-        <div className="bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
-              Chuỗi Danh Sách Chính (Bắt đầu từ pHead)
-            </span>
-            <span className="text-[11px] text-slate-400 font-mono">
-              pHead: {pHeadPtr?.targetAddress || 'nullptr (0x0)'}
-            </span>
+        {/* SECTION 1: INDEPENDENT LIST ROOT CHAINS */}
+        {renderedRoots.map(({ root, chain }, rootIndex) => (
+          <div key={`${root.frameId || 'frame'}:${root.name}:${rootIndex}`} data-testid={`list-root-${rootIndex}`} className="bg-slate-900/50 border border-slate-800/80 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                {rootIndex === 0 ? 'Chuỗi Danh Sách Chính' : 'Danh sách liên kết'}: {root.displayName}
+              </span>
+              <span className="text-[11px] text-slate-400 font-mono">
+                {root.headPointer}: {root.headAddress || 'nullptr (0x0)'}
+              </span>
+            </div>
+
+            {chain.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-6 border border-dashed border-slate-800 rounded-lg text-slate-500 text-center">
+                <AlertCircle className="w-6 h-6 text-slate-600 mb-1" />
+                <p className="text-xs font-medium">Danh sách liên kết đang rỗng ({root.headPointer} == nullptr)</p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 py-4 overflow-x-auto min-w-full">
+                {chain.map((node, index) => {
+                  const nodePointers = pointersByTarget.get(node.address) || [];
+                  const nextNode = index < chain.length - 1 ? chain[index + 1] : null;
+                  const hasRealNextEdge = nextNode && node.nextAddress === nextNode.address;
+                  const pointsToNull = !node.nextAddress || node.nextAddress === '0x0';
+
+                  return (
+                    <div key={node.id} className="flex items-center flex-shrink-0">
+                      <NodeCard node={node} pointers={nodePointers} />
+                      {hasRealNextEdge ? (
+                        <div className="flex flex-col items-center px-2 text-slate-500 select-none">
+                          <ArrowRight className="w-5 h-5 text-blue-500" />
+                          <span className="text-[8px] font-mono text-blue-400">pNext</span>
+                        </div>
+                      ) : pointsToNull ? (
+                        <div className="flex items-center pl-2 select-none">
+                          <div className="flex flex-col items-center px-1 text-slate-600">
+                            <ArrowRight className="w-4 h-4 text-slate-600" />
+                            <span className="text-[8px] font-mono text-slate-600">pNext</span>
+                          </div>
+                          <div className="w-16 h-12 rounded-lg border border-dashed border-slate-800 bg-slate-950 flex flex-col items-center justify-center text-slate-500 font-mono text-[11px]">
+                            <span>nullptr</span>
+                            <span className="text-[9px] text-slate-600">(0x0)</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center px-2 text-amber-500 select-none">
+                          <ArrowRight className="w-4 h-4 text-amber-400" />
+                          <span className="text-[8px] font-mono text-amber-300">➔ {node.nextAddress}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-
-          {mainChain.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-6 border border-dashed border-slate-800 rounded-lg text-slate-500 text-center">
-              <AlertCircle className="w-6 h-6 text-slate-600 mb-1" />
-              <p className="text-xs font-medium">Danh sách liên kết đang rỗng (pHead == nullptr)</p>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 py-4 overflow-x-auto min-w-full">
-              {mainChain.map((node, index) => {
-                const nodePointers = pointersByTarget.get(node.address) || [];
-                const nextNode = index < mainChain.length - 1 ? mainChain[index + 1] : null;
-                const hasRealNextEdge = nextNode && node.nextAddress === nextNode.address;
-                const pointsToNull = !node.nextAddress || node.nextAddress === '0x0';
-
-                return (
-                  <div key={node.id} className="flex items-center flex-shrink-0">
-                    <NodeCard node={node} pointers={nodePointers} />
-
-                    {/* Edge: strictly based on real pNext address */}
-                    {hasRealNextEdge ? (
-                      <div className="flex flex-col items-center px-2 text-slate-500 select-none">
-                        <ArrowRight className="w-5 h-5 text-blue-500" />
-                        <span className="text-[8px] font-mono text-blue-400">pNext</span>
-                      </div>
-                    ) : pointsToNull ? (
-                      <div className="flex items-center pl-2 select-none">
-                        <div className="flex flex-col items-center px-1 text-slate-600">
-                          <ArrowRight className="w-4 h-4 text-slate-600" />
-                          <span className="text-[8px] font-mono text-slate-600">pNext</span>
-                        </div>
-                        <div className="w-16 h-12 rounded-lg border border-dashed border-slate-800 bg-slate-950 flex flex-col items-center justify-center text-slate-500 font-mono text-[11px]">
-                          <span>nullptr</span>
-                          <span className="text-[9px] text-slate-600">(0x0)</span>
-                        </div>
-                      </div>
-                    ) : (
-                      // Non-consecutive link (e.g. branch or cycle)
-                      <div className="flex flex-col items-center px-2 text-amber-500 select-none">
-                        <ArrowRight className="w-4 h-4 text-amber-400" />
-                        <span className="text-[8px] font-mono text-amber-300">➔ {node.nextAddress}</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        ))}
 
         {/* SECTION 2: DETACHED NODES (STILL REACHABLE VIA STACK POINTER) */}
         {detachedNodes.length > 0 && (

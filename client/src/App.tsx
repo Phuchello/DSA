@@ -272,6 +272,7 @@ export const App: React.FC = () => {
             <LinkedListCanvas
               nodes={currentStep?.dsa.nodes || []}
               pointers={currentStep?.dsa.pointers || []}
+              listRoots={currentStep?.dsa.listRoots || []}
               currentLine={currentStep?.line}
             />
           </div>

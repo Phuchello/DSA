@@ -210,6 +210,50 @@ function runNormalizerUnitTests() {
   });
 
 
+
+  test('Keeps two LIST roots, pointer identities, chains, and reachability independent in one frame', () => {
+    const node = (address, info, next) => ['C_STRUCT', address, 'NODE',
+      ['info', ['C_DATA', address, 'int', info]], ['pNext', ['C_DATA', address, 'pointer', next || '0x0']]];
+    const makeStep = (firstHead) => ({
+      event: 'stepLine', line: 8, funcName: 'main',
+      stackToRender: [{
+        funcName: 'main', frameId: 'main-frame', frameDepth: 0, isHighlighted: true,
+        encodedLocals: {
+          first: ['C_STRUCT', '0x10', 'LIST',
+            ['pHead', ['C_DATA', '0x10', 'pointer', firstHead]],
+            ['pTail', ['C_DATA', '0x18', 'pointer', '0x110']]],
+          second: ['C_STRUCT', '0x20', 'LIST',
+            ['pHead', ['C_DATA', '0x20', 'pointer', '0x200']],
+            ['pTail', ['C_DATA', '0x28', 'pointer', '0x210']]],
+        }
+      }],
+      heap: {
+        '0x100': node('0x100', 10),
+        '0x110': node('0x110', 11),
+        '0x200': node('0x200', 20, '0x210'),
+        '0x210': node('0x210', 21),
+      },
+      deletedAddresses: []
+    });
+    const result = normalizeTrace([makeStep('0x100'), makeStep('0x110')]);
+    const first = result[0].dsa.listRoots.find(root => root.name === 'first');
+    const second = result[0].dsa.listRoots.find(root => root.name === 'second');
+    assert.deepStrictEqual(result[0].dsa.pointers.map(pointer => pointer.name).filter(name => name.includes('.p')),
+      ['first.pHead', 'first.pTail', 'second.pHead', 'second.pTail']);
+    assert.strictEqual(first.headAddress, '0x100');
+    assert.strictEqual(first.tailAddress, '0x110');
+    assert.deepStrictEqual(first.nodes.map(item => item.address), ['0x100']);
+    assert.strictEqual(second.headAddress, '0x200');
+    assert.strictEqual(second.tailAddress, '0x210');
+    assert.deepStrictEqual(second.nodes.map(item => item.address), ['0x200', '0x210']);
+    assert.ok(result[0].dsa.nodes.filter(item => ['0x200', '0x210'].includes(item.address)).every(item => item.status === 'allocated'),
+      'All nodes reachable through the second list must remain allocated, not leaked');
+    assert.strictEqual(result[1].dsa.listRoots.find(root => root.name === 'first').headAddress, '0x110',
+      'Updating first must update only its root');
+    assert.strictEqual(result[1].dsa.listRoots.find(root => root.name === 'second').headAddress, '0x200',
+      'Updating first must not redirect the second root');
+  });
+
   test('Preserves same-named pointer instances across caller and recursive frames', () => {
     const raw = [{
       event: 'call',

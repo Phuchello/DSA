@@ -22,6 +22,19 @@ export interface DsaPointer {
   displayName?: string;
 }
 
+export interface DsaListRoot {
+  name: string;
+  displayName: string;
+  headPointer: string;
+  tailPointer: string | null;
+  frameId?: string;
+  frameName?: string;
+  frameDepth?: number;
+  headAddress: string | null;
+  tailAddress: string | null;
+  nodes: DsaNode[];
+}
+
 export interface DsaDiff {
   changedVariables: string[];
   allocatedNodes: string[];
@@ -43,6 +56,7 @@ export interface NormalizedExecutionPoint {
   dsa: {
     nodes: DsaNode[];
     mainChain: DsaNode[];
+    listRoots?: DsaListRoot[];
     detachedNodes: DsaNode[];
     unreachableNodes: DsaNode[];
     freedNodes: DsaNode[];
@@ -127,6 +141,7 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         dsa: {
           nodes: [],
           mainChain: [],
+          listRoots: [],
           detachedNodes: [],
           unreachableNodes: [],
           freedNodes: [],
@@ -213,7 +228,7 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
           for (let f = 3; f < val.length; f++) {
             const field = val[f];
             if (field && (field[0] === 'pHead' || field[0] === 'pTail')) {
-              const fieldName = `L.${field[0]}`;
+              const fieldName = `${varName}.${field[0]}`;
               const fData = field[1];
               if (!fData || !Array.isArray(fData) || fData[0] !== 'C_DATA') continue;
 
@@ -315,25 +330,62 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
     }
 
-    // 3. Multi-Root Reachability Analysis
-    // Main root: pHead
-    const pHeadPtr = pointers.find(p => p.name === 'L.pHead' || p.name === 'pHead' || p.name === 'head');
-    const mainChainAddresses = new Set<string>();
-    const mainChain: DsaNode[] = [];
-
-    let currAddr = pHeadPtr?.targetAddress;
-    while (currAddr && nodeMap.has(currAddr) && !mainChainAddresses.has(currAddr)) {
-      const node = nodeMap.get(currAddr)!;
-      if (node.status === 'freed') break;
-      mainChainAddresses.add(currAddr);
-      mainChain.push(node);
-      currAddr = node.nextAddress;
+    // 3. Multi-Root Reachability Analysis. LIST field pointers retain the
+    // source variable and frame in their identities (for example first.pHead).
+    const headPointers = pointers.filter(pointer => /(?:^|\.)(?:pHead|head)$/.test(pointer.name));
+    const rootGroups = new Map<string, { head: DsaPointer; tail: DsaPointer | null; name: string }>();
+    for (const head of headPointers) {
+      const suffix = head.name.endsWith('.pHead') ? '.pHead' : head.name.endsWith('.head') ? '.head' : '';
+      const name = suffix ? head.name.slice(0, -suffix.length) : head.name;
+      const rootName = name || head.name;
+      const key = `${head.frameId || ''}:${head.frameDepth ?? ''}:${rootName}`;
+      const tailName = suffix ? `${name}.${suffix === '.head' ? 'tail' : 'pTail'}` : (head.name === 'head' ? 'tail' : 'pTail');
+      const tail = pointers.find(pointer => pointer.name === tailName && pointer.frameId === head.frameId && pointer.frameDepth === head.frameDepth) || null;
+      rootGroups.set(key, { head, tail, name: rootName });
     }
 
-    // Other roots: any other stack pointer (temp, prev, p, etc.)
+    const chainFrom = (rootAddress: string | null): DsaNode[] => {
+      const chain: DsaNode[] = [];
+      const seen = new Set<string>();
+      let address = rootAddress;
+      while (address && nodeMap.has(address) && !seen.has(address)) {
+        const node = nodeMap.get(address)!;
+        if (node.status === 'freed') break;
+        seen.add(address);
+        chain.push(node);
+        address = node.nextAddress;
+      }
+      return chain;
+    };
+
+    const rootNameCounts = new Map<string, number>();
+    for (const group of rootGroups.values()) rootNameCounts.set(group.name, (rootNameCounts.get(group.name) || 0) + 1);
+    const listRoots: DsaListRoot[] = [...rootGroups.values()].map(({ head, tail, name }) => {
+      const duplicateName = (rootNameCounts.get(name) || 0) > 1;
+      const displayName = duplicateName ? `${name}@${head.frameName || 'frame'}#${head.frameDepth ?? 0}` : name;
+      return {
+        name,
+        displayName,
+        headPointer: head.displayName || head.name,
+        tailPointer: tail ? (tail.displayName || tail.name) : null,
+        frameId: head.frameId,
+        frameName: head.frameName,
+        frameDepth: head.frameDepth,
+        headAddress: head.targetAddress,
+        tailAddress: tail?.targetAddress || null,
+        nodes: chainFrom(head.targetAddress)
+      };
+    });
+
+    // Preserve the original single-list API: mainChain remains the first root.
+    const mainChain = listRoots[0]?.nodes || [];
+    const mainChainAddresses = new Set(mainChain.map(node => node.address));
+    const listReachableAddresses = new Set(listRoots.flatMap(root => root.nodes.map(node => node.address)));
+
+    // Other roots: any stack pointer not represented by a LIST head.
     const otherReachableAddresses = new Set<string>();
     for (const ptr of pointers) {
-      if (ptr.targetAddress && ptr.state === 'valid' && nodeMap.has(ptr.targetAddress)) {
+      if (!headPointers.includes(ptr) && ptr.targetAddress && ptr.state === 'valid' && nodeMap.has(ptr.targetAddress)) {
         let walkAddr: string | null = ptr.targetAddress;
         while (walkAddr && nodeMap.has(walkAddr) && !otherReachableAddresses.has(walkAddr)) {
           otherReachableAddresses.add(walkAddr);
@@ -355,7 +407,7 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         freedNodes.push(node);
       } else if (node.location === 'unknown') {
         node.status = 'unknown';
-      } else if (mainChainAddresses.has(addr)) {
+      } else if (listReachableAddresses.has(addr)) {
         node.status = 'allocated';
       } else if (node.location === 'stack') {
         node.status = 'allocated';
@@ -402,10 +454,9 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         }
       }
       // Check unlinked nodes
-      for (const prevNode of prevPoint.dsa.mainChain) {
-        if (!mainChainAddresses.has(prevNode.address)) {
-          diff.unlinkedNodes.push(prevNode.address);
-        }
+      const previousListAddresses = new Set((prevPoint.dsa.listRoots || [{ nodes: prevPoint.dsa.mainChain }]).flatMap(root => root.nodes.map(node => node.address)));
+      for (const address of previousListAddresses) {
+        if (!listReachableAddresses.has(address)) diff.unlinkedNodes.push(address);
       }
       // Check pointer movements
       for (const ptr of pointers) {
@@ -444,6 +495,7 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       dsa: {
         nodes: allOrderedNodes,
         mainChain,
+        listRoots,
         detachedNodes,
         unreachableNodes,
         freedNodes,

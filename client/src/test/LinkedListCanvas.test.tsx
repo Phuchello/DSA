@@ -72,4 +72,39 @@ describe('LinkedListCanvas Component', () => {
     expect(screen.getByText('danglingPtr:')).toBeTruthy();
     expect(screen.getByText('lơ lửng (dangling)')).toBeTruthy();
   });
+
+  it('renders independent LIST roots in separate labeled topology sections', () => {
+    const nodes: DsaNode[] = [
+      { id: 'node_0x1', address: '0x1', info: 11, nextAddress: null, status: 'allocated', location: 'heap' },
+      { id: 'node_0x2', address: '0x2', info: 22, nextAddress: '0x3', status: 'allocated', location: 'heap' },
+      { id: 'node_0x3', address: '0x3', info: 33, nextAddress: null, status: 'allocated', location: 'heap' },
+    ];
+    const pointers: DsaPointer[] = [
+      { name: 'first.pHead', targetAddress: '0x1', state: 'valid' },
+      { name: 'first.pTail', targetAddress: '0x1', state: 'valid' },
+      { name: 'second.pHead', targetAddress: '0x2', state: 'valid' },
+      { name: 'second.pTail', targetAddress: '0x3', state: 'valid' },
+    ];
+    render(<LinkedListCanvas
+      nodes={nodes}
+      pointers={pointers}
+      listRoots={[
+        { name: 'first', displayName: 'first', headPointer: 'first.pHead', tailPointer: 'first.pTail', headAddress: '0x1', tailAddress: '0x1', nodes: [nodes[0]] },
+        { name: 'second', displayName: 'second', headPointer: 'second.pHead', tailPointer: 'second.pTail', headAddress: '0x2', tailAddress: '0x3', nodes: [nodes[1], nodes[2]] },
+      ]}
+    />);
+    const first = screen.getByTestId('list-root-0');
+    const second = screen.getByTestId('list-root-1');
+    expect(first.textContent).toContain('first');
+    expect(first.textContent).toContain('0x1');
+    expect(second.textContent).toContain('second');
+    expect(second.textContent).toContain('0x2');
+    expect(second.textContent).toContain('0x3');
+  });
+
+  it('explains NODE locations accurately in Vietnamese', () => {
+    render(<LinkedListCanvas nodes={[]} pointers={[]} />);
+    expect(screen.getByText('Mỗi khối biểu diễn một đối tượng NODE. Tùy cách tạo, NODE có thể nằm trên Stack, Heap hoặc chưa xác định được vùng nhớ.')).toBeTruthy();
+    expect(screen.queryByText(/được cấp phát động trên vùng nhớ Heap/)).toBeNull();
+  });
 });

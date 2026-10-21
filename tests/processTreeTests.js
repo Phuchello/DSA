@@ -240,7 +240,7 @@ async function runProcessTreeTests() {
             'The injected enumeration error must occur before the primary helper marker');
           checkFaultInjection(Date.now() - injectionStartedAt < 15000,
             'The injected helper failure and execution Promise must settle within the existing hard bound');
-          console.log(`✅ Windows Process32NextW fault injection: ${faultInjectionChecks}/19 checks PASS; phase=${diagnostic.failurePhase}, nativeErrorCode=${diagnostic.nativeErrorCode}, Win32Exception confirmed, no P/Invoke binding error`);
+          console.log(`✅ Windows Process32NextW fault injection: ${faultInjectionChecks}/18 pre-cleanup checks PASS; phase=${diagnostic.failurePhase}, nativeErrorCode=${diagnostic.nativeErrorCode}, Win32Exception confirmed, no P/Invoke binding error`);
           return;
         }
 

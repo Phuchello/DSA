@@ -769,7 +769,7 @@ int main() {
 }`;
       const timeoutStartedAt = Date.now();
       const activeRuns = Array.from({ length: 8 }, () => runCppCode(loopingCode, ''));
-      const saturated = await runCppCode('#include <iostream>\\nint main() { return 0; }', '');
+      const saturated = await runCppCode('#include <iostream>\nint main() { return 0; }', '');
       assert.strictEqual(saturated.success, false, 'The ninth concurrent request must be rejected at the configured limit');
       assert.ok(saturated.buildOutput.includes('đang bận'), 'Concurrency rejection must remain explicit');
 
@@ -789,7 +789,7 @@ int main() {
       else process.env.FLOWLAB_GDB_TIMEOUT_MS = oldTimeout;
       if (oldMaxSteps === undefined) delete process.env.FLOWLAB_MAX_STEPS;
       else process.env.FLOWLAB_MAX_STEPS = oldMaxSteps;
-      const recovered = await runCppCode('#include <iostream>\\nint main() { std::cout << 9; return 0; }', '');
+      const recovered = await runCppCode('#include <iostream>\nint main() { std::cout << 9; return 0; }', '');
       assert.strictEqual(recovered.success, true, `A new request must run after timed-out slots are released: ${recovered.buildOutput || recovered.terminationReason || 'no runner diagnostic'}`);
       assert.strictEqual(recovered.finalStdout.trim(), '9');
     } finally {

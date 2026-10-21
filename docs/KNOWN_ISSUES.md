@@ -1,24 +1,17 @@
-# DSA FlowLab: Hạn chế kỹ thuật đã biết
+# DSA FlowLab — Giới hạn đã biết
 
-Cập nhật: 21/10/2026  
-Code candidate: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898)  
-CI: [run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) PASS cả Linux và Windows/Chrome.  
-Browser artifact: [12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), retention đến 04/11/2026 10:59:21 UTC.
+Evidence hiện tại thuộc code candidate [0e518054625133b56ff983f0926a89e49b0f18ed](https://github.com/Phuchello/DSA/commit/0e518054625133b56ff983f0926a89e49b0f18ed). Linux và Windows/native/Chrome PASS trong [CI run 39606982961](https://github.com/Phuchello/DSA/actions/runs/39606982961). Browser evidence: [artifact 12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), giữ đến 04/11/2026 13:24:07 UTC.
 
-## 1. Cô lập mã C++
-Runner gọi g++/GDB trên host với quyền tài khoản hiện tại. Static filter, size/time/concurrency limits, CORS, Host validation, process-tree termination và loopback mặc định không tạo sandbox. Chỉ chạy code tin cậy local; không public/multi-tenant trước khi OS/microVM isolation được đánh giá.
+## An toàn thực thi
 
-## 2. Thời điểm stdout bị buffer
-Stdout giữ tại snapshot khi tracer quan sát. Nếu buffer chỉ flush lúc thoát, tracer không quy byte đó cho câu lệnh; output được hiển thị riêng với nhãn cuối. TC-STDOUT-CHRONOLOGY PASS run 39588187541.
+Backend chạy g++/GDB với quyền của tài khoản host. Static filter, giới hạn kích thước/thời gian/concurrency, CORS, Host validation, loopback mặc định và process-tree cleanup **không tạo sandbox**. Chỉ chạy code tin cậy local; không public hoặc multi-tenant trước khi có OS-level isolation/microVM phù hợp. Nếu không xác minh được process-tree shutdown, request báo lỗi unverified; không được coi là cleanup thành công.
 
-## 3. Trace và trạng thái con trỏ
-Trace thuộc về code/stdin snapshot và request ID. Input đổi thì trace cũ stale và response cũ không thay trace hiện tại. Crash/truncation giữ partial trace và termination status/reason. Pointer identity theo frame phân biệt cùng tên trong recursion. Heap NODE chỉ phân loại khi có allocation evidence; thiếu evidence thì unknown. Normalizer, MI-17, MI-19–21 và MI-12 pass run 39588187541.
+## Phạm vi trace
 
-## 4. Hành vi toolchain
-Số bước có thể khác theo compiler/GDB/OS. Golden trace báo 162 snapshots Linux và 161 Windows, trong khi các event/allocation/invariant quan trọng được kiểm chứng trên cả hai. Contract là semantics/topology đã test, không phải trace byte-identical trên mọi toolchain.
+Visualizer theo dõi một tập con C++ và ưu tiên các luồng linked-list đã kiểm thử. Nó không phải debugger tổng quát. Số snapshot có thể khác theo compiler, GDB và OS; contract là các semantics/topology được kiểm tra chứ không phải byte-identical trace. Heap NODE chỉ được xác nhận khi GDB quan sát được địa chỉ trả về từ allocator; thiếu evidence thì location/relationship có thể là `unknown`. Buffered stdout chỉ gắn với bước khi quan sát được; output flush khi thoát được hiển thị riêng như final output.
 
-## 5. Browser smoke scope
-Real Chrome evidence [artifact 12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249) đến từ headless Chrome 155.0.8059.85 trên Windows CI với app/backend thật. Artifact giữ logs, JSON, response trace và screenshots. Coverage gồm golden linked-list flow, pointer topology, timeline, Vietnamese modes và pending stdin-response race. Chưa bao phủ mọi browser/version/device/lesson, không thay visual review thật. Chrome version theo hosted runner image, không pin cố định.
+## Browser và build
 
-## 6. Evidence retention
-GitHub Actions artifact giữ 14 ngày; hết hạn thì cần chạy lại để tái tạo bằng chứng.
+Real browser smoke chạy headless Chrome 155.0.8059.40 trên Windows runner với backend thật. Nó bao phủ một golden linked-list flow và các mode tiếng Việt, không bao phủ mọi browser, device, phiên bản, bài học hoặc thao tác accessibility. Browser artifact CI hết hạn sau 14 ngày.
+
+Build hiện tạo một JavaScript chunk 725.13 kB chưa nén, vượt ngưỡng cảnh báo 500 kB của Vite; build vẫn thành công. Có thể tách chunk trong công việc tối ưu sau, không thuộc fix review P0.

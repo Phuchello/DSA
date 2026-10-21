@@ -1,27 +1,22 @@
-# DSA FlowLab — Bàn giao audit remediation P0
+# DSA FlowLab — Bàn giao audit PR #1
 
-Ngày: 21/10/2026  
-Repository: [Phuchello/DSA](https://github.com/Phuchello/DSA)  
-PR review: [#1](https://github.com/Phuchello/DSA/pull/1), đã xác minh Linux/Windows/Chrome trên docs-head; PR vẫn mở, chưa merge và chờ human review; không có merge authorization.  
-Branch: dev/flowlab-p0  
-Code candidate đã kiểm thử: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898)  
-CI matrix: [run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) — Linux job 119182225517 và Windows/native/Chrome job 119182611866 PASS.  
-Browser artifact: [12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), 253,530 bytes, retention 14 ngày.
+PR: [#1](https://github.com/Phuchello/DSA/pull/1), vẫn mở và chưa merge.  
+Code candidate đã kiểm thử: [0e518054625133b56ff983f0926a89e49b0f18ed](https://github.com/Phuchello/DSA/commit/0e518054625133b56ff983f0926a89e49b0f18ed).  
+CI: [run 39606982961](https://github.com/Phuchello/DSA/actions/runs/39606982961): Linux job [119245616617](https://github.com/Phuchello/DSA/actions/runs/39606982961/job/119245616617) và Windows/native/Chrome job [119246143017](https://github.com/Phuchello/DSA/actions/runs/39606982961/job/119246143017) PASS.  
+Artifact: [browser-smoke-evidence 12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), 255,489 bytes, SHA-256 `0048a878be7b7abe5c4d3ba4f0ef2c21439d55e789c2cfd70dcd75296180d427`, expires 04/11/2026 13:24:07 UTC.
 
-## Bốn review findings
-1. Process tree: POSIX detached group with bounded TERM/KILL escalation; Windows taskkill /T /F awaits root close. Timeout races settle, workspaces clean up and concurrency recovers. Process-tree regression and MI-18 pass on both OS jobs.
-2. Pointer identity: stable pointer instances include stack-frame scope. Caller/recursive p and CreateNode-local p remain independent. Normalizer regressions and native MI-20 pass.
-3. Abnormal termination: response/UI preserve termination status, reason and partial trace; crash/truncation differ from success. Frontend tests, MI-17 and native MI-21 pass.
-4. Stack/heap NODE: readable stack objects alone are not heap evidence. Insufficient evidence remains unknown; native and normalizer mixed-location MI-19 pass.
+## Review fixes and evidence
 
-## Evidence categories
-- Automated unit/build: Linux client/server builds, 23 Vitest tests and 10 normalizer tests pass.
-- Automated native runtime: Linux/POSIX and Windows MinGW/GDB each report 15 baseline + 10 normalizer + 21 memory invariants + 23 frontend assertions via MI-12 = 69 unique assertions. TC-GOLDEN-01, stdout chronology, MI-09/14 and MI-18–21 pass.
-- Real browser: Chrome 155.0.8059.85 on Windows CI against real loopback C++/GDB backend. Paste/edit, stdin/stdout, topology/pointers, forward/back timeline, Vietnamese modes and pending-request stale protection pass. Artifact retains logs, JSON, actual trace and screenshots.
+1. **Process-tree termination:** POSIX uses a detached process group with bounded TERM/KILL escalation. Windows snapshots process identity through Toolhelp, terminates the captured tree, verifies process creation identities, and shares one compiled native verifier assembly across concurrent timeouts. The taskkill failure fallback and explicitly unverified path are covered. MI-18 passed on both CI platforms; focused Windows process-tree run was 9/9 locally.
+2. **Pointer identity per frame:** stable identities include frame context. Recursion frames retain separate `p`; caller and `CreateNode` local `p` remain distinct. Normalizer and native GDB MI-20 passed.
+3. **Abnormal termination:** crash, interruption, timeout and truncation retain termination status/reason and partial trace. MI-17/21 and frontend tests passed; incomplete runs are not displayed as successful completion.
+4. **Stack versus heap NODE:** exact GDB-observed allocator return addresses establish heap allocations; stack addresses remain stack and unproven escaped addresses remain unknown. MI-19/23 passed.
+5. **Multiple roots and wording:** separate LIST roots and their pointer topology remain independent (MI-22); canvas relationship wording is corrected and Vietnamese remains default.
 
-See [TEST_RESULTS.md](TEST_RESULTS.md), [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for detailed evidence and limitations.
+## Verification summary
 
-## Security and release boundary
-Main was not modified; PR is not merged. No auto-merge, tag, release or deployment was created. Native execution remains local-only for trusted code and is not an OS-isolated sandbox. Do not expose to untrusted/public or multi-tenant input.
+Each CI OS reports 17 baseline + 11 normalizer + 21 memory invariants + 25 client assertions via MI-12 = **74/74 unique assertions**. Chrome 155.0.8059.40 smoke used the real loopback application and native backend: edit/paste, stdin/stdout, timeline, topology/pointers, Vietnamese modes and stale-response guard passed with no console errors. Logs, JSON, trace and screenshots are retained in the artifact.
 
-Human review and merge/release authorization remain outstanding.
+## Handoff decision
+
+Recommend **NO-GO to merge until reviewers inspect the latest replies and explicitly approve**. All four review threads remain unresolved. No main update, merge, tag, GitHub Release, public deployment or runner publication was performed. The runner uses host privileges and is not suitable for untrusted public execution without OS-level isolation.

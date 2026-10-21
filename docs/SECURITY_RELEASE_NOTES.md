@@ -1,17 +1,11 @@
-# Ghi chú bảo mật — DSA FlowLab P0
+# DSA FlowLab — Security Notes (P0 candidate)
 
-## Phạm vi an toàn
+Candidate code: [0e518054625133b56ff983f0926a89e49b0f18ed](https://github.com/Phuchello/DSA/commit/0e518054625133b56ff983f0926a89e49b0f18ed). CI [39606982961](https://github.com/Phuchello/DSA/actions/runs/39606982961) passed on Linux and Windows/Chrome.
 
-Backend mặc định bind `127.0.0.1`; CORS cho allowlist origin localhost. Host header parse URL và so khớp hostname chính xác: `localhost`, `127.0.0.1`, `[::1]`. Candidate regression test: `localhost:4000` → HTTP 200 và `localhost.attacker.example:4000` → HTTP 403; PASS trong [run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541).
+- Backend binds to `127.0.0.1` by default; CORS uses a local-origin allowlist and exact Host validation. Regression checks passed in the Linux native suite.
+- C++ compilation/execution remains host-local. Static source filters, resource limits, loopback, CORS and process-tree cleanup do not isolate arbitrary native code. The runner is **not a sandbox** and is unsuitable for untrusted public or multi-tenant use without OS-level isolation.
+- Process-tree termination is bounded and verifies captured Windows process creation identities and POSIX process-group disappearance. If verification fails, the request surfaces an unverified termination error and must not claim cleanup succeeded.
+- GDB traces cover the tested C++ subset. Heap NODE classification requires observed allocator-return evidence; ambiguous addresses remain unknown. Buffered output is not backfilled into earlier snapshots.
+- Browser smoke is headless Chrome 155.0.8059.40 on one Windows hosted image; it is not a broad browser/device security assessment.
 
-Body, source, stdin, compile/debug duration và concurrency có giới hạn ứng dụng. Các biện pháp này giảm một số rủi ro cấu hình/tải nhưng không cô lập mã. Denylist không thể bao quát mọi API hệ thống; timeout không giới hạn toàn diện CPU/RAM/filesystem/side effects. C++ chạy trên host với quyền hiện tại.
-
-## Điều kiện sử dụng/phát hành
-
-- Chỉ chạy code đáng tin cậy trên máy local.
-- Giữ backend loopback; không đặt `HOST=0.0.0.0`, port-forward, reverse proxy hoặc tunnel.
-- Không deploy `/api/run` công khai hoặc multi-tenant; không phân phối binary runner.
-- Không mô tả CORS, Host guard, denylist, limits hoặc timeout là sandbox.
-- Cần cô lập OS/microVM được đánh giá trước khi nhận code không tin cậy.
-
-Không thay đổi execution-security restrictions trong candidate.
+PR #1 remains unmerged. No tag, release, public deployment, or public runner has been created.

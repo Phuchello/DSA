@@ -1,28 +1,25 @@
-# Checklist phát hành v0.1.0-p0
+# DSA FlowLab P0 — Checklist kiểm toán PR
 
-Trạng thái: quality gates kỹ thuật PASS; PR #1 chưa merge và chờ human review. Đây không phải phê duyệt merge/tag/publish/deploy.  
-Code candidate: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898).  
-CI matrix: [PR run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) — Linux job 119182225517 và Windows/native/Chrome job 119182611866 PASS.  
-Version: package root/client/server 0.1.0-p0; tag đề xuất v0.1.0-p0.
+Code candidate đã kiểm thử: [0e518054625133b56ff983f0926a89e49b0f18ed](https://github.com/Phuchello/DSA/commit/0e518054625133b56ff983f0926a89e49b0f18ed).  
+Pull request: [#1](https://github.com/Phuchello/DSA/pull/1).  
+CI: [run 39606982961](https://github.com/Phuchello/DSA/actions/runs/39606982961) — Linux job 119245616617 và Windows/native/Chrome job 119246143017 PASS.  
+Browser evidence: [artifact 12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), 255,489 bytes; expires 04/11/2026 13:24:07 UTC.
 
-## Quality gates
-- [x] Linux build/type-check, 23 Vitest tests, 10 normalizer tests, native g++/GDB suite: PASS.
-- [x] Windows build and native MinGW g++/GDB suite: 69/69 unique assertions PASS.
-- [x] Process-tree timeout, descendants, cleanup and concurrency recovery: MI-18 PASS on Linux and Windows.
-- [x] Frame-qualified recursion pointers: normalizer tests and MI-20 PASS.
-- [x] Crash/truncation status and partial trace: frontend, MI-17 and MI-21 PASS.
-- [x] Stack/heap NODE allocation evidence: normalizer and MI-19 PASS.
-- [x] Stdout chronology, golden trace, MI-09 and MI-14: PASS.
-- [x] Real Chrome against real backend: editor, stdin/stdout, timeline, topology, Vietnamese modes and pending-response stale protection PASS.
-- [x] Browser logs, JSON evidence, response trace and screenshots retained — [artifact 12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), 253,530 bytes; expires 04/11/2026 10:59:21 UTC.
-- [x] Vietnamese remains the default language; local-only execution restriction preserved.
-- [x] Four findings have regression evidence; reply without resolving threads.
+## Verification
 
-## Cần human review/authorization
-- [ ] Human reviews diff, audit evidence, limitations and review replies.
-- [ ] Human explicitly approves merge into main.
-- [ ] After authorized merge, verify CI on the merge commit.
-- [ ] Human separately authorizes tag v0.1.0-p0.
-- [ ] Human separately authorizes prerelease publication.
+- [x] Linux/POSIX build and full native tests: 74/74 unique assertions PASS.
+- [x] Windows MinGW g++/GDB build and full native tests: 74/74 unique assertions PASS.
+- [x] Client UI/localization Vitest: 25/25; normalizer: 11/11.
+- [x] MI-18 process-tree timeout, cleanup and concurrency recovery; fallback and unverified paths exercised.
+- [x] MI-19 stack/heap evidence; MI-20 per-frame pointer identity; MI-21 crash; MI-22 multiple LIST roots; MI-23 allocation evidence.
+- [x] Real Chrome with real C++/GDB backend: editor/stdin/stdout, timeline, topology/pointers, Vietnamese Beginner/Advanced, stale-response protection and clean console.
+- [x] Browser logs, trace/JSON evidence and screenshots retained in artifact 12348299743.
 
-Không merge, bật auto-merge, tag, publish, deploy hoặc đính kèm native runner binary trong công việc này.
+## Review and release boundary
+
+- [x] Four review findings have focused fixes and regression coverage; replies include final verification evidence.
+- [ ] Reviewer re-review/approval of all four threads. Threads remain unresolved for reviewer decision.
+- [ ] Human authorization to merge. **Not granted.**
+- [ ] Merge, tag, release, deploy or public runner. **Not performed.**
+
+**Decision: NO-GO to merge now.** Candidate is ready for reviewer re-review; native execution remains local-only and is not a sandbox.

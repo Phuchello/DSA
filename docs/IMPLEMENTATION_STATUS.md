@@ -1,22 +1,20 @@
-# DSA FlowLab: Trạng thái audit chất lượng P0
+# DSA FlowLab — Implementation Status
 
-Code candidate: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898)  
-GitHub Actions: [run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) — Linux và Windows/Chrome PASS.  
-Browser evidence: [artifact 12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), 253,530 bytes, retention 14 ngày.
+Code candidate verified: [0e518054625133b56ff983f0926a89e49b0f18ed](https://github.com/Phuchello/DSA/commit/0e518054625133b56ff983f0926a89e49b0f18ed).  
+GitHub Actions [run 39606982961](https://github.com/Phuchello/DSA/actions/runs/39606982961): Linux and Windows/native/Chrome PASS.  
+Browser evidence [artifact 12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), expires 04/11/2026 13:24:07 UTC.
 
-## Quality gate
-| Hạng mục | Kết quả | Bằng chứng |
+| Area | Status | Evidence |
 |---|---|---|
-| POSIX/Windows process-tree cleanup | PASS | Detached POSIX group, Windows tree kill + root-close wait; timeout, cleanup and concurrency MI-18 on both jobs. |
-| Pointer identity theo frame | PASS | Normalizer regressions and native MI-20 recursion GDB trace. |
-| Crash/truncation display | PASS | Frontend partial-trace tests, MI-17, native SIGSEGV MI-21. |
-| Stack NODE versus heap NODE | PASS | Normalizer classification and mixed-location native MI-19. |
-| Linux/POSIX CI | PASS | Builds, 23 Vitest, 10 normalizer, full native suite 69 unique assertions. |
-| Windows native CI | PASS | MinGW/GDB and 69/69 unique assertions. |
-| Golden/stdout/legacy invariants | PASS | TC-GOLDEN-01, TC-STDOUT-CHRONOLOGY, MI-09 and MI-14. |
-| Real Chrome | PASS | Real backend; editor/stdin/stdout, topology, timeline, Vietnamese modes, stale-response guard. |
-| Artifact retention | PASS | [12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), expires 04/11/2026 10:59:21 UTC. |
+| POSIX/Windows process-tree cleanup | PASS | Bounded termination, verified cleanup, fallback/unverified cases; MI-18 on both CI jobs. |
+| Frame-qualified pointer identity | PASS | Caller/recursive frames and CreateNode local pointer remain separate; normalizer and MI-20. |
+| Crash, interruption, truncation model | PASS | Status/reason/partial trace preserved; MI-17/21 and frontend regression tests. |
+| NODE stack/heap classification | PASS | GDB allocator-return evidence; insufficient evidence unknown; MI-19/23. |
+| Independent LIST roots | PASS | Two roots/chains/endpoint pointers preserved; MI-22. |
+| Linux native suite | PASS | 74/74 unique assertions. |
+| Windows native suite | PASS | MinGW g++/GDB, 74/74 unique assertions. |
+| Real Chrome smoke | PASS | Chrome 155.0.8059.40; real backend; edit/stdin/stdout, timeline, topology, Vietnamese modes, stale-response test. |
+| Artifact retention | PASS | [12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), expires 04/11/2026 13:24:07 UTC. |
+| Reviewer approval and merge | PENDING | Four threads remain unresolved. No merge authorization. |
 
-Trace uses before-statement snapshots. Code/stdin snapshots and request IDs associate each result with its request; edits mark previous traces stale. Old responses do not replace the current trace. Buffered stdout remains separate final output. Termination status/reason and partial trace distinguish crash, interruption, truncation and normal completion.
-
-P0 is local education software for a tested subset of C++, focused on linked-list flows. It is not a general C++ debugger and is not safe for untrusted code. Browser smoke is one headless Chrome flow; see [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+P0 remediation is technically ready for reviewer re-review. The PR is **not approved to merge**. The native runner remains local-only for trusted code and is not a sandbox.

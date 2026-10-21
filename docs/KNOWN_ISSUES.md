@@ -1,23 +1,23 @@
-# DSA FlowLab: Hạn chế kỹ thuật đã biết — Round 3
+# DSA FlowLab: Hạn chế kỹ thuật đã biết
 
 **Cập nhật:** 21/10/2026
 
-## 1. Môi trường thực thi
+## 1. Cô lập mã C++
 
-Runner thực thi C++ trực tiếp qua g++ và gdb bản địa của máy chủ, kèm lọc tĩnh, giới hạn kích thước, timeout và giới hạn execution đồng thời. Các lớp này không tạo sandbox an toàn cho public multi-tenant. Chưa triển khai công khai; cần process isolation mức hệ điều hành hoặc microVM trước.
+Runner thực thi C++ bằng g++/gdb bản địa trên host. Lọc tĩnh, giới hạn kích thước, timeout và giới hạn execution đồng thời không tạo sandbox. Không triển khai native runner công khai hoặc multi-tenant trước khi bổ sung cô lập tiến trình mức OS hoặc microVM.
 
-CORS whitelist và Host header kiểm soát truy cập local, nhưng không thay thế sandbox thực thi mã.
+## 2. Thời điểm stdout bị buffer
 
-## 2. Giới hạn trace
+Stdout được đọc tại mỗi snapshot khi dữ liệu đã được flush. Nếu chương trình chỉ flush khi thoát, tracer không thể quy kết những byte đó cho một câu lệnh cụ thể. Các byte đó được trả về qua `finalStdout` và UI gắn nhãn đầu ra cuối cùng; chúng không được chép ngược vào snapshot trước đó.
 
-Mặc định trace tối đa 1000 snapshot (FLOWLAB_MAX_STEPS). Trace vượt giới hạn phải có terminationStatus: 'truncated' và event cuối là truncated.
+## 3. Quyền sở hữu trace
 
-Số snapshot có thể thay đổi theo compiler/GDB và source line stepping. GitHub Actions run [39530079680](https://github.com/Phuchello/DSA/actions/runs/39530079680) đã PASS semantic completeness trên Windows GCC 15.2/GDB 17.1 và Linux. Golden test kiểm tra allocation, traversal, unlink, deallocation, call/return và các thay đổi quan sát được; không đặt ngưỡng snapshot cố định.
+Trace gắn với đúng code và stdin đã gửi. Khi một đầu vào thay đổi, trace trước hiện trạng thái stale; response cũ hoặc response từ request ID cũ không được áp dụng. Nếu người dùng sửa rồi đưa đầu vào trở lại đúng cùng nội dung trước khi request hoàn tất, snapshot vẫn khớp và có thể được dùng.
 
-## 3. Độ tin cậy bộ nhớ
+## 4. Hành vi theo toolchain
 
-Con trỏ ngoài heap NODE hoặc deallocation thiếu bằng chứng được phân loại thận trọng là unknown. Trạng thái freed chỉ được ghi khi candidate khớp NODE allocation đang sống, source call thuộc user code và breakpoint xác nhận operator delete đã return. Các invariant MI-01–MI-17 đều PASS trong Windows CI run 39530079680.
+Số snapshot có thể đổi theo compiler/GDB và line stepping. Golden test kiểm tra semantic completeness thay vì tổng bước. Trạng thái deallocation thiếu bằng chứng rõ ràng tiếp tục được phân loại bảo thủ là unknown.
 
-## 4. Windows Application Control
+## 5. Windows Application Control
 
-Windows có thể chặn một binary tạm do Application Control policy. Khi GDB không khởi chạy được binary, runner trả lỗi trace và test phải fail. Không được tính trạng thái này là PASS hoặc inconclusive. Một lần local rerun sau kết quả 48/48 trước đó gặp block lặp lại và đã dừng; CI Windows hiện tại hoàn tất thành công.
+Application Control có thể chặn binary tạm trên máy Windows. Khi GDB không chạy được binary, lần chạy/test phải báo lỗi; không được tính là PASS hoặc inconclusive. GitHub Actions Windows và local full suite phải được dùng làm bằng chứng riêng cho môi trường tương ứng.

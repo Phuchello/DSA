@@ -1,27 +1,41 @@
-# DSA FlowLab — Kết quả kiểm thử P0 Round 3
+# DSA FlowLab — Kết quả kiểm thử quality gate P0
 
-**Cập nhật:** 21/10/2026
+**Cập nhật:** 21/10/2026  
+**Nhánh:** `dev/flowlab-p0`  
+**Code commit:** [7b14b049ceda4e388b71d25665c93560b7805f6b](https://github.com/Phuchello/DSA/commit/7b14b049ceda4e388b71d25665c93560b7805f6b)  
+**GitHub Actions:** [run 39533219152](https://github.com/Phuchello/DSA/actions/runs/39533219152) — Linux PASS, Windows PASS.
 
-**Nhánh:** dev/flowlab-p0
+## Automated tests — Windows local
 
-## Kết quả cuối trên GitHub Actions
+- `npm --prefix client run build`: TypeScript check và Vite build PASS.
+- `npm --prefix server run build`: TypeScript build PASS.
+- `npm --prefix client test`: **14/14 PASS** trên 4 test files. Gồm edit stdin khi request đang pending, response đến sai thứ tự và nhãn stdout cuối riêng.
+- `npm test`: **52/52 assertions PASS** — 13/13 baseline, 8/8 normalizer, 17/17 memory invariants, 14 client assertions qua MI-12.
+- `TC-STDOUT-CHRONOLOGY`: **PASS** — snapshot `before-statement` của dòng `cout` không có sentinel từ chính câu đó; API vẫn trả output thật ở `finalStdout`.
+- `TC-GOLDEN-01`: **PASS**, 161 snapshot, 7 allocation, 21 traversal, 3 unlink, 2 deallocation, 17 call, 18 return.
+- `MI-09`: **PASS**, trace đệ quy giữ main cùng bốn frame `SumList`, tham số `p`, source line và caller/child links.
+- `MI-14`: **PASS**, nhánh flag=1 hoàn tất `_ZdlPv` tại `delete n;` với RCX và allocation generation 1; flag=0 không hoàn tất deallocation. Vector cleanup của STL bị bỏ qua.
 
-Runtime fix tại commit [9ac0acf3bf5b36c2fd1e01c10159b22e264ef880](https://github.com/Phuchello/DSA/commit/9ac0acf3bf5b36c2fd1e01c10159b22e264ef880) được xác minh bởi [Actions run 39530079680](https://github.com/Phuchello/DSA/actions/runs/39530079680). Run kết thúc thành công trên cả hai job:
+## Real-browser verification — Chrome local
 
-- **Linux — PASS:** client build/typecheck, 11 Vitest test và 8 normalizer test.
-- **Windows — PASS:** full build và npm test; 12/12 baseline, 8/8 normalizer, 17/17 memory invariants, 11 client test qua MI-12.
-- **Tổng:** 67 test executions trên hai job, 48 test case duy nhất. Linux lặp lại 11 client và 8 normalizer case.
+`npm run test:browser` **PASS** với headless Chrome và app/backend được khởi chạy local trên loopback. Đây là browser integration thật, không phải jsdom:
 
-## Runtime evidence trong Windows log
+- Paste sample C++ vào CodeMirror rồi sửa thêm comment; request gửi đúng code đã sửa.
+- Sửa stdin và chạy C++; đầu ra hiện `0 8`.
+- Bước timeline tiến và lùi; chọn snapshot có chain thật, các node và con trỏ `p`, `pHead`, `pTail`.
+- Chuyển Beginner ↔ Advanced; UI tiếng Việt và Advanced memory inspector hiển thị.
+- Đổi stdin sau trace đầu: trace cũ được đánh dấu stale. Chạy lại với code không đổi và stdin mới; output thành `7` và stale banner biến mất.
+- Cả hai request body được kiểm tra để khớp với code/stdin tương ứng.
 
-- **TC-GOLDEN-01 — PASS:** output 0 8 2 4 7; trace có 161 snapshot, 7 allocation, 21 traversal, 3 unlink, 2 deallocation, 17 call và 18 return. Semantic completeness assertions đạt; tổng snapshot không phải ngưỡng PASS.
-- **MI-09 — PASS:** độ sâu tối đa có main và bốn SumList invocation; p giữ địa chỉ ba NODE tương ứng rồi nullptr. Source location, parameter values, thứ tự outer-to-inner, parent/child ID và call/return đều được kiểm tra.
-- **MI-14 — PASS:** flag=1 in -1; GDB log ghi event completed tại delete n;, symbol _ZdlPv, register RCX, candidate address và generation 1. flag=0 in 77, n còn valid, không có completion tại delete n;.
-- **STL regression — PASS:** vector cleanup được nhận diện qua std::new_allocator/allocator_traits và bỏ qua; NODE vẫn live.
-- **Alias regression — PASS:** MI-05 xác nhận hai alias cùng quan sát deallocation của một NODE.
+## GitHub Actions
 
-## Các lượt chẩn đoán CI
+Run [39533219152](https://github.com/Phuchello/DSA/actions/runs/39533219152) hoàn tất xanh trên code commit:
 
-Run nền [39438217969](https://github.com/Phuchello/DSA/actions/runs/39438217969) thất bại MI-09/MI-14. Run [39528771486](https://github.com/Phuchello/DSA/actions/runs/39528771486) phơi bày tên symbol Windows dạng libstdc++-6!_ZdlPv, frame đệ quy không xuất hiện và parser Vitest bị ảnh hưởng bởi output Windows. Run [39529576720](https://github.com/Phuchello/DSA/actions/runs/39529576720) xác nhận deallocation và MI-12 đã sửa; log còn cho thấy GDB file-regex skip rules làm mất toàn bộ user function frame. Sau khi xử lý các nguyên nhân này, run cuối 39530079680 pass cả Linux lẫn Windows.
+- Linux **PASS:** client build/typecheck, 14 Vitest tests, server build, 8 normalizer tests.
+- Windows **PASS:** full build và full suite 52/52 assertions — 13/13 baseline, 8/8 normalizer, 17/17 invariants, 14 client assertions qua MI-12. Log xác nhận `TC-STDOUT-CHRONOLOGY`, golden 161 snapshot, MI-09 và MI-14 đều PASS.
 
-Local Windows full suite trước thay đổi skip-rule cuối cùng: 48/48 PASS với MinGW GCC 16.1.0, GDB 17.2, Node 24.19.0. Một lần chạy sau đó bị Application Control chặn binary tạm nhiều lần và đã dừng; kết quả cuối của phiên bản hiện tại là GitHub Actions run ở trên.
+Các lượt trước xanh trên commit [8d949035dddd0747bd6455804902fdcc75be2f04](https://github.com/Phuchello/DSA/commit/8d949035dddd0747bd6455804902fdcc75be2f04), nhưng run 39533219152 là lần CI kiểm tra thay đổi mới.
+
+## Giới hạn còn lại
+
+Output cuối chỉ có timing chính xác tới mức tracer quan sát được; dữ liệu được buffer đến khi thoát được gắn nhãn final thay vì gán cho một dòng sớm hơn. Browser smoke dùng Chrome đã cài sẵn và không nằm trong hai workflow CI hiện tại. Native C++ runner vẫn không an toàn cho public multi-tenant; không deploy công khai.

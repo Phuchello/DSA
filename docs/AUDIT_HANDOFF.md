@@ -1,34 +1,32 @@
-# DSA FlowLab — Bàn giao kiểm toán Round 3
+# DSA FlowLab — Bàn giao kiểm toán chất lượng P0
 
-**Ngày:** 21/10/2026
+**Ngày:** 21/10/2026  
+**Repository:** [Phuchello/DSA](https://github.com/Phuchello/DSA)  
+**Nhánh:** `dev/flowlab-p0`  
+**Code commit:** [7b14b049ceda4e388b71d25665c93560b7805f6b](https://github.com/Phuchello/DSA/commit/7b14b049ceda4e388b71d25665c93560b7805f6b)  
+**CI run:** [39533219152](https://github.com/Phuchello/DSA/actions/runs/39533219152) — Linux và Windows PASS.
 
-**Repository:** [Phuchello/DSA](https://github.com/Phuchello/DSA)
+## Trạng thái
 
-**Nhánh:** dev/flowlab-p0
+Runtime P0 đã được sửa và kiểm thử local; cả hai job CI đều PASS trên code commit. Không merge vào `main` và không triển khai native C++ runner công khai.
 
-**Runtime commit:** [9ac0acf3bf5b36c2fd1e01c10159b22e264ef880](https://github.com/Phuchello/DSA/commit/9ac0acf3bf5b36c2fd1e01c10159b22e264ef880)
+## Các sửa lỗi P0
 
-**CI evidence:** [run 39530079680](https://github.com/Phuchello/DSA/actions/runs/39530079680)
-**Trạng thái:** **GO cho kiểm toán runtime correctness P0; NO-GO cho public multi-tenant deployment.**
+- Snapshot giữ quy ước `before-statement`. Tracer không chép stdout cuối ngược lên các bước trước; stdout được quan sát ở bước nào thì ở snapshot đó. Output còn trong buffer khi chương trình thoát được đưa riêng vào `finalStdout` và UI ghi nhãn là đầu ra cuối cùng.
+- Mỗi yêu cầu chạy lưu bản chụp bất biến của code và stdin. Trace chỉ được nhận nếu request ID mới nhất và cả hai đầu vào hiện tại vẫn khớp với bản chụp. Trace giữ nguồn đầu vào để trạng thái cũ được tính tự động; phản hồi cũ hoặc đến sai thứ tự không thể ghi đè kết quả mới.
+- Thêm regression test cho `cout` trước thời điểm chạy, chỉnh stdin trong lúc chờ, và phản hồi chạy đến sai thứ tự.
+- Thêm browser smoke tự động qua Chrome CDP để chạy luồng UI thật trên loopback.
 
-## Kết quả đã xác minh
+## Bằng chứng
 
-GitHub Actions Linux và Windows đều PASS trên runtime commit. Windows full suite hoàn tất 48/48 executions: baseline 12/12, normalizer 8/8, memory invariants 17/17, client 11/11 qua MI-12. Toàn workflow có 67 executions và 48 test case duy nhất.
+- **Automated tests local:** Windows full suite PASS, 52/52 assertions: 13/13 baseline (gồm `TC-STDOUT-CHRONOLOGY`), 8/8 normalizer, 17/17 memory invariants và 14 client assertions. Client build/type-check và server build đều PASS.
+- **Real-browser verification local:** `npm run test:browser` PASS trong headless Chrome với backend C++/GDB thật. Dán và sửa code C++, đổi stdin, thấy stdout `0 8` rồi `7`, bước tới/lùi, kiểm tra chain và con trỏ `p`, `pHead`, `pTail`, đổi Beginner/Advanced, và xác nhận trace cũ bị đánh dấu stale rồi được xóa khi chạy đúng input mới.
+- **GitHub Actions:** run 39533219152 — Linux PASS; Windows PASS.
 
-TC-GOLDEN-01 đạt semantic completeness: 161 snapshot, 7 allocation, 21 traversal, 3 unlink, 2 deallocation, 17 call, 18 return. MI-09 quan sát main và bốn SumList frame với ba NODE pointer cùng base case nullptr. MI-14 xác nhận deallocation hoàn tất chỉ ở nhánh flag=1; nhánh flag=0 giữ n=valid. STL cleanup bị bỏ qua và NODE không bị đánh dấu freed.
+## Rủi ro còn lại
 
-## Thay đổi chính
+Runner vẫn biên dịch và chạy mã C++ trên host bằng g++/gdb. Lọc tĩnh, timeout và giới hạn đồng thời không phải sandbox an toàn cho multi-tenant; không đưa runner ra public cho đến khi có cô lập tiến trình mức OS hoặc microVM. Với stdout bị buffer đến lúc thoát, thời điểm chính xác trong trace không xác định; UI vì thế trình bày nó như đầu ra cuối cùng riêng.
 
-- Deallocation dùng ABI theo target, symbol-aware trên GDB/MinGW Windows, allocation generation và FinishBreakpoint.
-- Stack frame giữ source, tham số theo invocation, depth, parent/child; GDB file-regex skip rules gây mất user frame đã được gỡ.
-- Golden trace test xác nhận thao tác ngữ nghĩa, không ràng buộc tổng snapshot.
-- Test runner tổng hợp PASS/FAIL theo suite, thoát nonzero khi fail và phân biệt executions với case duy nhất.
-- Implementation status, test results và known issues ghi kết quả cùng giới hạn còn lại.
+## Quyết định bàn giao
 
-## Rủi ro và phạm vi
-
-Runner vẫn thực thi mã C++ trên host qua g++/gdb; chưa có sandbox đủ an toàn cho public multi-tenant. Cần cô lập tiến trình mức OS hoặc microVM trước khi triển khai công khai. Application Control có thể chặn binary tạm trên máy Windows; trạng thái này phải là test failure.
-
-## Điều kiện bàn giao
-
-Điều kiện kiểm toán P0 đã đạt với cả hai job CI xanh và log MI-09, MI-14, golden completeness thành công. Trạng thái này không xác nhận độ an toàn của public deployment.
+Quality gate P0 runtime correctness đạt. CI chạy sau thay đổi xác nhận Linux build/tests và Windows full suite; browser smoke được xác minh local với Chrome thật. Đây không phải phê duyệt merge hoặc triển khai công khai.

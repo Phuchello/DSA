@@ -21,3 +21,8 @@ Số snapshot có thể đổi theo compiler/GDB và line stepping. Golden test 
 ## 5. Windows Application Control
 
 Application Control có thể chặn binary tạm trên máy Windows. Khi GDB không chạy được binary, lần chạy/test phải báo lỗi; không được tính là PASS hoặc inconclusive. GitHub Actions Windows và local full suite phải được dùng làm bằng chứng riêng cho môi trường tương ứng.
+
+## 6. Browser smoke scope
+
+GitHub Actions runs a real headless Chrome smoke on `windows-latest` with the MSYS2 g++/GDB toolchain and keeps its log, structured evidence, actual first-run trace, and screenshots for 14 days. It covers the golden linked-list editing/run/timeline/pointer/mode flow and a pending-response stdin race. It does not replace visual review on physical displays or cover every browser version, device size, or lesson. The hosted Chrome version is recorded in the artifact but follows the runner image rather than being pinned.
+

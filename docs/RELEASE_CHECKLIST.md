@@ -2,7 +2,7 @@
 
 Code/regression đã kiểm chứng: [75cac8f64442c6230a4dc90624ef5585e8779273](https://github.com/Phuchello/DSA/commit/75cac8f64442c6230a4dc90624ef5585e8779273).  
 PR: [#1](https://github.com/Phuchello/DSA/pull/1), đang mở, chưa merge.  
-PR CI mới nhất: [run 39620598658](https://github.com/Phuchello/DSA/actions/runs/39620598658) trên đúng SHA; Linux job 119292682880 và Windows/native/Chrome job 119293223762 PASS.
+PR CI trên source/test SHA 75cac8f: [run 39620598658](https://github.com/Phuchello/DSA/actions/runs/39620598658) PASS. Sau đó, audit-head docs-only [1d72c3b](https://github.com/Phuchello/DSA/commit/1d72c3b12190cdf8419d982ea00052524acb25c7) cũng được chạy matrix trên [run 39621877776](https://github.com/Phuchello/DSA/actions/runs/39621877776): Linux job 119297206546 và Windows/native/Chrome job 119297820920 đều PASS; source code không đổi. Browser evidence của audit-head: [artifact 12355192851](https://github.com/Phuchello/DSA/actions/runs/39621877776/artifacts/12355192851), SHA-256 2f39ce5ac2ad1545c11686c45ef499cc67890bb99dee3a459f0054e6992be1c7.
 
 ## Verification
 
@@ -20,7 +20,7 @@ PR CI mới nhất: [run 39620598658](https://github.com/Phuchello/DSA/actions/r
 ## Review và release boundary
 
 - [x] Bằng chứng failing-before ở run 39614137541; corrective code và regression trên SHA 75cac8f64442c6230a4dc90624ef5585e8779273.
-- [x] Latest PR Linux/Windows/Chrome matrix PASS trên SHA 75cac8f64442c6230a4dc90624ef5585e8779273.
+- [x] PR matrix trên source/test SHA 75cac8f64442c6230a4dc90624ef5585e8779273 PASS; matrix chạy lại trên audit-head docs-only 1d72c3b12190cdf8419d982ea00052524acb25c7 cũng PASS.
 - [ ] Independent reviewer kiểm tra lại; review threads vẫn unresolved.
 - [ ] Human authorization để merge: **chưa có**.
 - [ ] Merge, sửa main, tag, release, deploy/public runner: **không thực hiện**.

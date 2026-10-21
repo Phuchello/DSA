@@ -2,11 +2,17 @@
 
 Cập nhật: 21/10/2026. Code và regression được xác minh: [75cac8f](https://github.com/Phuchello/DSA/commit/75cac8f64442c6230a4dc90624ef5585e8779273) trên dev/flowlab-p0. PR [#1](https://github.com/Phuchello/DSA/pull/1) đang mở, chưa merge.
 
+## Final audit-head rerun
+
+Sau khi cập nhật audit docs tại head docs-only [1d72c3b](https://github.com/Phuchello/DSA/commit/1d72c3b12190cdf8419d982ea00052524acb25c7), PR CI [run 39621877776](https://github.com/Phuchello/DSA/actions/runs/39621877776) chạy trên đúng head và PASS: Linux [job 119297206546](https://github.com/Phuchello/DSA/actions/runs/39621877776/job/119297206546) và Windows/native/Chrome [job 119297820920](https://github.com/Phuchello/DSA/actions/runs/39621877776/job/119297820920). Cả hai đều báo 74/74 unique assertions; process-tree là 4/4 POSIX, 11/11 Windows. Source/test code không đổi so với [75cac8f](https://github.com/Phuchello/DSA/commit/75cac8f64442c6230a4dc90624ef5585e8779273).
+
+Chrome thật 155.0.8059.85 với backend C++/GDB PASS; log có stdout 0 8, timeline 0→1→0, topology/pointers, Beginner/Advanced tiếng Việt, stale-response test và console sạch. Evidence [artifact 12355192851](https://github.com/Phuchello/DSA/actions/runs/39621877776/artifacts/12355192851), 255,504 bytes, SHA-256 2f39ce5ac2ad1545c11686c45ef499cc67890bb99dee3a459f0054e6992be1c7, hết hạn 04/11/2026 15:08:23 UTC.
+
 ## Tái hiện lỗi trước khi sửa
 
-Commit regression-only [0333e4c](https://github.com/Phuchello/DSA/commit/0333e4c41c7ef3ec9d0daa9517157632842b2b88}) thêm đồng bộ liên tiến trình để: hoàn tất snapshot ban đầu, tạo child mới, rồi dùng primary tool chỉ kết thúc root. Windows run [39614137541](https://github.com/Phuchello/DSA/actions/runs/39614137541), job [119271145305](https://github.com/Phuchello/DSA/actions/runs/39614137541/job/119271145305) thất bại đúng tại regression: child PID 6116, identity creation-time 134370655205316505 vẫn sống và heartbeat tiếp tục, nhưng runner chỉ trả lỗi timeout thông thường, không phát processTreeTerminationVerified=false. Đây là false-positive cleanup mà regression chặn.
+Commit regression-only [0333e4c](https://github.com/Phuchello/DSA/commit/0333e4c41c7ef3ec9d0daa9517157632842b2b88) thêm đồng bộ liên tiến trình để: hoàn tất snapshot ban đầu, tạo child mới, rồi dùng primary tool chỉ kết thúc root. Windows run [39614137541](https://github.com/Phuchello/DSA/actions/runs/39614137541), job [119271145305](https://github.com/Phuchello/DSA/actions/runs/39614137541/job/119271145305) thất bại đúng tại regression: child PID 6116, identity creation-time 134370655205316505 vẫn sống và heartbeat tiếp tục, nhưng runner chỉ trả lỗi timeout thông thường, không phát processTreeTerminationVerified=false. Đây là false-positive cleanup mà regression chặn.
 
-## Kiểm chứng tự động mới nhất
+## Kiểm chứng tự động trên source/test SHA 75cac8f
 
 PR CI [run 39620598658](https://github.com/Phuchello/DSA/actions/runs/39620598658) chạy trên đúng SHA 75cac8f64442c6230a4dc90624ef5585e8779273; cả hai job PASS:
 

@@ -3,7 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { execFileWithTimeout } = require('../server/dist/runner/cppRunner.js');
+const { execFileWithTimeout, prewarmWindowsProcessTreeVerifier } = require('../server/dist/runner/cppRunner.js');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -88,6 +88,9 @@ async function assertHeartbeatStops(heartbeatFile) {
 }
 
 async function runProcessTreeTests() {
+  // Keep one-time native helper compilation outside the measured shutdown budget.
+  await prewarmWindowsProcessTreeVerifier();
+  if (process.platform === 'win32') console.log('✅ Windows process-tree verifier warmed before lifecycle timing assertions');
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowlab-process-tree-'));
   let passed = 0;
   const total = process.platform === 'win32' ? 11 : 4;

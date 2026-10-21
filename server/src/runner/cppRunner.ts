@@ -143,6 +143,12 @@ function ensureWindowsTreeNativeAssembly(env?: NodeJS.ProcessEnv): Promise<strin
   return windowsTreeNativeAssemblyPromise;
 }
 
+/** Prepare the cached Windows process-tree verifier before an execution can time out. */
+export async function prewarmWindowsProcessTreeVerifier(): Promise<void> {
+  if (process.platform !== 'win32') return;
+  await ensureWindowsTreeNativeAssembly();
+}
+
 async function terminateWindowsProcessTree(pid: number, rootProcess: ChildProcess | undefined, env?: NodeJS.ProcessEnv): Promise<ProcessTreeTerminationResult> {
   const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT;
   const systemTaskkill = systemRoot ? path.join(systemRoot, 'System32', 'taskkill.exe') : 'taskkill';

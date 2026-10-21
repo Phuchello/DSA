@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import * as path from 'path';
 import * as fs from 'fs';
-import { runCppCode } from './runner/cppRunner.js';
+import { prewarmWindowsProcessTreeVerifier, runCppCode } from './runner/cppRunner.js';
 import { LESSONS } from './lessons.js';
 
 const app = express();
@@ -140,9 +140,19 @@ if (clientDist) {
 // Bind strictly to localhost / 127.0.0.1 by default
 let serverInstance: any = null;
 if (process.env.NODE_ENV !== 'test-manual') {
-  serverInstance = app.listen(PORT, HOST, () => {
-    console.log(`[DSA FlowLab] Server running strictly on http://${HOST}:${PORT}`);
-  });
+  const startServer = async () => {
+    if (process.platform === 'win32') {
+      try {
+        await prewarmWindowsProcessTreeVerifier();
+      } catch (error: any) {
+        console.error(`[DSA FlowLab] Windows process-tree verifier warm-up failed; cleanup remains fail-closed: ${error?.message || error}`);
+      }
+    }
+    serverInstance = app.listen(PORT, HOST, () => {
+      console.log(`[DSA FlowLab] Server running strictly on http://${HOST}:${PORT}`);
+    });
+  };
+  void startServer();
 }
 
 export { app, serverInstance };

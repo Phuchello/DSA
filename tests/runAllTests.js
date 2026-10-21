@@ -330,7 +330,7 @@ async function runTests() {
       silent: true
     });
 
-    for (let attempt = 0; attempt < 25; attempt++) {
+    for (let attempt = 0; attempt < 100; attempt++) {
       await new Promise((r) => setTimeout(r, 200));
       if (await checkServerReady()) break;
     }

@@ -1,6 +1,6 @@
 {
   "name": "dsa-flowlab",
-  "version": "1.0.0",
+  "version": "0.1.0-p0",
   "description": "DSA FlowLab - Web-first C++ Execution Visualizer for Data Structures & Algorithms",
   "scripts": {
     "start": "concurrently \"npm run start:server\" \"npm run start:client\"",

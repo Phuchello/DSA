@@ -5,7 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc && node -e \"const fs=require('fs'); fs.copyFileSync('src/runner/tracer.py', 'dist/runner/tracer.py');\"",
+    "build": "tsc && node -e \"const fs=require('fs'); fs.copyFileSync('src/runner/tracer.py', 'dist/runner/tracer.py'); fs.copyFileSync('src/runner/windowsProcessTree.ps1', 'dist/runner/windowsProcessTree.ps1');\"",
     "start": "node dist/index.js"
   },
   "dependencies": {
@@ -21,3 +21,4 @@
     "typescript": "^5.7.2"
   }
 }
+

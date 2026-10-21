@@ -2,7 +2,6 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
 const { execFileWithTimeout } = require('../server/dist/runner/cppRunner.js');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -37,12 +36,6 @@ async function waitForProcessesToExit(pids, timeoutMs) {
     await delay(50);
   }
   return pids.every(pid => !pidIsAlive(pid));
-}
-
-function compileFailureTool(outputPath) {
-  const source = path.join(__dirname, 'processTreeToolFailure.c');
-  const build = spawnSync('g++', [source, '-o', outputPath], { encoding: 'utf8', windowsHide: true });
-  assert.strictEqual(build.status, 0, `Could not compile deterministic process-tree command failure fixture: ${build.stderr}`);
 }
 
 async function startAndTimeOut(tempDir, env) {
@@ -94,80 +87,48 @@ async function runProcessTreeTests() {
       return { passed, failed: 0, total };
     }
 
-    const toolsDir = path.join(tempDir, 'failing-tools');
-    fs.mkdirSync(toolsDir);
-    const fakeTaskkill = path.join(toolsDir, 'taskkill.exe');
-    compileFailureTool(fakeTaskkill);
-    const taskkillMarker = path.join(tempDir, 'taskkill-failed.log');
+    const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT;
+    const failingTaskkill = path.join(systemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     const fallbackEnv = {
       ...process.env,
-      PATH: `${toolsDir}${path.delimiter}${process.env.PATH}`,
-      FLOWLAB_TOOL_FAILURE_MARKER: taskkillMarker,
-      FLOWLAB_TASKKILL_EXE: fakeTaskkill,
+      FLOWLAB_TASKKILL_EXE: failingTaskkill,
     };
-    const previousPath = process.env.PATH;
-    const previousMarker = process.env.FLOWLAB_TOOL_FAILURE_MARKER;
     let fallbackRun;
-    process.env.PATH = fallbackEnv.PATH;
-    process.env.FLOWLAB_TOOL_FAILURE_MARKER = taskkillMarker;
-    try {
-      fallbackRun = await startAndTimeOut(tempDir, fallbackEnv);
-      await assert.rejects(fallbackRun.command, /Quá thời gian thực thi cho phép/,
-        'A failed primary taskkill must still finish with its original timeout reason after verified fallback');
-    } finally {
-      process.env.PATH = previousPath;
-      if (previousMarker === undefined) delete process.env.FLOWLAB_TOOL_FAILURE_MARKER;
-      else process.env.FLOWLAB_TOOL_FAILURE_MARKER = previousMarker;
-    }
-    assert.ok(fs.existsSync(taskkillMarker), 'The injected taskkill executable must actually run and fail');
+    fallbackRun = await startAndTimeOut(tempDir, fallbackEnv);
+    await assert.rejects(fallbackRun.command, error => {
+      const matches = /Quá thời gian thực thi cho phép/.test(error.message)
+        && error.processTreeFallbackUsed === true
+        && error.processTreePrimaryExecutable === failingTaskkill
+        && Boolean(error.processTreePrimaryError);
+      if (!matches) console.error(`Unexpected taskkill fallback result: ${error.message}; fallback=${error.processTreeFallbackUsed}; executable=${error.processTreePrimaryExecutable}; primary=${error.processTreePrimaryError}`);
+      return matches;
+    },
+    'A non-taskkill primary helper must fail and the system taskkill fallback must preserve the timeout result');
     passed++;
     assert.ok(await waitForProcessesToExit([fallbackRun.pids.parent, fallbackRun.pids.child], 2000),
-      'The real PowerShell fallback must terminate parent and descendant');
+      'The system taskkill fallback must terminate parent and descendant');
     passed++;
     await assertHeartbeatStops(fallbackRun.heartbeatFile);
     passed++;
-    console.log('✅ Windows injected taskkill failure: PowerShell fallback terminated captured tree and heartbeat stopped');
+    console.log('✅ Windows failing primary helper: system taskkill fallback terminated captured tree and heartbeat stopped');
 
-    const unverifiedDir = path.join(tempDir, 'unverified-tools');
-    fs.mkdirSync(unverifiedDir);
-    compileFailureTool(path.join(unverifiedDir, 'taskkill.exe'));
-    const unverifiedMarker = path.join(tempDir, 'unverified-helper-failed.log');
-    const missingPowerShell = path.join(unverifiedDir, 'missing-powershell.exe');
     const unverifiedEnv = {
       ...process.env,
-      PATH: `${unverifiedDir}${path.delimiter}${process.env.PATH}`,
-      FLOWLAB_TOOL_FAILURE_MARKER: unverifiedMarker,
-      FLOWLAB_TASKKILL_EXE: path.join(unverifiedDir, 'taskkill.exe'),
-      FLOWLAB_POWERSHELL_EXE: missingPowerShell,
+      FLOWLAB_TASKKILL_EXE: failingTaskkill,
+      FLOWLAB_TEST_DISABLE_PROCESS_FALLBACK: '1',
     };
-    const savedPath = process.env.PATH;
-    const savedMarker = process.env.FLOWLAB_TOOL_FAILURE_MARKER;
-    const savedPowerShell = process.env.FLOWLAB_POWERSHELL_EXE;
     let unverified;
     let terminationError;
     const unverifiedStarted = Date.now();
-    process.env.PATH = unverifiedEnv.PATH;
-    process.env.FLOWLAB_TOOL_FAILURE_MARKER = unverifiedMarker;
-    process.env.FLOWLAB_POWERSHELL_EXE = missingPowerShell;
-    try {
-      unverified = await startAndTimeOut(tempDir, unverifiedEnv);
-      await assert.rejects(unverified.command, error => {
-        terminationError = error;
-        return error?.processTreeTerminationVerified === false
-          && /Không xác minh được việc dừng toàn bộ cây tiến trình/.test(error.message)
-          && error.message.includes(missingPowerShell);
-      }, 'Failure to launch/complete the fallback must be surfaced as unverified termination');
-    } finally {
-      process.env.PATH = savedPath;
-      if (savedMarker === undefined) delete process.env.FLOWLAB_TOOL_FAILURE_MARKER;
-      else process.env.FLOWLAB_TOOL_FAILURE_MARKER = savedMarker;
-      if (savedPowerShell === undefined) delete process.env.FLOWLAB_POWERSHELL_EXE;
-      else process.env.FLOWLAB_POWERSHELL_EXE = savedPowerShell;
-    }
+    unverified = await startAndTimeOut(tempDir, unverifiedEnv);
+    await assert.rejects(unverified.command, error => {
+      terminationError = error;
+      return error?.processTreeTerminationVerified === false
+        && /Không xác minh được việc dừng toàn bộ cây tiến trình/.test(error.message)
+        && error.message.includes(failingTaskkill)
+        && /deadline|remaining/i.test(error.message);
+    }, 'Failure to confirm cleanup when fallback is unavailable must be surfaced as unverified termination');
     assert.ok(Date.now() - unverifiedStarted < 10000, 'Unverified shutdown must still settle in a bounded interval');
-    assert.ok(fs.existsSync(unverifiedMarker), 'The injected taskkill executable must actually run and fail');
-    const failedCommands = fs.readFileSync(unverifiedMarker, 'utf8').trim().split(/\r?\n/);
-    assert.ok(failedCommands.length >= 1, 'The injected taskkill executable must fail before the missing PowerShell fallback is reported');
     passed++;
     console.log(`✅ Windows unverified termination surfaced for PID ${terminationError.rootPid}; no success was claimed`);
 
@@ -200,3 +161,4 @@ if (require.main === module) {
 }
 
 module.exports = { runProcessTreeTests };
+

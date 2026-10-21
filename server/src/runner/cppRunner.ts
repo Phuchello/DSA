@@ -70,302 +70,85 @@ class ProcessTreeTerminationError extends Error {
   }
 }
 
-type WindowsProcessIdentity = {
-  pid: number;
-  parentPid: number;
-  depth: number;
-  creation: string;
+type ProcessTreeTerminationResult = { fallbackUsed: boolean; primaryError?: string; primaryExecutable?: string };
+
+type WindowsTreeHelperResult = {
+  verified: boolean;
+  fallbackUsed: boolean;
+  primaryError?: string;
+  primaryExecutable: string;
+  reason?: string;
+  remaining?: Array<{ pid: number; creation: string }>;
 };
 
-function encodePowerShell(script: string): string {
-  return Buffer.from(script, 'utf16le').toString('base64');
-}
+async function terminateWindowsProcessTree(pid: number, rootProcess: ChildProcess | undefined, env?: NodeJS.ProcessEnv): Promise<ProcessTreeTerminationResult> {
+  const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT;
+  const systemTaskkill = systemRoot ? path.join(systemRoot, 'System32', 'taskkill.exe') : 'taskkill';
+  const primaryTaskkill = env?.FLOWLAB_TASKKILL_EXE || process.env.FLOWLAB_TASKKILL_EXE || systemTaskkill;
+  const helperPath = path.join(__dirname, 'windowsProcessTree.ps1');
+  const powershell = systemRoot
+    ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe';
 
-function runPowerShell(script: string, timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (error: Error | null, stdout = '', stderr = '') => {
-      if (settled) return;
-      settled = true;
-      if (error) {
-        const details = `${[stderr, stdout].filter(Boolean).join(' ').trim() || `exit=${(error as any).code ?? (error as any).signal ?? 'unknown'}`} (helper: ${helperExecutable})`;
-        reject(new Error(`Windows process-tree helper failed: ${details}`));
-      }
-      else resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
-    };
-    const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT;
-    const defaultPowerShell = systemRoot ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : 'powershell.exe';
-    const helperExecutable = env?.FLOWLAB_POWERSHELL_EXE || process.env.FLOWLAB_POWERSHELL_EXE || defaultPowerShell;
-    const diagnosticScript = `$ErrorActionPreference = 'Stop'\ntry {\n${script}\n} catch {\n  [Console]::Error.WriteLine($_.Exception.ToString())\n  exit 90\n}\n`;
-    const child = execFile(helperExecutable, [
+  const result = await new Promise<WindowsTreeHelperResult>((resolve, reject) => {
+    execFile(powershell, [
       '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-      '-EncodedCommand', encodePowerShell(diagnosticScript)
-    ], { windowsHide: true, timeout: timeoutMs, maxBuffer: 1024 * 1024, ...(env ? { env } : {}) }, (error, stdout, stderr) => {
-      finish(error, stdout, stderr);
-    });
-    // execFile's callback fires after the child closes and includes all captured
-    // stderr/stdout. Settling from the earlier 'error' event loses the useful
-    // PowerShell diagnostic (and can race the callback on timeout/spawn errors).
-  });
-}
-
-const PROCESS_TREE_SNAPSHOT_SCRIPT = (rootPid: number) => `
-$ErrorActionPreference = 'Stop'
-$root = ${rootPid}
-$all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-$queue = New-Object 'System.Collections.Generic.Queue[object]'
-$queue.Enqueue(@{ pid = $root; depth = -1 })
-$seen = @{}
-$found = New-Object 'System.Collections.Generic.List[object]'
-while ($queue.Count -gt 0) {
-  $parent = $queue.Dequeue()
-  $parentKey = [string]$parent.pid
-  if ($seen.ContainsKey($parentKey)) { continue }
-  $seen[$parentKey] = $true
-  foreach ($proc in $all) {
-    if ([int]$proc.ParentProcessId -ne [int]$parent.pid) { continue }
-    $pidValue = [int]$proc.ProcessId
-    $key = [string]$pidValue
-    if ($seen.ContainsKey($key)) { continue }
-    $created = ''
-    if ($proc.CreationDate) { $created = $proc.CreationDate.ToUniversalTime().ToString('o') }
-    $item = @{ pid = $pidValue; parentPid = [int]$proc.ParentProcessId; depth = [int]$parent.depth + 1; creation = $created }
-    $found.Add($item)
-    $queue.Enqueue(@{ pid = $pidValue; depth = $item.depth })
-  }
-}
-$rootProc = $all | Where-Object { [int]$_.ProcessId -eq $root } | Select-Object -First 1
-if ($rootProc) {
-  $created = ''
-  if ($rootProc.CreationDate) { $created = $rootProc.CreationDate.ToUniversalTime().ToString('o') }
-  $found.Insert(0, @{ pid = $root; parentPid = [int]$rootProc.ParentProcessId; depth = 0; creation = $created })
-}
-ConvertTo-Json -InputObject @($found.ToArray()) -Compress -Depth 5
-`;
-
-function parseWindowsIdentities(stdout: string): WindowsProcessIdentity[] {
-  if (!stdout) return [];
-  const parsed = JSON.parse(stdout);
-  const records = Array.isArray(parsed) ? parsed : [parsed];
-  return records.filter((item: any) => Number.isInteger(Number(item.pid))).map((item: any) => ({
-    pid: Number(item.pid),
-    parentPid: Number(item.parentPid || 0),
-    depth: Number(item.depth || 0),
-    creation: String(item.creation || '')
-  }));
-}
-
-async function snapshotWindowsProcessTree(pid: number, env?: NodeJS.ProcessEnv): Promise<WindowsProcessIdentity[]> {
-  const { stdout } = await runPowerShell(PROCESS_TREE_SNAPSHOT_SCRIPT(pid), 3500, env);
-  return parseWindowsIdentities(stdout);
-}
-
-function windowsTreeActionScript(pid: number, identities: WindowsProcessIdentity[], waitForExit: boolean): string {
-  const identityJson = JSON.stringify(identities).replace(/'/g, "''");
-  const waitScript = waitForExit ? 'Start-Sleep -Milliseconds 120' : '';
-  const maxPasses = waitForExit ? 1 : 18;
-  return `
-$ErrorActionPreference = 'Stop'
-$root = ${pid}
-$seedJson = ConvertFrom-Json -InputObject '${identityJson}'
-$seed = New-Object 'System.Collections.Generic.List[object]'
-foreach ($entry in $seedJson) { $seed.Add($entry) }
-function Get-CurrentTree {
-  $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-  $queue = New-Object 'System.Collections.Generic.Queue[object]'
-  $queue.Enqueue(@{ pid = $root; depth = -1 })
-  $seen = @{}
-  $found = New-Object 'System.Collections.Generic.List[object]'
-  while ($queue.Count -gt 0) {
-    $parent = $queue.Dequeue()
-    $parentKey = [string]$parent.pid
-    if ($seen.ContainsKey($parentKey)) { continue }
-    $seen[$parentKey] = $true
-    foreach ($proc in $all) {
-      if ([int]$proc.ParentProcessId -ne [int]$parent.pid) { continue }
-      $pidValue = [int]$proc.ProcessId
-      if ($seen.ContainsKey([string]$pidValue)) { continue }
-      $created = ''
-      if ($proc.CreationDate) { $created = $proc.CreationDate.ToUniversalTime().ToString('o') }
-      $item = @{ pid = $pidValue; parentPid = [int]$proc.ParentProcessId; depth = [int]$parent.depth + 1; creation = $created }
-      $found.Add($item)
-      $queue.Enqueue(@{ pid = $pidValue; depth = $item.depth })
-    }
-  }
-  return @($found.ToArray())
-}
-function Get-LiveSeed {
-  $live = New-Object 'System.Collections.Generic.List[object]'
-  foreach ($expected in $seed) {
-    $filter = 'ProcessId = ' + [string]($expected.pid)
-    $proc = Get-CimInstance Win32_Process -Filter $filter -ErrorAction Stop | Select-Object -First 1
-    if (-not $proc) { continue }
-    $created = ''
-    if ($proc.CreationDate) { $created = $proc.CreationDate.ToUniversalTime().ToString('o') }
-    if ([string]$expected.creation -eq $created) { $live.Add($expected) }
-  }
-  return @($live.ToArray())
-}
-for ($pass = 0; $pass -lt ${maxPasses}; $pass++) {
-  $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-  $tree = @(Get-CurrentTree)
-  $targets = @($tree + (Get-LiveSeed) | Sort-Object pid -Unique)
-  foreach ($target in ($targets | Sort-Object depth -Descending)) {
-    $filter = 'ProcessId = ' + [string]($target.pid)
-    $proc = Get-CimInstance Win32_Process -Filter $filter -ErrorAction Stop | Select-Object -First 1
-    if (-not $proc) { continue }
-    $created = ''
-    if ($proc.CreationDate) { $created = $proc.CreationDate.ToUniversalTime().ToString('o') }
-    if ($target.creation -and $target.creation -ne $created) { continue }
-    Stop-Process -Id ([int]($target.pid)) -Force -ErrorAction SilentlyContinue
-  }
-  ${waitScript}
-  $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-  $tree = @(Get-CurrentTree)
-  $seedLive = @(Get-LiveSeed)
-  if ($tree.Count -eq 0 -and $seedLive.Count -eq 0) {
-    Write-Output '{"verified":true,"remaining":[]}'
-    exit 0
-  }
-}
-$all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-$tree = @(Get-CurrentTree)
-$seedLive = @(Get-LiveSeed)
-$remaining = @($tree + $seedLive | Sort-Object pid -Unique)
-Write-Output (ConvertTo-Json -InputObject @{ verified = $false; remaining = $remaining } -Compress -Depth 5)
-exit 3
-`;
-}
-
-async function taskkillWindowsTree(pid: number, env?: NodeJS.ProcessEnv): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const finish = (error?: Error | null) => {
-      if (settled) return;
-      settled = true;
-      if (error) reject(error);
-      else resolve();
-    };
-    const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT;
-    const defaultTaskkill = systemRoot ? path.join(systemRoot, 'System32', 'taskkill.exe') : 'taskkill';
-    const taskkillExecutable = env?.FLOWLAB_TASKKILL_EXE || process.env.FLOWLAB_TASKKILL_EXE || defaultTaskkill;
-    const killer = execFile(taskkillExecutable, ['/PID', String(pid), '/T', '/F'], {
+      '-File', helperPath,
+      '-RootPid', String(pid),
+      '-TaskkillExecutable', primaryTaskkill,
+      ...(env?.FLOWLAB_TEST_DISABLE_PROCESS_FALLBACK === '1' ? ['-DisableFallback'] : [])
+    ], {
       windowsHide: true,
-      timeout: 3000,
-      maxBuffer: 256 * 1024,
+      timeout: 12000,
+      maxBuffer: 1024 * 1024,
       ...(env ? { env } : {})
-    }, error => finish(error));
-    killer.once('error', error => finish(error));
+    }, (error, stdout, stderr) => {
+      let parsed: WindowsTreeHelperResult | null = null;
+      try {
+        const output = stdout.trim();
+        const jsonLine = output.split(/\r?\n/).reverse().find(line => line.trim().startsWith('{'));
+        if (jsonLine) parsed = JSON.parse(jsonLine);
+      } catch { /* Use the subprocess diagnostic below if the helper emitted invalid JSON. */ }
+
+      if (parsed) {
+        if (error && parsed.verified) {
+          reject(new ProcessTreeTerminationError(pid, `Windows helper reported success but exited abnormally: ${error.message}`));
+          return;
+        }
+        resolve(parsed);
+        return;
+      }
+      const details = [stderr, stdout].filter(Boolean).join(' ').trim() || error?.message || 'helper produced no result';
+      reject(new ProcessTreeTerminationError(pid, `Windows process-tree helper failed: ${details}`));
+    });
   });
-}
 
-function windowsTreeVerificationScript(pid: number, identities: WindowsProcessIdentity[]): string {
-  const identityJson = JSON.stringify(identities).replace(/'/g, "''");
-  return `
-$ErrorActionPreference = 'Stop'
-$root = ${pid}
-$seedJson = ConvertFrom-Json -InputObject '${identityJson}'
-$seed = New-Object 'System.Collections.Generic.List[object]'
-foreach ($entry in $seedJson) { $seed.Add($entry) }
-$all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-$queue = New-Object 'System.Collections.Generic.Queue[object]'
-$queue.Enqueue(@{ pid = $root; depth = -1 })
-$seen = @{}
-$tree = New-Object 'System.Collections.Generic.List[object]'
-while ($queue.Count -gt 0) {
-  $parent = $queue.Dequeue()
-  $parentKey = [string]$parent.pid
-  if ($seen.ContainsKey($parentKey)) { continue }
-  $seen[$parentKey] = $true
-  foreach ($proc in $all) {
-    if ([int]$proc.ParentProcessId -ne [int]$parent.pid) { continue }
-    $pidValue = [int]$proc.ProcessId
-    if ($seen.ContainsKey([string]$pidValue)) { continue }
-    $created = ''
-    if ($proc.CreationDate) { $created = $proc.CreationDate.ToUniversalTime().ToString('o') }
-    $tree.Add(@{ pid = $pidValue; parentPid = [int]$proc.ParentProcessId; depth = [int]$parent.depth + 1; creation = $created })
-    $queue.Enqueue(@{ pid = $pidValue; depth = [int]$parent.depth + 1 })
+  if (!result.verified) {
+    throw new ProcessTreeTerminationError(pid,
+      `${result.reason || 'process-tree shutdown was not verified'}; helper=${powershell}; taskkill=${result.primaryExecutable}; remaining=${JSON.stringify(result.remaining || [])}`);
   }
-}
-$remaining = New-Object 'System.Collections.Generic.List[object]'
-foreach ($expected in $seed) {
-  $filter = 'ProcessId = ' + [string]($expected.pid)
-  $proc = Get-CimInstance Win32_Process -Filter $filter -ErrorAction Stop | Select-Object -First 1
-  if (-not $proc) { continue }
-  $created = ''
-  if ($proc.CreationDate) { $created = $proc.CreationDate.ToUniversalTime().ToString('o') }
-  if ([string]$expected.creation -eq $created) { $remaining.Add($expected) }
-}
-if ($tree.Count -eq 0 -and $remaining.Count -eq 0) { Write-Output '{"verified":true}'; exit 0 }
-Write-Output (ConvertTo-Json -InputObject @{ verified = $false; descendants = @($tree.ToArray()); captured = @($remaining.ToArray()) } -Compress -Depth 5)
-exit 3
-`;
+  return {
+    fallbackUsed: result.fallbackUsed,
+    primaryExecutable: result.primaryExecutable,
+    ...(result.primaryError ? { primaryError: result.primaryError } : {})
+  };
 }
 
-async function verifyWindowsTreeGone(pid: number, identities: WindowsProcessIdentity[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    try {
-      await runPowerShell(windowsTreeVerificationScript(pid, identities), 2500, env);
-      return true;
-    } catch {
-      if (Date.now() >= deadline) return false;
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  } while (Date.now() < deadline);
-  return false;
-}
+/* The Windows helper uses Toolhelp32 process snapshots, not WMI/CIM. It
+ * captures process creation identities before termination, invokes taskkill
+ * for the primary tree kill, and verifies every captured identity is gone.
+ * If taskkill fails or leaves descendants, the helper terminates captured
+ * identities individually and keeps taking snapshots until the tree is gone
+ * or its bounded deadline expires. */
 
-async function fallbackTerminateWindowsTree(pid: number, identities: WindowsProcessIdentity[], env?: NodeJS.ProcessEnv): Promise<{ verified: boolean; reason?: string }> {
-  try {
-    await runPowerShell(windowsTreeActionScript(pid, identities, false), 6500, env);
-    return { verified: true };
-  } catch (error: any) {
-    // Exit code 3 means at least one captured/current process survived. Preserve
-    // the helper's actual diagnostic so unverified shutdown is actionable.
-    return { verified: false, reason: error?.message || String(error) };
-  }
-}
-
-async function terminateWindowsProcessTree(pid: number, env?: NodeJS.ProcessEnv): Promise<void> {
-  let identities: WindowsProcessIdentity[] = [];
-  let snapshotError = '';
-  try {
-    identities = await snapshotWindowsProcessTree(pid, env);
-  } catch (error: any) {
-    snapshotError = error?.message || String(error);
-  }
-
-  let taskkillError = '';
-  try {
-    await taskkillWindowsTree(pid, env);
-  } catch (error: any) {
-    taskkillError = error?.message || String(error);
-  }
-
-  if (!snapshotError && identities.length > 0 && !taskkillError
-      && await verifyWindowsTreeGone(pid, identities, 1800, env)) {
-    return;
-  }
-
-  const fallback = await fallbackTerminateWindowsTree(pid, identities, env);
-  if (fallback.verified && identities.length > 0
-      && await verifyWindowsTreeGone(pid, identities, 1200, env)) {
-    return;
-  }
-
-  const reasons = [
-    taskkillError ? `taskkill failed: ${taskkillError}` : '',
-    snapshotError ? `process snapshot failed: ${snapshotError}` : '',
-    identities.length === 0 ? 'no descendant ownership snapshot was available' : '',
-    fallback.verified ? 'fallback could not confirm all captured processes exited' : `PowerShell fallback failed or timed out: ${fallback.reason || 'no diagnostic'}`
-  ].filter(Boolean).join('; ');
-  throw new ProcessTreeTerminationError(pid, reasons || 'process-tree exit verification failed');
-}
-
-function terminateProcessTree(pid: number, rootProcess?: ChildProcess, env?: NodeJS.ProcessEnv): Promise<void> {
+function terminateProcessTree(pid: number, rootProcess?: ChildProcess, env?: NodeJS.ProcessEnv): Promise<ProcessTreeTerminationResult> {
   if (process.platform === 'win32') {
-    return terminateWindowsProcessTree(pid, env).catch(error => {
+    return terminateWindowsProcessTree(pid, rootProcess, env).then(async result => {
+      if (rootProcess && !await waitForChildClose(rootProcess, 1500)) {
+        throw new ProcessTreeTerminationError(pid, 'the verified process tree disappeared but the root close event was not observed');
+      }
+      return result;
+    }).catch(error => {
       // Best-effort root kill is not treated as descendant verification.
       try { if (rootProcess && rootProcess.exitCode === null && rootProcess.signalCode === null) rootProcess.kill('SIGKILL'); } catch { /* Root may have exited. */ }
       throw error;
@@ -384,7 +167,7 @@ function terminateProcessTree(pid: number, rootProcess?: ChildProcess, env?: Nod
     }
   };
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     signalGroup('SIGTERM');
     setTimeout(() => {
       signalGroup('SIGKILL');
@@ -394,12 +177,12 @@ function terminateProcessTree(pid: number, rootProcess?: ChildProcess, env?: Nod
           process.kill(-pid, 0);
         } catch (error: any) {
           if (error?.code === 'ESRCH') {
-            resolve();
+            resolve({ fallbackUsed: false });
             return;
           }
         }
         if (Date.now() >= deadline) {
-          resolve();
+          reject(new ProcessTreeTerminationError(pid, 'POSIX process group remained after SIGKILL deadline'));
           return;
         }
         setTimeout(waitForGroupExit, 25);
@@ -418,7 +201,7 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number, env?: Nod
     let timer: NodeJS.Timeout | null = null;
     let timedOut = false;
     let settled = false;
-    let termination: Promise<void> | null = null;
+    let termination: Promise<ProcessTreeTerminationResult> | null = null;
     let capturedStdout = '';
     let capturedStderr = '';
 
@@ -437,6 +220,11 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number, env?: Nod
         const errObj: any = new Error(preserveReason ? error.message : (capturedStderr || capturedStdout || error.message));
         errObj.stdout = capturedStdout;
         errObj.stderr = capturedStderr;
+        if ((error as any).processTreeFallbackUsed) {
+          errObj.processTreeFallbackUsed = true;
+          errObj.processTreePrimaryError = (error as any).processTreePrimaryError;
+          errObj.processTreePrimaryExecutable = (error as any).processTreePrimaryExecutable;
+        }
         reject(errObj);
       } else {
         resolve({ stdout: capturedStdout, stderr: capturedStderr });
@@ -446,9 +234,16 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number, env?: Nod
     const stopAndFinish = (error: Error, isTimeout = false) => {
       if (settled || termination) return;
       timedOut = isTimeout;
-      termination = child?.pid ? terminateProcessTree(child.pid, child, env) : Promise.resolve();
+      termination = child?.pid ? terminateProcessTree(child.pid, child, env) : Promise.resolve({ fallbackUsed: false });
       void termination.then(
-        () => finish(error),
+        outcome => {
+          (error as any).processTreePrimaryExecutable = outcome.primaryExecutable;
+          if (outcome.fallbackUsed) {
+            (error as any).processTreeFallbackUsed = true;
+            (error as any).processTreePrimaryError = outcome.primaryError;
+          }
+          finish(error);
+        },
         (terminationError) => finish(terminationError instanceof Error ? terminationError : error)
       );
     };
@@ -736,3 +531,4 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     }
   }
 }
+

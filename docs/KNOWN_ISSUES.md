@@ -22,4 +22,4 @@ Số bước và thông tin debug có thể đổi theo compiler/GDB. CI xác mi
 
 ## 5. Browser smoke scope
 
-[Real Chrome smoke](${artifactUrl}) chạy headless trên Windows CI, app/backend thật, Chrome 155.0.8059.85. Artifact chứa log, JSON evidence, actual trace và screenshots; expires 04/11/2026. Coverage gồm một golden linked-list flow và race stdin. Chưa bao phủ mọi browser/version/device/lesson, và không thay thế visual review trên màn hình thật.
+[Real Chrome smoke](https://github.com/Phuchello/DSA/actions/runs/39578131020/artifacts/12335352037) chạy headless trên Windows CI, app/backend thật, Chrome 155.0.8059.85. Artifact chứa log, JSON evidence, actual trace và screenshots; expires 04/11/2026. Coverage gồm một golden linked-list flow và race stdin. Chưa bao phủ mọi browser/version/device/lesson, và không thay thế visual review trên màn hình thật.

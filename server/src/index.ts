@@ -38,9 +38,20 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 
 // ─── Security: Host header validation (prevent DNS rebinding) ───────────────
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function isLocalHostHeader(hostHeader: string): boolean {
+  try {
+    const hostname = new URL(`http://${hostHeader}`).hostname.toLowerCase();
+    return LOCAL_HOSTNAMES.has(hostname);
+  } catch {
+    return false;
+  }
+}
+
 app.use((req: Request, res: Response, next) => {
   const host = req.headers.host;
-  if (host && !host.startsWith('localhost') && !host.startsWith('127.0.0.1')) {
+  if (host && !isLocalHostHeader(host)) {
     return res.status(403).json({
       success: false,
       buildOutput: 'Truy cập bị từ chối: Máy chủ chỉ phục vụ các yêu cầu từ localhost (127.0.0.1).',

@@ -109,3 +109,13 @@ Xem chi tiết kết quả kiểm nghiệm tại [`docs/TEST_RESULTS.md`](docs/T
 - Tham chiếu kiến trúc và giấy phép liên quan:
   - [See++](https://github.com/knazir/SeePlusPlus) (MIT License, Copyright (c) 2024-2026 See++ Authors).
   - Giao diện và mã nguồn độc lập được thiết kế cho chương trình IT003.
+
+## Release P0 đã chuẩn bị
+
+- [Changelog](CHANGELOG.md)
+- [Ghi chú phát hành v0.1.0-p0](docs/RELEASE_NOTES_v0.1.0-p0.md)
+- [Checklist phát hành](docs/RELEASE_CHECKLIST.md)
+- [Ghi chú bảo mật](docs/SECURITY_RELEASE_NOTES.md)
+- [Manifest phát hành đề xuất](docs/RELEASE_MANIFEST_v0.1.0-p0.md)
+
+Phiên bản đang ở trạng thái đề xuất; chưa tạo tag, chưa phát hành và chưa triển khai công khai.

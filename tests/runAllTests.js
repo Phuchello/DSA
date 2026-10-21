@@ -147,6 +147,21 @@ function checkServerReady() {
   });
 }
 
+
+function requestHealthWithHost(hostHeader) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1', port: 4000, path: '/api/health', method: 'GET',
+      headers: { host: hostHeader },
+    }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function readFinalOutput(result) {
   if (typeof result?.finalStdout === 'string' && result.finalStdout.trim()) {
     return result.finalStdout.trim();
@@ -328,9 +343,33 @@ async function runTests() {
 
   try {
     // -------------------------------------------------------------
-    // PART 1: 12 Baseline Test Cases
+    // Host header regression checks
+    for (const tc of [
+      { id: 'TC-SEC-HOST-LOCAL', host: 'localhost:4000', expected: 200 },
+      { id: 'TC-SEC-HOST-LOOKALIKE', host: 'localhost.attacker.example:4000', expected: 403 },
+    ]) {
+      process.stdout.write(`Đang chạy [${tc.id}] Xác thực chính xác Host header (${tc.host})... `);
+      try {
+        const actual = await requestHealthWithHost(tc.host);
+        if (actual === tc.expected) {
+          console.log(`✅ PASS (HTTP ${actual})`);
+          passed++;
+          results.push({ id: tc.id, status: 'PASS' });
+        } else {
+          console.log(`❌ FAIL (Mong đợi HTTP ${tc.expected}, nhận HTTP ${actual})`);
+          failed++;
+          results.push({ id: tc.id, status: 'FAIL', expected: tc.expected, actual });
+        }
+      } catch (err) {
+        console.log(`❌ ERROR (${err.message})`);
+        failed++;
+        results.push({ id: tc.id, status: 'ERROR', error: err.message });
+      }
+    }
+
+    // PART 1: 13 baseline API execution test cases
     // -------------------------------------------------------------
-    console.log('\n--- PHẦN 1: 12 BÀI TOÁN CƠ SỞ (GOLDEN, EDGE CASES, SECURITY, STDIN) ---');
+    console.log('\n--- PHẦN 1: 13 BÀI TOÁN CƠ SỞ (GOLDEN, EDGE CASES, SECURITY, STDIN) ---');
     for (const tc of TEST_CASES) {
       await new Promise((r) => setTimeout(r, 100));
       process.stdout.write(`Đang chạy [${tc.id}] ${tc.name}... `);

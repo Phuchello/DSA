@@ -1,6 +1,6 @@
 {
   "name": "dsa-flowlab-server",
-  "version": "1.0.0",
+  "version": "0.1.0-p0",
   "description": "Backend API and C++ Execution Runner for DSA FlowLab",
   "main": "src/index.ts",
   "scripts": {

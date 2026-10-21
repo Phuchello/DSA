@@ -118,7 +118,12 @@ async function terminateWindowsProcessTree(pid: number, rootProcess: ChildProces
         resolve(parsed);
         return;
       }
-      const details = [stderr, stdout].filter(Boolean).join(' ').trim() || error?.message || 'helper produced no result';
+      const details = [
+        stderr,
+        stdout,
+        error?.message,
+        error ? `code=${(error as any).code ?? 'unknown'} signal=${(error as any).signal ?? 'none'} killed=${Boolean((error as any).killed)}` : ''
+      ].filter(Boolean).join(' ').trim() || 'helper produced no result';
       reject(new ProcessTreeTerminationError(pid, `Windows process-tree helper failed: ${details}`));
     });
   });

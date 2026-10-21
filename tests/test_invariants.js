@@ -777,7 +777,12 @@ int main() {
       assert.ok(Date.now() - timeoutStartedAt < 20000, 'Timeout tree termination and all eight promises must settle within a bounded interval');
       assert.ok(outcomes.every(result => result.success === false), 'Every timed-out GDB run must settle as a failure');
       assert.ok(outcomes.every(result => result.terminationStatus === 'timeout'),
-        'Each killed GDB process tree must report timeout');
+        `Each killed GDB process tree must report timeout; outcomes=${JSON.stringify(outcomes.map(result => ({
+          success: result.success,
+          terminationStatus: result.terminationStatus,
+          terminationReason: result.terminationReason,
+          buildOutput: result.buildOutput
+        })))}`);
       assert.ok(outcomes.every(result => result.trace.length === 0), 'A killed tracer must not fabricate a partial trace');
       const after = new Set(fs.readdirSync(tempRoot));
       assert.deepStrictEqual([...after].filter(name => !before.has(name)), [],
@@ -945,3 +950,4 @@ if (require.main === module) {
 }
 
 module.exports = { runMemoryInvariantTests };
+

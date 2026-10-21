@@ -81,6 +81,68 @@ type WindowsTreeHelperResult = {
   remaining?: Array<{ pid: number; creation: string }>;
 };
 
+let windowsTreeNativeAssemblyPath: string | null = null;
+let windowsTreeNativeAssemblyDirectory: string | null = null;
+let windowsTreeNativeAssemblyPromise: Promise<string> | null = null;
+
+function ensureWindowsTreeNativeAssembly(env?: NodeJS.ProcessEnv): Promise<string> {
+  if (windowsTreeNativeAssemblyPath) return Promise.resolve(windowsTreeNativeAssemblyPath);
+  if (windowsTreeNativeAssemblyPromise) return windowsTreeNativeAssemblyPromise;
+
+  const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT;
+  const powershell = systemRoot
+    ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe';
+  const systemTaskkill = systemRoot ? path.join(systemRoot, 'System32', 'taskkill.exe') : 'taskkill';
+  const helperPath = path.join(__dirname, 'windowsProcessTree.ps1');
+  const assemblyDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'flowlab-process-tree-'));
+  const assemblyPath = path.join(assemblyDirectory, 'FlowLabProcessTreeNative.dll');
+
+  const compile = new Promise<string>((resolve, reject) => {
+    execFile(powershell, [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', helperPath,
+      '-RootPid', '0',
+      '-TaskkillExecutable', systemTaskkill,
+      '-NativeAssemblyPath', assemblyPath,
+      '-CompileOnly'
+    ], {
+      windowsHide: true,
+      timeout: 15000,
+      maxBuffer: 1024 * 1024,
+      ...(env ? { env } : {})
+    }, (error, stdout, stderr) => {
+      if (error || !fs.existsSync(assemblyPath)) {
+        const details = [stderr, stdout, error?.message,
+          error ? `code=${(error as any).code ?? 'unknown'} signal=${(error as any).signal ?? 'none'} killed=${Boolean((error as any).killed)}` : 'assembly output was not created']
+          .filter(Boolean).join(' ').trim();
+        reject(new Error(`Could not initialize Windows process-tree verifier: ${details}`));
+        return;
+      }
+      resolve(assemblyPath);
+    });
+  });
+
+  windowsTreeNativeAssemblyPromise = compile.then(
+    compiledPath => {
+      windowsTreeNativeAssemblyPath = compiledPath;
+      windowsTreeNativeAssemblyDirectory = assemblyDirectory;
+      process.once('exit', () => {
+        if (windowsTreeNativeAssemblyDirectory) {
+          try { fs.rmSync(windowsTreeNativeAssemblyDirectory, { recursive: true, force: true }); } catch { /* OS cleans temp after process exit if files are still locked. */ }
+        }
+      });
+      return compiledPath;
+    },
+    error => {
+      try { fs.rmSync(assemblyDirectory, { recursive: true, force: true }); } catch { /* Best-effort failed initialization cleanup. */ }
+      windowsTreeNativeAssemblyPromise = null;
+      throw error;
+    }
+  );
+  return windowsTreeNativeAssemblyPromise;
+}
+
 async function terminateWindowsProcessTree(pid: number, rootProcess: ChildProcess | undefined, env?: NodeJS.ProcessEnv): Promise<ProcessTreeTerminationResult> {
   const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT;
   const systemTaskkill = systemRoot ? path.join(systemRoot, 'System32', 'taskkill.exe') : 'taskkill';
@@ -89,6 +151,12 @@ async function terminateWindowsProcessTree(pid: number, rootProcess: ChildProces
   const powershell = systemRoot
     ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     : 'powershell.exe';
+  let nativeAssemblyPath: string;
+  try {
+    nativeAssemblyPath = await ensureWindowsTreeNativeAssembly(env);
+  } catch (error: any) {
+    throw new ProcessTreeTerminationError(pid, error?.message || String(error));
+  }
 
   const result = await new Promise<WindowsTreeHelperResult>((resolve, reject) => {
     execFile(powershell, [
@@ -96,6 +164,7 @@ async function terminateWindowsProcessTree(pid: number, rootProcess: ChildProces
       '-File', helperPath,
       '-RootPid', String(pid),
       '-TaskkillExecutable', primaryTaskkill,
+      '-NativeAssemblyPath', nativeAssemblyPath,
       ...(env?.FLOWLAB_TEST_DISABLE_PROCESS_FALLBACK === '1' ? ['-DisableFallback'] : [])
     ], {
       windowsHide: true,

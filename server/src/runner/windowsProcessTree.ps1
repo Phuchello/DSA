@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][int]$RootPid,
     [Parameter(Mandatory = $true)][string]$TaskkillExecutable,
+    [Parameter(Mandatory = $true)][string]$NativeAssemblyPath,
+    [switch]$CompileOnly,
     [switch]$DisableFallback
 )
 
@@ -145,7 +147,13 @@ public static class FlowLabProcessTreeNative {
     }
 }
 '@
-    Add-Type -TypeDefinition $nativeSource -Language CSharp
+    if ($CompileOnly) {
+        Add-Type -TypeDefinition $nativeSource -Language CSharp -OutputAssembly $NativeAssemblyPath | Out-Null
+        exit 0
+    }
+    # Load raw bytes to avoid .NET treating sandboxed temporary paths as remote
+    # LoadFrom locations under Windows App Control / zone policy.
+    [void][System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($NativeAssemblyPath))
 
     function Get-CurrentTree {
         $snapshot = [FlowLabProcessTreeNative]::Snapshot()

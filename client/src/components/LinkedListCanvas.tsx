@@ -232,7 +232,7 @@ export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
           </div>
         )}
 
-        {/* SECTION 3: UNREACHABLE NODES (MEMORY LEAKS) */
+        {/* SECTION 3: UNREACHABLE NODES (MEMORY LEAKS) */}
         {unreachableNodes.length > 0 && (
           <div className="bg-orange-950/20 border border-orange-800/50 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">

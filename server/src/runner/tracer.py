@@ -399,6 +399,22 @@ termination_status = "normal"
 termination_reason = "Chương trình kết thúc bình thường (Exit code 0)"
 consecutive_foreign_steps = 0
 
+def record_inferior_stop(event):
+    global termination_status, termination_reason
+    if not isinstance(event, gdb.SignalEvent):
+        return
+    stop_signal = getattr(event, "stop_signal", "")
+    if not stop_signal:
+        return
+    if stop_signal in ("SIGSEGV", "SIGABRT", "SIGBUS", "SIGILL", "SIGFPE"):
+        termination_status = "crashed"
+        termination_reason = f"Chương trình dừng bởi tín hiệu nghiêm trọng {stop_signal}"
+    else:
+        termination_status = "interrupted"
+        termination_reason = f"Chương trình bị gián đoạn bởi tín hiệu {stop_signal}"
+
+gdb.events.stop.connect(record_inferior_stop)
+
 while step_count < MAX_STEPS:
     step_count += 1
     try:
@@ -705,6 +721,8 @@ while step_count < MAX_STEPS:
         elif any(sig in res for sig in ("SIGSEGV", "Segmentation fault", "SIGABRT", "Aborted", "received signal")):
             termination_status = "crashed"
             termination_reason = f"Lỗi truy cập bộ nhớ nghiêm trọng (Segmentation Fault / Signal): {res.strip()}"
+            break
+        if termination_status != "normal":
             break
         if len(gdb.inferiors()) == 0 or gdb.inferiors()[0].pid == 0:
             break

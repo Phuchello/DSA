@@ -783,6 +783,12 @@ int main() {
       assert.deepStrictEqual([...after].filter(name => !before.has(name)), [],
         'Every timed-out execution must remove its temporary workspace');
 
+      // Restore the normal debugger budget before the success-path probe so
+      // this assertion measures slot recovery rather than the forced timeout budget.
+      if (oldTimeout === undefined) delete process.env.FLOWLAB_GDB_TIMEOUT_MS;
+      else process.env.FLOWLAB_GDB_TIMEOUT_MS = oldTimeout;
+      if (oldMaxSteps === undefined) delete process.env.FLOWLAB_MAX_STEPS;
+      else process.env.FLOWLAB_MAX_STEPS = oldMaxSteps;
       const recovered = await runCppCode('#include <iostream>\\nint main() { std::cout << 9; return 0; }', '');
       assert.strictEqual(recovered.success, true, 'A new request must run after timed-out slots are released');
       assert.strictEqual(recovered.finalStdout.trim(), '9');
@@ -888,7 +894,9 @@ int main() {
     assert.strictEqual(new Set(recursivePointers.map(pointer => pointer.frameId)).size, recursiveFrames.length,
       'Recursive p instances must have frame-qualified identities');
     recursiveFrames.forEach((frame, index) => {
-      assert.strictEqual(recursivePointers[index].targetAddress, frame.encodedLocals.p[3],
+      const rawTarget = frame.encodedLocals.p[3];
+      const expectedTarget = rawTarget && rawTarget !== '0x0' ? String(rawTarget) : null;
+      assert.strictEqual(recursivePointers[index].targetAddress, expectedTarget,
         `SumList frame ${index} must display its own p target`);
     });
     assert.strictEqual(new Set(recursivePointers.map(pointer => pointer.displayName)).size, recursiveFrames.length,

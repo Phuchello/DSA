@@ -110,6 +110,7 @@ async function runProcessTreeTests() {
         'POSIX command must run in a detached process group');
       passed++;
       console.log('✅ POSIX process-tree regression: detached group terminated, Promise settled, descendant stopped');
+      if (passed !== total) throw new Error(`Process-tree assertion accounting mismatch: ${passed}/${total}`);
       return { passed, failed: 0, total };
     }
 
@@ -285,6 +286,7 @@ async function runProcessTreeTests() {
       'The test harness must clean the deliberately unverified fixture after observing the failure');
     passed++;
     console.log('✅ Windows explicit harness cleanup completed after asserting the production cleanup was unverified');
+    if (passed !== total) throw new Error(`Process-tree assertion accounting mismatch: ${passed}/${total}`);
     return { passed, failed: 0, total };
   } finally {
     try {

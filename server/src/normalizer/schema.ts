@@ -26,6 +26,7 @@ export const RawTraceFileSchema = z.object({
   total_steps: z.number(),
   termination_status: z.enum(['normal', 'crashed', 'truncated', 'abnormal_exit', 'interrupted', 'timeout']).optional().default('normal'),
   termination_reason: z.string().optional(),
+  final_stdout: z.string().optional().default(''),
   trace: z.array(RawExecutionPointSchema)
 });
 

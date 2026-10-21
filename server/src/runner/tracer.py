@@ -704,7 +704,9 @@ if not final_stdout:
     time.sleep(0.1)
     final_stdout = read_current_stdout()
 
-# Update final step event and backfill stdout
+# Update the final step event. Keep flushed stdout on the snapshots where GDB
+# observed it; bytes buffered until process exit belong to a separate final
+# output field because their exact statement timing is unknown.
 if trace:
     if termination_status == "normal":
         trace[-1]["event"] = "return"
@@ -712,16 +714,13 @@ if trace:
         trace[-1]["event"] = termination_status
         trace[-1]["terminationReason"] = termination_reason
 
-    if final_stdout:
-        for k in range(max(0, len(trace) - 5), len(trace)):
-            trace[k]["stdout"] = final_stdout
-
 # Write final trace file
 with open(TRACE_FILE, "w", encoding="utf-8") as f:
     json.dump({
         "total_steps": len(trace),
         "termination_status": termination_status,
         "termination_reason": termination_reason,
+        "final_stdout": final_stdout,
         "trace": trace
     }, f, indent=2)
 

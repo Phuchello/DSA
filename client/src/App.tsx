@@ -13,7 +13,8 @@ export const App: React.FC = () => {
   const [code, setCode] = useState<string>('');
   const [stdin, setStdin] = useState<string>('');
   const [trace, setTrace] = useState<NormalizedExecutionPoint[]>([]);
-  const [isTraceStale, setIsTraceStale] = useState<boolean>(false);
+  const [traceSource, setTraceSource] = useState<{ code: string; stdin: string } | null>(null);
+  const [finalStdout, setFinalStdout] = useState<string>('');
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [mode, setMode] = useState<'beginner' | 'advanced'>('beginner');
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -22,6 +23,11 @@ export const App: React.FC = () => {
   const [buildOutput, setBuildOutput] = useState<string>('');
 
   const playTimerRef = useRef<any>(null);
+  const latestCodeRef = useRef(code);
+  const latestStdinRef = useRef(stdin);
+  const latestRequestIdRef = useRef(0);
+
+  const isTraceStale = Boolean(traceSource && (traceSource.code !== code || traceSource.stdin !== stdin));
 
   // Fetch pre-loaded lessons on mount
   useEffect(() => {
@@ -32,9 +38,10 @@ export const App: React.FC = () => {
           setLessons(data.lessons);
           const first = data.lessons[0];
           setSelectedLessonId(first.id);
+          latestCodeRef.current = first.code;
+          latestStdinRef.current = first.defaultStdin;
           setCode(first.code);
           setStdin(first.defaultStdin);
-          setIsTraceStale(false);
         }
       })
       .catch((err) => {
@@ -44,13 +51,18 @@ export const App: React.FC = () => {
 
   // When selected lesson changes, update editor
   const handleSelectLesson = (lessonId: string) => {
+    latestRequestIdRef.current += 1;
+    setIsRunning(false);
     setSelectedLessonId(lessonId);
     const found = lessons.find((l) => l.id === lessonId);
     if (found) {
+      latestCodeRef.current = found.code;
+      latestStdinRef.current = found.defaultStdin;
       setCode(found.code);
       setStdin(found.defaultStdin);
       setTrace([]);
-      setIsTraceStale(false);
+      setTraceSource(null);
+      setFinalStdout('');
       setCurrentStepIndex(0);
       setIsPlaying(false);
       setBuildOutput('');
@@ -58,21 +70,19 @@ export const App: React.FC = () => {
   };
 
   const handleCodeChange = (newCode: string) => {
+    latestCodeRef.current = newCode;
     setCode(newCode);
-    if (trace.length > 0) {
-      setIsTraceStale(true);
-    }
   };
 
   const handleStdinChange = (newStdin: string) => {
+    latestStdinRef.current = newStdin;
     setStdin(newStdin);
-    if (trace.length > 0) {
-      setIsTraceStale(true);
-    }
   };
 
   // Run C++ Code
   const handleRunCode = async () => {
+    const requestId = ++latestRequestIdRef.current;
+    const requestSnapshot = { code: latestCodeRef.current, stdin: latestStdinRef.current };
     setIsRunning(true);
     setIsPlaying(false);
     setBuildOutput('');
@@ -81,27 +91,41 @@ export const App: React.FC = () => {
       const response = await fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, stdin }),
+        body: JSON.stringify(requestSnapshot),
       });
 
       const data = await response.json();
 
+      const requestIsCurrent = requestId === latestRequestIdRef.current
+        && requestSnapshot.code === latestCodeRef.current
+        && requestSnapshot.stdin === latestStdinRef.current;
+      if (!requestIsCurrent) return;
+
       if (data.success && data.trace && data.trace.length > 0) {
         setTrace(data.trace);
-        setIsTraceStale(false);
+        setTraceSource(requestSnapshot);
+        setFinalStdout(data.finalStdout || '');
         setCurrentStepIndex(0);
         setBuildOutput('');
       } else {
         setBuildOutput(data.buildOutput || 'Biên dịch hoặc chạy mã thất bại.');
         setTrace([]);
-        setIsTraceStale(false);
+        setTraceSource(null);
+        setFinalStdout('');
       }
     } catch (err: any) {
+      const requestIsCurrent = requestId === latestRequestIdRef.current
+        && requestSnapshot.code === latestCodeRef.current
+        && requestSnapshot.stdin === latestStdinRef.current;
+      if (!requestIsCurrent) return;
       setBuildOutput(`Lỗi kết nối tới máy chủ: ${err?.message || err}`);
       setTrace([]);
-      setIsTraceStale(false);
+      setTraceSource(null);
+      setFinalStdout('');
     } finally {
-      setIsRunning(false);
+      if (requestId === latestRequestIdRef.current) {
+        setIsRunning(false);
+      }
     }
   };
 
@@ -207,6 +231,7 @@ export const App: React.FC = () => {
             onChangeStdin={handleStdinChange}
             currentLine={currentStep?.line || null}
             stdout={currentStep?.stdout || ''}
+            finalStdout={finalStdout}
             buildOutput={buildOutput}
             isExecuting={isRunning}
             isTraceStale={isTraceStale}

@@ -9,6 +9,7 @@ export interface RunResult {
   success: boolean;
   buildOutput?: string;
   trace: NormalizedExecutionPoint[];
+  finalStdout?: string;
   totalSteps?: number;
   terminationStatus?: string;
   terminationReason?: string;
@@ -258,6 +259,7 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     return {
       success: true,
       trace: normalizedPoints,
+      finalStdout: validatedTrace.final_stdout,
       totalSteps: normalizedPoints.length,
       terminationStatus: validatedTrace.termination_status || 'normal',
       terminationReason: validatedTrace.termination_reason || '',

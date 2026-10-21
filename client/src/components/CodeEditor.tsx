@@ -12,6 +12,7 @@ interface CodeEditorProps {
   onChangeStdin: (newStdin: string) => void;
   currentLine: number | null;
   stdout: string;
+  finalStdout?: string;
   buildOutput?: string;
   isExecuting: boolean;
   isTraceStale?: boolean;
@@ -79,6 +80,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   onChangeStdin,
   currentLine,
   stdout,
+  finalStdout = '',
   buildOutput,
   isExecuting,
   isTraceStale = false,
@@ -251,8 +253,21 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         <div className="flex-1 p-3 overflow-auto font-mono text-xs">
           {buildOutput ? (
             <pre data-testid="console-build-error" className="text-red-400 whitespace-pre-wrap leading-relaxed">{buildOutput}</pre>
-          ) : stdout ? (
-            <pre data-testid="console-stdout" className="text-emerald-400 whitespace-pre-wrap leading-relaxed">{stdout}</pre>
+          ) : stdout || finalStdout ? (
+            <div className="space-y-3">
+              {stdout && (
+                <div>
+                  <div className="text-[10px] text-slate-500 mb-1">stdout đã quan sát tại bước hiện tại</div>
+                  <pre data-testid="console-stdout" className="text-emerald-400 whitespace-pre-wrap leading-relaxed">{stdout}</pre>
+                </div>
+              )}
+              {finalStdout && (
+                <div>
+                  <div className="text-[10px] text-slate-500 mb-1">Đầu ra cuối cùng sau khi chương trình kết thúc</div>
+                  <pre data-testid="console-final-stdout" className="text-emerald-400 whitespace-pre-wrap leading-relaxed">{finalStdout}</pre>
+                </div>
+              )}
+            </div>
           ) : (
             <span className="text-slate-600 italic">Chưa có kết quả in ra màn hình...</span>
           )}

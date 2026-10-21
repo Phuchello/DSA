@@ -147,6 +147,19 @@ function checkServerReady() {
   });
 }
 
+function readFinalOutput(result) {
+  if (typeof result?.finalStdout === 'string' && result.finalStdout.trim()) {
+    return result.finalStdout.trim();
+  }
+
+  for (let i = (result?.trace?.length || 0) - 1; i >= 0; i--) {
+    if (result.trace[i]?.stdout && result.trace[i].stdout.trim()) {
+      return result.trace[i].stdout.trim();
+    }
+  }
+  return '';
+}
+
 function assertTraceCompleteness(trace) {
   assert.ok(Array.isArray(trace) && trace.length > 0, 'Golden execution must contain snapshots');
   assert.ok(trace.every(step => step.snapshotConvention === 'before-statement'),
@@ -345,13 +358,7 @@ async function runTests() {
           continue;
         }
 
-        let actualOutput = '';
-        for (let i = res.trace.length - 1; i >= 0; i--) {
-          if (res.trace[i]?.stdout && res.trace[i].stdout.trim()) {
-            actualOutput = res.trace[i].stdout.trim();
-            break;
-          }
-        }
+        const actualOutput = readFinalOutput(res);
 
         if (actualOutput === tc.expectedOutput) {
           if (tc.id === 'TC-GOLDEN-01') {
@@ -381,25 +388,8 @@ async function runTests() {
       await new Promise((r) => setTimeout(r, 100));
       const resB = await callApiRun(BASE_GOLDEN_CODE, '3\n1 2 3\n1');
 
-      let outA = '';
-      if (resA && resA.trace) {
-        for (let i = resA.trace.length - 1; i >= 0; i--) {
-          if (resA.trace[i]?.stdout && resA.trace[i].stdout.trim()) {
-            outA = resA.trace[i].stdout.trim();
-            break;
-          }
-        }
-      }
-
-      let outB = '';
-      if (resB && resB.trace) {
-        for (let i = resB.trace.length - 1; i >= 0; i--) {
-          if (resB.trace[i]?.stdout && resB.trace[i].stdout.trim()) {
-            outB = resB.trace[i].stdout.trim();
-            break;
-          }
-        }
-      }
+      const outA = readFinalOutput(resA);
+      const outB = readFinalOutput(resB);
 
       if (resA.success && resB.success && outA !== outB && outA === '1 3' && outB === '2 3') {
         console.log(`✅ PASS (Input A -> "${outA}", Input B -> "${outB}")`);
@@ -414,6 +404,27 @@ async function runTests() {
       console.log(`❌ ERROR (${err.message})`);
       failed++;
       results.push({ id: 'TC-STDIN-DIFF', status: 'ERROR', error: err.message });
+    }
+
+    // Stdout captured only after the inferior exits is explicitly final output;
+    // it must not be copied onto a before-statement snapshot for the cout line.
+    process.stdout.write('Đang chạy [TC-STDOUT-CHRONOLOGY] Kiểm tra cout không xuất hiện trước khi thực thi... ');
+    try {
+      const marker = 'FLOWLAB_CHRONOLOGY_MARKER';
+      const code = `#include <iostream>\nint main() {\n  std::cout << "${marker}" << std::endl;\n  return 0;\n}`;
+      const result = await callApiRun(code, '');
+      const coutSnapshot = result.trace?.find(step => step.codeText.includes(marker));
+      assert.ok(result.success, `Execution failed: ${result.buildOutput || 'unknown error'}`);
+      assert.ok(coutSnapshot, 'Trace must contain the cout statement snapshot');
+      assert.ok(!coutSnapshot.stdout.includes(marker), 'Before-statement snapshot must not contain output from its cout statement');
+      assert.strictEqual(result.finalStdout.trim(), marker, 'Final output must preserve the program stdout');
+      console.log('✅ PASS (cout absent before statement; final output retained separately)');
+      passed++;
+      results.push({ id: 'TC-STDOUT-CHRONOLOGY', status: 'PASS' });
+    } catch (err) {
+      console.log(`❌ FAIL (${err.message})`);
+      failed++;
+      results.push({ id: 'TC-STDOUT-CHRONOLOGY', status: 'FAIL', error: err.message });
     }
 
     // -------------------------------------------------------------

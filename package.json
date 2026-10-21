@@ -10,7 +10,8 @@
     "start:server": "npm --prefix server start",
     "start:client": "npm --prefix client run preview",
     "build": "npm --prefix server run build && npm --prefix client run build",
-    "test": "node tests/runAllTests.js"
+    "test": "node tests/runAllTests.js",
+    "test:browser": "node tests/browserSmoke.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

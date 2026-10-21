@@ -120,4 +120,23 @@ describe('CodeEditor Component', () => {
 
     expect(screen.getByTestId('console-build-error').textContent).toContain("error: expected ';'");
   });
+
+  it('labels buffered final output separately from the current timeline snapshot', () => {
+    render(
+      <CodeEditor
+        code="int main() { return 0; }"
+        onChangeCode={vi.fn()}
+        stdin=""
+        onChangeStdin={vi.fn()}
+        currentLine={1}
+        stdout={'early output\n'}
+        finalStdout={'early output\nlate output\n'}
+        isExecuting={false}
+      />
+    );
+
+    expect(screen.getByTestId('console-stdout').textContent).toBe('early output\n');
+    expect(screen.getByTestId('console-final-stdout').textContent).toBe('early output\nlate output\n');
+    expect(screen.getByText('Đầu ra cuối cùng sau khi chương trình kết thúc')).toBeTruthy();
+  });
 });

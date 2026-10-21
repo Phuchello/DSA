@@ -100,7 +100,9 @@ function runPowerShell(script: string, timeoutMs: number, env?: NodeJS.ProcessEn
     ], { windowsHide: true, timeout: timeoutMs, maxBuffer: 1024 * 1024, ...(env ? { env } : {}) }, (error, stdout, stderr) => {
       finish(error, stdout, stderr);
     });
-    child.once('error', error => finish(error));
+    // execFile's callback fires after the child closes and includes all captured
+    // stderr/stdout. Settling from the earlier 'error' event loses the useful
+    // PowerShell diagnostic (and can race the callback on timeout/spawn errors).
   });
 }
 

@@ -54,10 +54,12 @@ jobs:
         run: node tests/normalizerUnitTests.js
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Job 2: Full GDB integration tests (Windows – MinGW g++ + GDB available)
+  # Job 2: Full GDB integration tests and real Chrome smoke test. The Windows
+  # hosted image includes Chrome; MSYS2 supplies the same g++/GDB toolchain used
+  # by the native backend in this job.
   # ─────────────────────────────────────────────────────────────────────────────
   gdb-integration-tests:
-    name: Full C++ & GDB Memory Invariant Tests (Windows)
+    name: Full C++ & GDB Tests + Real Chrome Smoke (Windows)
     runs-on: windows-latest
     needs: lint-and-unit-tests
     steps:
@@ -114,3 +116,28 @@ jobs:
 
       - name: Run Full Automated Verification Suite
         run: npm test
+
+      - name: Configure real Chrome and browser evidence directory
+        shell: pwsh
+        run: |
+          $chromePath = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+          if (-not (Test-Path -LiteralPath $chromePath)) {
+            throw "Expected preinstalled Chrome at $chromePath"
+          }
+          & $chromePath --version
+          Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$chromePath"
+          $artifactPath = Join-Path $env:RUNNER_TEMP 'flowlab-browser-smoke'
+          New-Item -ItemType Directory -Force -Path $artifactPath | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "FLOWLAB_BROWSER_ARTIFACT_DIR=$artifactPath"
+
+      - name: Run real Chrome browser smoke against native C++/GDB backend
+        run: npm run test:browser
+
+      - name: Preserve real browser logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/flowlab-browser-smoke/
+          if-no-files-found: error
+          retention-days: 14

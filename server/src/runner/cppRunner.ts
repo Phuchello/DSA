@@ -59,14 +59,28 @@ function waitForChildClose(child: ChildProcess | undefined, timeoutMs: number): 
   });
 }
 
+type WindowsTreeHelperDiagnostic = {
+  failurePhase?: string | null;
+  failureType?: string;
+  nativeErrorCode?: number | null;
+  testFaultInjectionAttempted?: boolean;
+  testFaultInjectionReached?: boolean;
+  testInjectedErrorCode?: number;
+  testSnapshotErrorCode?: number;
+  exceptionTypes?: string[];
+  exceptionMessages?: string[];
+};
+
 class ProcessTreeTerminationError extends Error {
   readonly processTreeTerminationVerified = false;
   readonly rootPid: number;
+  readonly windowsTreeDiagnostic?: WindowsTreeHelperDiagnostic;
 
-  constructor(rootPid: number, reason: string) {
+  constructor(rootPid: number, reason: string, windowsTreeDiagnostic?: WindowsTreeHelperDiagnostic) {
     super(`Không xác minh được việc dừng toàn bộ cây tiến trình ${rootPid}: ${reason}`);
     this.name = 'ProcessTreeTerminationError';
     this.rootPid = rootPid;
+    if (windowsTreeDiagnostic) this.windowsTreeDiagnostic = windowsTreeDiagnostic;
   }
 }
 
@@ -78,6 +92,7 @@ type WindowsTreeHelperResult = {
   primaryError?: string;
   primaryExecutable: string;
   reason?: string;
+  diagnostic?: WindowsTreeHelperDiagnostic;
   remaining?: Array<{ pid: number; creation: string }>;
 };
 
@@ -205,7 +220,8 @@ async function terminateWindowsProcessTree(pid: number, rootProcess: ChildProces
 
   if (!result.verified) {
     throw new ProcessTreeTerminationError(pid,
-      `${result.reason || 'process-tree shutdown was not verified'}; helper=${powershell}; taskkill=${result.primaryExecutable}; remaining=${JSON.stringify(result.remaining || [])}`);
+      `${result.reason || 'process-tree shutdown was not verified'}; helper=${powershell}; taskkill=${result.primaryExecutable}; remaining=${JSON.stringify(result.remaining || [])}`,
+      result.diagnostic);
   }
   return {
     fallbackUsed: result.fallbackUsed,

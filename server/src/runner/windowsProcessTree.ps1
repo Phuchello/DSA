@@ -35,6 +35,12 @@ public static class FlowLabProcessTreeNative {
     private const uint WAIT_TIMEOUT = 0x102;
     private const int ERROR_NO_MORE_FILES = 18;
 
+    // Read by the PowerShell catch block only to explain the test-only injected failure.
+    public static bool TestFaultInjectionAttempted;
+    public static bool TestFaultInjectionReached;
+    public static int TestInjectedErrorCode;
+    public static int TestSnapshotErrorCode;
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct PROCESSENTRY32 {
         public uint dwSize;
@@ -58,7 +64,7 @@ public static class FlowLabProcessTreeNative {
     private static extern bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY32 entry);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32 entry);
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "SetLastError", ExactSpelling = true, SetLastError = true)]
     private static extern void SetLastErrorNative(uint errorCode);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
@@ -78,13 +84,22 @@ public static class FlowLabProcessTreeNative {
                 || (int.TryParse(injectedFailure, out injectedRootPid) && injectedRootPid == rootPid))
             && entry.th32ProcessID == (uint)rootPid) {
             // Test seam: model Process32NextW returning FALSE with a non-EOF last-error.
+            // Record before and after the P/Invoke so binding failures cannot masquerade
+            // as a successful fault injection.
+            TestFaultInjectionAttempted = true;
             SetLastErrorNative(5);
+            TestInjectedErrorCode = Marshal.GetLastWin32Error();
+            TestFaultInjectionReached = true;
             return false;
         }
         return Process32NextW(snapshot, ref entry);
     }
 
     public static FlowLabProcessEntry[] Snapshot(int rootPid) {
+        TestFaultInjectionAttempted = false;
+        TestFaultInjectionReached = false;
+        TestInjectedErrorCode = 0;
+        TestSnapshotErrorCode = 0;
         IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snapshot == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateToolhelp32Snapshot failed");
         var entries = new List<FlowLabProcessEntry>();
@@ -97,8 +112,15 @@ public static class FlowLabProcessTreeNative {
                 entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
                 if (Process32NextForSnapshot(snapshot, ref entry, rootPid)) continue;
                 int error = Marshal.GetLastWin32Error();
+                if (TestFaultInjectionReached) TestSnapshotErrorCode = error;
                 if (error == ERROR_NO_MORE_FILES) break;
-                throw new Win32Exception(error, "Process32Next failed during process snapshot");
+                var failure = new Win32Exception(error, "Process32Next failed during process snapshot");
+                failure.Data["FlowLabFailurePhase"] = "snapshot-enumeration";
+                failure.Data["FlowLabTestFaultInjectionAttempted"] = TestFaultInjectionAttempted;
+                failure.Data["FlowLabTestFaultInjectionReached"] = TestFaultInjectionReached;
+                failure.Data["FlowLabTestInjectedErrorCode"] = TestInjectedErrorCode;
+                failure.Data["FlowLabTestSnapshotErrorCode"] = TestSnapshotErrorCode;
+                throw failure;
             }
         } finally { CloseHandle(snapshot); }
         return entries.ToArray();
@@ -316,15 +338,61 @@ public static class FlowLabProcessTreeNative {
     [Console]::Out.WriteLine((ConvertTo-Json -InputObject $output -Compress -Depth 4))
     if ($verified) { exit 0 } else { exit 3 }
 } catch {
+    $caughtException = $_.Exception
+    $exceptionTypes = @()
+    $exceptionMessages = @()
+    $nativeErrorCode = $null
+    $failurePhase = $null
+    $currentException = $caughtException
+    $depth = 0
+    while ($null -ne $currentException -and $depth -lt 12) {
+        $exceptionTypes += $currentException.GetType().FullName
+        $exceptionMessages += $currentException.Message
+        if ($null -eq $nativeErrorCode -and $currentException -is [System.ComponentModel.Win32Exception]) {
+            $nativeErrorCode = $currentException.NativeErrorCode
+        }
+        if ($null -eq $failurePhase -and $null -ne $currentException.Data) {
+            try {
+                if ($currentException.Data.Contains('FlowLabFailurePhase')) {
+                    $failurePhase = [string]$currentException.Data['FlowLabFailurePhase']
+                }
+            } catch { }
+        }
+        $currentException = $currentException.InnerException
+        $depth++
+    }
+
+    $testFaultInjectionAttempted = $false
+    $testFaultInjectionReached = $false
+    $testInjectedErrorCode = 0
+    $testSnapshotErrorCode = 0
+    try {
+        $testFaultInjectionAttempted = [bool][FlowLabProcessTreeNative]::TestFaultInjectionAttempted
+        $testFaultInjectionReached = [bool][FlowLabProcessTreeNative]::TestFaultInjectionReached
+        $testInjectedErrorCode = [int][FlowLabProcessTreeNative]::TestInjectedErrorCode
+        $testSnapshotErrorCode = [int][FlowLabProcessTreeNative]::TestSnapshotErrorCode
+    } catch { }
+
     $failure = [pscustomobject]@{
         verified = $false
         fallbackUsed = $fallbackUsed
         primaryError = $primaryError
         primaryExecutable = $TaskkillExecutable
-        reason = $_.Exception.ToString()
+        reason = $caughtException.ToString()
+        diagnostic = [pscustomobject]@{
+            failurePhase = $failurePhase
+            failureType = $caughtException.GetType().FullName
+            nativeErrorCode = $nativeErrorCode
+            testFaultInjectionAttempted = $testFaultInjectionAttempted
+            testFaultInjectionReached = $testFaultInjectionReached
+            testInjectedErrorCode = $testInjectedErrorCode
+            testSnapshotErrorCode = $testSnapshotErrorCode
+            exceptionTypes = @($exceptionTypes)
+            exceptionMessages = @($exceptionMessages)
+        }
         remaining = @()
     }
-    [Console]::Out.WriteLine((ConvertTo-Json -InputObject $failure -Compress -Depth 4))
+    [Console]::Out.WriteLine((ConvertTo-Json -InputObject $failure -Compress -Depth 6))
     exit 4
 }
 

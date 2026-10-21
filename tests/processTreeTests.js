@@ -176,23 +176,71 @@ async function runProcessTreeTests() {
       ], { cwd: tempDir, env }, 1800);
       let parent;
       let child;
+      let faultInjectionChecks = 0;
+      const checkFaultInjection = (condition, message) => {
+        assert.ok(condition, message);
+        faultInjectionChecks++;
+      };
+      const equalFaultInjection = (actual, expected, message) => {
+        assert.strictEqual(actual, expected, message);
+        faultInjectionChecks++;
+      };
       try {
         parent = await waitForJson(files.pid, 1200);
         assert.ok(parent.parent > 0, 'Late-child fixture root must publish its PID');
         let terminationError;
         if (injectNextError) {
+          const injectionStartedAt = Date.now();
           await assert.rejects(command, error => {
             terminationError = error;
             return error?.processTreeTerminationVerified === false;
           }, 'An injected non-EOF Process32NextW result must fail closed as unverified termination');
-          assert.ok(!fs.existsSync(files.primaryMarker),
+          faultInjectionChecks++;
+
+          const diagnostic = terminationError.windowsTreeDiagnostic;
+          equalFaultInjection(terminationError.processTreeTerminationVerified, false,
+            'The process-tree failure must remain explicitly unverified');
+          checkFaultInjection(Boolean(diagnostic),
+            'The helper must return structured diagnostics for the failed snapshot');
+          equalFaultInjection(diagnostic?.failurePhase, 'snapshot-enumeration',
+            'Failure phase must identify initial process snapshot enumeration');
+          equalFaultInjection(diagnostic?.testFaultInjectionAttempted, true,
+            'The deterministic Process32NextW error-injection branch must be attempted');
+          equalFaultInjection(diagnostic?.testFaultInjectionReached, true,
+            'The SetLastError P/Invoke must return and reach the simulated FALSE result');
+          equalFaultInjection(diagnostic?.testInjectedErrorCode, 5,
+            'SetLastError must propagate ERROR_ACCESS_DENIED (5) through P/Invoke');
+          equalFaultInjection(diagnostic?.testSnapshotErrorCode, 5,
+            'Snapshot enumeration must observe ERROR_ACCESS_DENIED (5)');
+          equalFaultInjection(diagnostic?.nativeErrorCode, 5,
+            'The raised Win32Exception must preserve NativeErrorCode 5');
+          checkFaultInjection(diagnostic?.exceptionTypes?.includes('System.ComponentModel.Win32Exception'),
+            'The exception chain must contain the expected Win32Exception');
+          checkFaultInjection(!diagnostic?.exceptionTypes?.some(type =>
+            /EntryPointNotFoundException|DllNotFoundException/.test(type)),
+            'The exception chain must not contain a P/Invoke binding or DLL-loading failure');
+          const expectedPowerShellExceptionTypes = new Set([
+            'System.Management.Automation.MethodInvocationException',
+            'System.Management.Automation.RuntimeException',
+            'System.ComponentModel.Win32Exception',
+          ]);
+          checkFaultInjection(Boolean(diagnostic?.exceptionTypes?.length)
+            && diagnostic.exceptionTypes.every(type => expectedPowerShellExceptionTypes.has(type)),
+            'The exception chain may contain only known PowerShell wrappers around Win32Exception');
+          checkFaultInjection(diagnostic?.exceptionMessages?.some(message =>
+            /Process32Next failed during process snapshot/.test(message)),
+            'The inner failure text must identify snapshot enumeration');
+          checkFaultInjection(/Process32Next failed during process snapshot/.test(terminationError.message),
+            'The runner rejection must preserve the snapshot-enumeration failure description');
+          checkFaultInjection(!fs.existsSync(files.primaryMarker),
             'Incomplete Toolhelp enumeration must be rejected before invoking primary termination');
-          assert.ok(!fs.existsSync(files.ready),
+          checkFaultInjection(!fs.existsSync(files.ready),
             'The root must not spawn a descendant after an incomplete initial snapshot');
-          assert.ok(!fs.existsSync(files.snapshotComplete),
+          checkFaultInjection(!fs.existsSync(files.snapshotComplete),
             'The injected enumeration error must occur before the primary helper marker');
-          assert.strictEqual(terminationError.processTreeTerminationVerified, false);
-          console.log('✅ Windows Process32NextW injected error: incomplete snapshot surfaced as unverified before taskkill');
+          checkFaultInjection(Date.now() - injectionStartedAt < 15000,
+            'The injected helper failure and execution Promise must settle within the existing hard bound');
+          console.log(`✅ Windows Process32NextW fault injection: ${faultInjectionChecks}/19 checks PASS; phase=${diagnostic.failurePhase}, nativeErrorCode=${diagnostic.nativeErrorCode}, Win32Exception confirmed, no P/Invoke binding error`);
           return;
         }
 
@@ -249,7 +297,15 @@ async function runProcessTreeTests() {
         for (const pid of cleanupPids) {
           try { process.kill(pid, 'SIGKILL'); } catch { /* The fixture may already have exited. */ }
         }
-        await waitForProcessesToExit([...cleanupPids], 2000);
+        const cleanupConfirmed = cleanupPids.size > 0
+          && await waitForProcessesToExit([...cleanupPids], 2000);
+        if (injectNextError) {
+          checkFaultInjection(cleanupConfirmed,
+            'The injected snapshot-failure fixture root must be gone after explicit cleanup');
+          assert.strictEqual(faultInjectionChecks, 19,
+            'All 19 focused Process32NextW fault-injection assertions must execute');
+          console.log(`✅ Windows Process32NextW fixture cleanup: ${cleanupConfirmed ? 'confirmed' : 'FAILED'}; ${faultInjectionChecks}/19 checks PASS`);
+        }
       }
     }
 

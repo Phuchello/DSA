@@ -2,7 +2,7 @@
 
 Ngày: 21/10/2026  
 Repository: [Phuchello/DSA](https://github.com/Phuchello/DSA)  
-PR review: [#1](https://github.com/Phuchello/DSA/pull/1), đang chờ xác minh docs-head và human review; không có merge authorization.  
+PR review: [#1](https://github.com/Phuchello/DSA/pull/1), đã xác minh Linux/Windows/Chrome trên docs-head; PR vẫn mở, chưa merge và chờ human review; không có merge authorization.  
 Branch: dev/flowlab-p0  
 Code candidate đã kiểm thử: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898)  
 CI matrix: [run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) — Linux job 119182225517 và Windows/native/Chrome job 119182611866 PASS.  

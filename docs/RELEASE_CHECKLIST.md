@@ -1,6 +1,6 @@
 # Checklist phát hành v0.1.0-p0
 
-Trạng thái: quality gates kỹ thuật PASS trên code candidate; PR #1 chờ cập nhật hồ sơ/review replies trước khi mở human review. Chưa merge/tag/publish/deploy.  
+Trạng thái: quality gates kỹ thuật PASS; PR #1 chưa merge và chờ human review. Đây không phải phê duyệt merge/tag/publish/deploy.  
 Code candidate: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898).  
 CI matrix: [PR run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) — Linux job 119182225517 và Windows/native/Chrome job 119182611866 PASS.  
 Version: package root/client/server 0.1.0-p0; tag đề xuất v0.1.0-p0.

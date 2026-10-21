@@ -33,6 +33,7 @@ public static class FlowLabProcessTreeNative {
     private const uint SYNCHRONIZE = 0x00100000;
     private const uint WAIT_OBJECT_0 = 0;
     private const uint WAIT_TIMEOUT = 0x102;
+    private const int ERROR_NO_MORE_FILES = 18;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct PROCESSENTRY32 {
@@ -71,9 +72,11 @@ public static class FlowLabProcessTreeNative {
     private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
 
     private static bool Process32NextForSnapshot(IntPtr snapshot, ref PROCESSENTRY32 entry, int rootPid) {
+        string injectedFailure = Environment.GetEnvironmentVariable("FLOWLAB_TEST_PROCESS32NEXT_FAIL_AFTER_ROOT");
         int injectedRootPid;
-        if (int.TryParse(Environment.GetEnvironmentVariable("FLOWLAB_TEST_PROCESS32NEXT_FAIL_AFTER_ROOT"), out injectedRootPid)
-            && injectedRootPid == rootPid && entry.th32ProcessID == (uint)rootPid) {
+        if ((injectedFailure == "1"
+                || (int.TryParse(injectedFailure, out injectedRootPid) && injectedRootPid == rootPid))
+            && entry.th32ProcessID == (uint)rootPid) {
             // Test seam: model Process32NextW returning FALSE with a non-EOF last-error.
             SetLastErrorNative(5);
             return false;
@@ -89,10 +92,14 @@ public static class FlowLabProcessTreeNative {
             var entry = new PROCESSENTRY32();
             entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
             if (!Process32FirstW(snapshot, ref entry)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Process32First failed");
-            do {
+            while (true) {
                 entries.Add(new FlowLabProcessEntry { Pid = (int)entry.th32ProcessID, ParentPid = (int)entry.th32ParentProcessID });
                 entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
-            } while (Process32NextForSnapshot(snapshot, ref entry, rootPid));
+                if (Process32NextForSnapshot(snapshot, ref entry, rootPid)) continue;
+                int error = Marshal.GetLastWin32Error();
+                if (error == ERROR_NO_MORE_FILES) break;
+                throw new Win32Exception(error, "Process32Next failed during process snapshot");
+            }
         } finally { CloseHandle(snapshot); }
         return entries.ToArray();
     }
@@ -179,27 +186,40 @@ public static class FlowLabProcessTreeNative {
             if ($null -eq $rootCreation) { throw "Could not capture the creation identity for root PID $RootPid" }
             $captured[[string]$RootPid] = [long]$rootCreation
         }
+        # Preserve historical ancestor PIDs even after exit so a late child
+        # remains visible. Historical ancestry is uncertain after exit/PID reuse:
+        # such candidates are reported but never terminated by guessed identity.
         $known = @{}
         $tree = New-Object 'System.Collections.Generic.List[object]'
         foreach ($key in @($captured.Keys)) {
             $creation = [long]$captured[$key]
             $matchingEntry = @($snapshot | Where-Object { $_.Pid -eq [int]$key } | Select-Object -First 1)
-            if ($matchingEntry.Count -gt 0 -and [FlowLabProcessTreeNative]::IsSameProcess([int]$key, $creation)) {
-                $known[[string]$key] = $true
-            }
+            $sameProcess = $matchingEntry.Count -gt 0 -and [FlowLabProcessTreeNative]::IsSameProcess([int]$key, $creation)
+            $known[[string]$key] = [pscustomobject]@{ Confirmed = $sameProcess; Creation = $creation }
         }
         $changed = $true
         while ($changed) {
             $changed = $false
             foreach ($entry in $snapshot) {
                 $pidKey = [string]$entry.Pid
-                if (-not $known.ContainsKey([string]$entry.ParentPid) -or $known.ContainsKey($pidKey)) { continue }
-                $known[$pidKey] = $true
+                $parentKey = [string]$entry.ParentPid
+                if (-not $known.ContainsKey($parentKey) -or $known.ContainsKey($pidKey)) { continue }
+                $parentConfirmed = [bool]$known[$parentKey].Confirmed
                 $creation = [FlowLabProcessTreeNative]::Creation($entry.Pid)
-                if ($null -ne $creation) {
-                    $item = [pscustomobject]@{ Pid = $entry.Pid; ParentPid = $entry.ParentPid; Creation = [long]$creation }
-                    $tree.Add($item)
+                $confirmed = $parentConfirmed -and $null -ne $creation
+                $item = [pscustomobject]@{
+                    Pid = $entry.Pid
+                    ParentPid = $entry.ParentPid
+                    Creation = if ($null -ne $creation) { [long]$creation } else { $null }
+                    Confirmed = $confirmed
+                }
+                $tree.Add($item)
+                if ($null -ne $creation -and $parentConfirmed) {
                     $captured[$pidKey] = [long]$creation
+                }
+                $known[$pidKey] = [pscustomobject]@{
+                    Confirmed = $confirmed
+                    Creation = if ($null -ne $creation) { [long]$creation } else { $null }
                 }
                 $changed = $true
             }
@@ -250,6 +270,11 @@ public static class FlowLabProcessTreeNative {
                 $liveCaptured.Add([pscustomobject]@{ Pid = [int]$key; Creation = $creation })
             }
         }
+        $uncertainDescendants = @($currentTree | Where-Object { -not $_.Confirmed })
+        if ($uncertainDescendants.Count -gt 0) {
+            $uncertainIds = ($uncertainDescendants | ForEach-Object { '{0}@{1}' -f $_.Pid, $_.Creation }) -join ','
+            $lastReason = "possible descendants remain but their exited/reused ancestor identity cannot be verified: $uncertainIds"
+        }
         if ($currentTree.Count -eq 0 -and $liveCaptured.Count -eq 0) {
             $verified = $true
             break
@@ -270,11 +295,11 @@ public static class FlowLabProcessTreeNative {
 
     if (-not $verified) {
         $currentTree = @(Get-CurrentTree)
-        $remaining = @($currentTree | ForEach-Object { [pscustomobject]@{ pid = $_.Pid; creation = [string]$_.Creation } })
+        $remaining = @($currentTree | ForEach-Object { [pscustomobject]@{ pid = $_.Pid; creation = [string]$_.Creation; confirmed = [bool]$_.Confirmed } })
         foreach ($key in @($captured.Keys)) {
             $creation = [long]$captured[$key]
             if ([FlowLabProcessTreeNative]::IsSameProcess([int]$key, $creation) -and -not ($remaining | Where-Object { $_.pid -eq [int]$key })) {
-                $remaining += [pscustomobject]@{ pid = [int]$key; creation = [string]$creation }
+                $remaining += [pscustomobject]@{ pid = [int]$key; creation = [string]$creation; confirmed = $true }
             }
         }
         if (-not $lastReason) { $lastReason = 'captured process identities remained after the 5s shutdown deadline' }

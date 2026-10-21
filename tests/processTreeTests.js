@@ -90,7 +90,7 @@ async function assertHeartbeatStops(heartbeatFile) {
 async function runProcessTreeTests() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowlab-process-tree-'));
   let passed = 0;
-  const total = process.platform === 'win32' ? 11 : 4;
+  const total = process.platform === 'win32' ? 12 : 4;
   try {
     const baseline = await startAndTimeOut(tempDir, process.env);
     const startedAt = Date.now();
@@ -149,6 +149,7 @@ async function runProcessTreeTests() {
         pid: path.join(tempDir, `${label}-parent.json`),
         trigger: path.join(tempDir, `${label}-spawn.trigger`),
         ready: path.join(tempDir, `${label}-child-ready.json`),
+        spawned: path.join(tempDir, `${label}-child-spawned.json`),
         heartbeat: path.join(tempDir, `${label}-child-heartbeat.txt`),
         identity: path.join(tempDir, `${label}-child-identity.txt`),
         allowRootKill: path.join(tempDir, `${label}-allow-root-kill`),
@@ -167,7 +168,7 @@ async function runProcessTreeTests() {
         ...(injectNextError ? { FLOWLAB_TEST_PROCESS32NEXT_FAIL_AFTER_ROOT: '1' } : {}),
       };
       const command = execFileWithTimeout(process.execPath, [
-        fixture, 'late-parent', files.pid, files.trigger, files.ready, files.heartbeat
+        fixture, 'late-parent', files.pid, files.trigger, files.ready, files.heartbeat, files.spawned
       ], { cwd: tempDir, env }, 1800);
       let parent;
       let child;
@@ -199,6 +200,7 @@ async function runProcessTreeTests() {
         assert.strictEqual(Number(identityPidText), child.pid, 'Captured process identity must match the late child PID');
         assert.ok(/^[0-9]+$/.test(identityCreation || ''), 'The late child must have a nonzero OS creation-time identity');
         assert.ok(child.pid > 0 && child.nonce, 'Late descendant must publish its PID and unique identity token');
+        assert.strictEqual(child.parentPid, parent.parent, 'Late child must be created by the target root after the initial snapshot');
 
         const initialHeartbeat = fs.existsSync(files.heartbeat) ? fs.readFileSync(files.heartbeat, 'utf8') : '';
         const heartbeatBeforeTermination = await waitForContentChange(files.heartbeat, initialHeartbeat, 1500);
@@ -215,6 +217,7 @@ async function runProcessTreeTests() {
             || error?.processTreeTerminationVerified === false;
         }, 'Timeout must settle after the root-only primary termination attempt');
 
+        assert.ok(await waitForProcessesToExit([parent.parent], 1500), 'The injected primary tool must terminate only the root process');
         const childStopped = await waitForProcessesToExit([child.pid], 1000);
         let heartbeatAdvancedAfterReturn = false;
         if (!childStopped) {
@@ -234,8 +237,10 @@ async function runProcessTreeTests() {
         console.log(`✅ Windows late child after initial snapshot: pid=${child.pid}, creation=${identityCreation}; ${childStopped ? 'child terminated' : 'unverified cleanup surfaced'}`);
       } finally {
         const cleanupPids = new Set([parent?.parent, child?.pid].filter(pid => Number.isInteger(pid) && pid > 0));
-        if (!child && fs.existsSync(files.ready)) {
-          try { cleanupPids.add(JSON.parse(fs.readFileSync(files.ready, 'utf8')).pid); } catch { /* Partial readiness file. */ }
+        for (const marker of [files.ready, files.spawned]) {
+          if (!child && fs.existsSync(marker)) {
+            try { cleanupPids.add(JSON.parse(fs.readFileSync(marker, 'utf8')).pid); } catch { /* Atomic marker or process not ready yet. */ }
+          }
         }
         for (const pid of cleanupPids) {
           try { process.kill(pid, 'SIGKILL'); } catch { /* The fixture may already have exited. */ }

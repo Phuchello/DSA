@@ -2,11 +2,11 @@
 
 Ngày: 21/10/2026  
 Repository: [Phuchello/DSA](https://github.com/Phuchello/DSA)  
-PR review: [#1](https://github.com/Phuchello/DSA/pull/1), đang Draft trong lúc cập nhật bằng chứng mới nhất.  
+PR review: [#1](https://github.com/Phuchello/DSA/pull/1), đang chờ xác minh docs-head và human review; không có merge authorization.  
 Branch: dev/flowlab-p0  
-Code candidate đã kiểm thử: [6a5430a0e538c0b4a3c54d360844d149ae0166a5](https://github.com/Phuchello/DSA/commit/6a5430a0e538c0b4a3c54d360844d149ae0166a5)  
-CI matrix: [run 39586265810](https://github.com/Phuchello/DSA/actions/runs/39586265810) — Linux job 119175818493 và Windows/native/Chrome job 119176349541 PASS.  
-Browser artifact: [12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851), 253,465 bytes, retention 14 ngày.
+Code candidate đã kiểm thử: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898)  
+CI matrix: [run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) — Linux job 119182225517 và Windows/native/Chrome job 119182611866 PASS.  
+Browser artifact: [12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), 253,530 bytes, retention 14 ngày.
 
 ## Bốn review findings
 1. Process tree: POSIX detached group with bounded TERM/KILL escalation; Windows taskkill /T /F awaits root close. Timeout races settle, workspaces clean up and concurrency recovers. Process-tree regression and MI-18 pass on both OS jobs.

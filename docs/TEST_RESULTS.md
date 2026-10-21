@@ -1,10 +1,10 @@
 # DSA FlowLab — Kết quả kiểm thử review remediation P0
 
 Cập nhật: 21/10/2026  
-Code candidate đã xác minh: [6a5430a0e538c0b4a3c54d360844d149ae0166a5](https://github.com/Phuchello/DSA/commit/6a5430a0e538c0b4a3c54d360844d149ae0166a5) trên dev/flowlab-p0.  
-GitHub Actions: [PR run 39586265810](https://github.com/Phuchello/DSA/actions/runs/39586265810) — Linux/POSIX PASS và Windows + real Chrome PASS trên cùng SHA.  
-Jobs: Linux [119175818493](https://github.com/Phuchello/DSA/actions/runs/39586265810/job/119175818493); Windows [119176349541](https://github.com/Phuchello/DSA/actions/runs/39586265810/job/119176349541).  
-Browser artifact: [12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851), 253,465 bytes; hết hạn 04/11/2026 10:44:49 UTC.
+Code candidate đã xác minh: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898) trên dev/flowlab-p0.  
+GitHub Actions: [PR run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) — Linux/POSIX PASS và Windows + real Chrome PASS trên cùng SHA.  
+Jobs: Linux [119182225517](https://github.com/Phuchello/DSA/actions/runs/39588187541/job/119182225517); Windows [119182611866](https://github.com/Phuchello/DSA/actions/runs/39588187541/job/119182611866).  
+Browser artifact: [12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), 253,530 bytes; hết hạn 04/11/2026 10:59:21 UTC.
 
 ## Kiểm thử tự động — CI
 
@@ -28,6 +28,8 @@ Browser artifact: [12340605851](https://github.com/Phuchello/DSA/actions/runs/39
 
 The 23 Linux Vitest cases are separate from the 23 frontend assertions exercised inside the full native-suite command; they are not added to the 69 unique assertion count.
 
+**Stability rerun on the same code SHA:** push run [39588182196](https://github.com/Phuchello/DSA/actions/runs/39588182196) also passed Linux, Windows native and real Chrome; MI-18 cleanup passed again. Its separate browser evidence is [artifact 12339928690](https://github.com/Phuchello/DSA/actions/runs/39588182196/artifacts/12339928690) (252,857 bytes; expires 04/11/2026 11:00:34 UTC).
+
 ## Real-browser verification — Chrome thật, backend thật
 
 Windows CI launched headless Chrome 155.0.8059.85, the local application and real native g++/GDB backend. The execution API was not mocked. Browser log and artifact confirm:
@@ -45,7 +47,7 @@ Artifact preserves browser/server/Vite logs, structured JSON evidence, response 
 
 | Finding | Fix and regression evidence |
 |---|---|
-| P1 process-tree termination | Detached POSIX process group with bounded termination/escalation; Windows taskkill /T /F waits for root close. Promise settlement, cleanup retries and concurrency recovery are tested. Process-tree regression and MI-18 PASS on both jobs. |
+| P1 process-tree termination | Detached POSIX process group with bounded termination/escalation; Windows taskkill /T /F waits for the root close event after inherited stdio pipes close. The process-tree fixture also gives descendants inherited stdout/stderr. Promise settlement, cleanup retries and concurrency recovery are tested. Process-tree regression and MI-18 PASS on both jobs. |
 | P1 frame-qualified pointer identity | Frame-scoped stable instances preserve recursive p and caller/CreateNode locals. Normalizer regressions and native MI-20 GDB scenario PASS. |
 | P2 abnormal termination | Response/UI preserve termination status, reason and partial trace; crash/truncation differ from success. Frontend tests, MI-17 and MI-21 PASS. |
 | P2 stack versus heap NODE | Allocation evidence gates heap classification; insufficient evidence remains unknown while true allocation/deallocation and aliases are retained. Normalizer and mixed-location native MI-19 PASS. |

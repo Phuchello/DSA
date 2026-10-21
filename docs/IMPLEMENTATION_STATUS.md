@@ -1,8 +1,8 @@
 # DSA FlowLab: Trạng thái audit chất lượng P0
 
-Code candidate: [6a5430a0e538c0b4a3c54d360844d149ae0166a5](https://github.com/Phuchello/DSA/commit/6a5430a0e538c0b4a3c54d360844d149ae0166a5)  
-GitHub Actions: [run 39586265810](https://github.com/Phuchello/DSA/actions/runs/39586265810) — Linux và Windows/Chrome PASS.  
-Browser evidence: [artifact 12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851), 253,465 bytes, retention 14 ngày.
+Code candidate: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898)  
+GitHub Actions: [run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) — Linux và Windows/Chrome PASS.  
+Browser evidence: [artifact 12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), 253,530 bytes, retention 14 ngày.
 
 ## Quality gate
 | Hạng mục | Kết quả | Bằng chứng |
@@ -15,7 +15,7 @@ Browser evidence: [artifact 12340605851](https://github.com/Phuchello/DSA/action
 | Windows native CI | PASS | MinGW/GDB and 69/69 unique assertions. |
 | Golden/stdout/legacy invariants | PASS | TC-GOLDEN-01, TC-STDOUT-CHRONOLOGY, MI-09 and MI-14. |
 | Real Chrome | PASS | Real backend; editor/stdin/stdout, topology, timeline, Vietnamese modes, stale-response guard. |
-| Artifact retention | PASS | [12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851), expires 04/11/2026 10:44:49 UTC. |
+| Artifact retention | PASS | [12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249), expires 04/11/2026 10:59:21 UTC. |
 
 Trace uses before-statement snapshots. Code/stdin snapshots and request IDs associate each result with its request; edits mark previous traces stale. Old responses do not replace the current trace. Buffered stdout remains separate final output. Termination status/reason and partial trace distinguish crash, interruption, truncation and normal completion.
 

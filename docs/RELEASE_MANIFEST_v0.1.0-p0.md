@@ -6,7 +6,7 @@
 |---|---|
 | Repository | `Phuchello/DSA` |
 | Source branch | `dev/flowlab-p0` |
-| Candidate source commit | [`6a5430a0e538c0b4a3c54d360844d149ae0166a5`](https://github.com/Phuchello/DSA/commit/6a5430a0e538c0b4a3c54d360844d149ae0166a5) |
+| Candidate source commit | [`46181df225f664049ed9e179afc968fca111c898`](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898) |
 | Target branch | `main` |
 | Version / tag | `0.1.0-p0` / `v0.1.0-p0` |
 | Release title | `DSA FlowLab v0.1.0-p0 — Web P0` |

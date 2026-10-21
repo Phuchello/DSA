@@ -1,6 +1,6 @@
 # DSA FlowLab v0.1.0-p0 — Web P0
 
-Candidate code: [6a5430a0e538c0b4a3c54d360844d149ae0166a5](https://github.com/Phuchello/DSA/commit/6a5430a0e538c0b4a3c54d360844d149ae0166a5); PR #1 review remediation verified.  
+Candidate code: [46181df225f664049ed9e179afc968fca111c898](https://github.com/Phuchello/DSA/commit/46181df225f664049ed9e179afc968fca111c898); PR #1 review remediation verified.  
 Trạng thái: prerelease đề xuất; chưa tag, publish hoặc deploy.  
 Ngôn ngữ mặc định: tiếng Việt. Package root/client/server: 0.1.0-p0.
 
@@ -20,7 +20,7 @@ DSA FlowLab giúp sinh viên quan sát từng bước một số luồng C++ và
 - Stack NODE không bị coi là heap chỉ vì đọc được; thiếu allocation evidence thì unknown.
 
 ## Kiểm chứng
-[CI run 39586265810](https://github.com/Phuchello/DSA/actions/runs/39586265810) trên candidate: Linux/POSIX PASS; Windows native g++/GDB 69/69 unique assertions PASS; real Chrome 155.0.8059.85 PASS trên backend thật. Artifact logs/JSON/trace/screenshots: [12340605851](https://github.com/Phuchello/DSA/actions/runs/39586265810/artifacts/12340605851). Chi tiết ở [TEST_RESULTS.md](TEST_RESULTS.md).
+[CI run 39588187541](https://github.com/Phuchello/DSA/actions/runs/39588187541) trên candidate: Linux/POSIX PASS; Windows native g++/GDB 69/69 unique assertions PASS; real Chrome 155.0.8059.85 PASS trên backend thật. Artifact logs/JSON/trace/screenshots: [12340063249](https://github.com/Phuchello/DSA/actions/runs/39588187541/artifacts/12340063249). Chi tiết ở [TEST_RESULTS.md](TEST_RESULTS.md).
 
 ## Hạn chế và an toàn
 Visualizer hỗ trợ tập con C++; buffered stdout cuối không được gán ngược cho statement; browser test chỉ headless Chrome trên một golden flow, không bao phủ mọi browser/device/lesson. Native runner chạy với quyền host và không phải sandbox. Chỉ chạy code tin cậy local; không public/multi-tenant.

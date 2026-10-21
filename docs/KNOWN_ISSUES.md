@@ -1,13 +1,13 @@
 # DSA FlowLab — Giới hạn đã biết
 
-Code/regression candidate đã xác minh: [029520f35ed71b3b93cf2ed0f67aaadf477a15b1](https://github.com/Phuchello/DSA/commit/029520f35ed71b3b93cf2ed0f67aaadf477a15b1). PR CI [39617710282](https://github.com/Phuchello/DSA/actions/runs/39617710282) PASS trên đúng SHA; browser evidence [artifact 12353941958](https://github.com/Phuchello/DSA/actions/runs/39617710282/artifacts/12353941958), giữ đến 04/11/2026 14:38:34 UTC.
+Code/regression candidate đã xác minh: [75cac8f64442c6230a4dc90624ef5585e8779273](https://github.com/Phuchello/DSA/commit/75cac8f64442c6230a4dc90624ef5585e8779273). PR CI [39620598658](https://github.com/Phuchello/DSA/actions/runs/39620598658) PASS trên đúng SHA; browser evidence [artifact 12355660470](https://github.com/Phuchello/DSA/actions/runs/39620598658/artifacts/12355660470), giữ đến 04/11/2026 14:57:09 UTC.
 
 ## Process ownership trên Windows
 
 - Toolhelp snapshot + process creation-time identity phát hiện race đã tái hiện. Khi root đã thoát, late descendant có thể được nhận diện qua PID tổ tiên lịch sử nhưng ancestry được coi là không chắc chắn; runner báo cleanup unverified và không kill theo PID phỏng đoán để tránh giết process không liên quan sau PID reuse.
 - Snapshot polling không phải ownership boundary nguyên tử. Descendant có thể được tạo/quan sát ngay sau lần snapshot cuối; helper không thể bảo đảm không có orphan trong mọi interleaving. Job Object với JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE chưa được thêm vì launcher hiện chưa tạo process suspended rồi assign atomically trước khi code có thể spawn child.
-- Khi shutdown unverified, [cppRunner.ts](https://github.com/Phuchello/DSA/blob/029520f35ed71b3b93cf2ed0f67aaadf477a15b1/server/src/runner/cppRunner.ts#L480-L481) giữ execution slot và temp workspace để tránh xóa tài nguyên/process đang dùng. Server có thể cần operator restart; trước khi dọn workspace thủ công phải xác minh child đã dừng.
-- Có một Windows PR attempt trung gian vượt phép đo 15 giây của cold process-tree setup; push run cùng SHA và latest PR run PASS, assertion vẫn được giữ nguyên. Xem [run 39617257621](https://github.com/Phuchello/DSA/actions/runs/39617257621), [run 39617249991](https://github.com/Phuchello/DSA/actions/runs/39617249991}) và latest [run 39617710282](https://github.com/Phuchello/DSA/actions/runs/39617710282}). Kết quả mới nhất PASS nhưng cold-start timing là điểm cần theo dõi trong review.
+- Khi shutdown unverified, [cppRunner.ts](https://github.com/Phuchello/DSA/blob/75cac8f64442c6230a4dc90624ef5585e8779273/server/src/runner/cppRunner.ts#L480-L481) giữ execution slot và temp workspace để tránh xóa tài nguyên/process đang dùng. Server có thể cần operator restart; trước khi dọn workspace thủ công phải xác minh child đã dừng.
+- Các PR attempt trung gian [39617257621](https://github.com/Phuchello/DSA/actions/runs/39617257621) từng vượt phép đo 15 giây khi helper compile lạnh. Fix hiện tại prewarm verifier trước khi server bind và trước phép đo; assertion 15 giây không bị nới. PR run [39620598658](https://github.com/Phuchello/DSA/actions/runs/39620598658) và push run [39620589502](https://github.com/Phuchello/DSA/actions/runs/39620589502) đều PASS trên code SHA 75cac8f64442c6230a4dc90624ef5585e8779273. Nếu prewarm khởi động thất bại, server cảnh báo và cleanup vẫn fail-closed.
 
 ## An toàn thực thi
 

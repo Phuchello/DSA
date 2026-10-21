@@ -90,7 +90,7 @@ async function assertHeartbeatStops(heartbeatFile) {
 async function runProcessTreeTests() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowlab-process-tree-'));
   let passed = 0;
-  const total = process.platform === 'win32' ? 12 : 4;
+  const total = process.platform === 'win32' ? 11 : 4;
   try {
     const baseline = await startAndTimeOut(tempDir, process.env);
     const startedAt = Date.now();

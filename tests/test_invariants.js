@@ -790,7 +790,7 @@ int main() {
       if (oldMaxSteps === undefined) delete process.env.FLOWLAB_MAX_STEPS;
       else process.env.FLOWLAB_MAX_STEPS = oldMaxSteps;
       const recovered = await runCppCode('#include <iostream>\\nint main() { std::cout << 9; return 0; }', '');
-      assert.strictEqual(recovered.success, true, 'A new request must run after timed-out slots are released');
+      assert.strictEqual(recovered.success, true, `A new request must run after timed-out slots are released: ${recovered.buildOutput || recovered.terminationReason || 'no runner diagnostic'}`);
       assert.strictEqual(recovered.finalStdout.trim(), '9');
     } finally {
       if (oldTimeout === undefined) delete process.env.FLOWLAB_GDB_TIMEOUT_MS;

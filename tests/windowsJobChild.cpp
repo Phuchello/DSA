@@ -94,7 +94,7 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
     mutable_command.push_back(L'\0');
 
     STARTUPINFOEXW startup = {};
-    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.cb = sizeof(STARTUPINFOW);
     PROCESS_INFORMATION process = {};
     DWORD flags = CREATE_NO_WINDOW;
     BOOL inherit_handles = FALSE;
@@ -107,6 +107,7 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
         HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
         if (!input || !output || !error || input == INVALID_HANDLE_VALUE || output == INVALID_HANDLE_VALUE || error == INVALID_HANDLE_VALUE) return false;
         inherited = { input, output, error };
+        startup.StartupInfo.cb = sizeof(startup);
         SIZE_T bytes = 0;
         InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
         if (!bytes) return false;

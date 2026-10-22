@@ -59,13 +59,14 @@ Các lượt sau là bằng chứng cho những regression/harness defects đã 
 
 ### Real-browser verification
 
-Hai Windows CI jobs dùng Chrome thật `155.0.8059.85` cùng backend C++/GDB thật, không mock `/api/run`. Cả hai PASS:
+Cả PR và push Windows jobs chạy Chrome thật `155.0.8059.85` cùng backend C++/GDB thật, không mock `/api/run`. Hai smoke test đều PASS:
 
-- PR log ghi nhận paste/edit C++, stdin `3\n3 0 8\n3`, stdout `0 8`, timeline `0→1→0`, topology với `L.pHead`, `L.pTail`, `k`, `L`, `p`, Beginner/Advanced và UI tiếng Việt.
-- Khi stdin cũ `1\n7\n3` đang pending rồi đổi thành `1\n8\n3`, trace vẫn stale; response thật stdout `7` bị bỏ qua. Rerun với input hiện tại trả stdout `8` và xóa stale warning.
+- Paste/edit C++ trong CodeMirror; đổi stdin; chương trình thật trả stdout `0 8`; timeline tiến/lùi `0→1→0`; linked-list topology và pointer identities `L.pHead`, `L.pTail`, `k`, `L`, `p`.
+- Chuyển Beginner/Advanced rồi trở lại Vietnamese Beginner; UI mặc định tiếng Việt.
+- Khi request thật với stdin cũ `1\n7\n3` đang pending rồi đổi sang `1\n8\n3`, trace giữ stale warning và stdout cũ `7` không được trình bày thành trace hiện hành. Rerun với input hiện tại trả stdout `8`.
 - Browser console không có exception/error.
-- PR artifact [12402437554](https://github.com/Phuchello/DSA/actions/runs/39725121832/artifacts/12402437554), 255,207 bytes, SHA-256 `175eec32bd788c502398f90e0622e097a5d46abfed70a8d91026c5b6404c61db`.
-- Push artifact [12402987783](https://github.com/Phuchello/DSA/actions/runs/39725116557/artifacts/12402987783), 255,485 bytes, SHA-256 `af14e7df04b6649c0f98c6a0332b74bf04714e46102e66bc049e9c8679065049`.
+- PR artifact [12404544012](https://github.com/Phuchello/DSA/actions/runs/39731178032/artifacts/12404544012), 255,577 bytes, SHA-256 `8248eff29b9c9ac93afdb0147d23aa5ec3fad2163f91d6ccb8b5f6bd58b73a89`.
+- Push artifact [12404743352](https://github.com/Phuchello/DSA/actions/runs/39731173170/artifacts/12404743352), 255,754 bytes, SHA-256 `bf70cea4e6d047f88b918cbf0a02124eb97f904d793a6aa37d8061f16a350098`. Cả hai artifact giữ browser logs, traces và screenshots; hết hạn 2026-11-05.
 
 Một lần chạy Chrome từ desktop developer không mở được DevTools endpoint vì executable chuyển sang browser session hiện có; lần đó được tính là FAIL local, không phải browser PASS. Hai hosted real-Chrome runs nêu trên đã chạy đầy đủ và là bằng chứng chấp nhận.
 

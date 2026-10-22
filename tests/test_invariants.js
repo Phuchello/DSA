@@ -758,45 +758,52 @@ int main() {
     const oldMaxSteps = process.env.FLOWLAB_MAX_STEPS;
     const tempRoot = path.join(process.env.USERPROFILE || process.env.HOME || os.homedir(), '.dsa_flowlab_tmp');
     fs.mkdirSync(tempRoot, { recursive: true });
-    const before = new Set(fs.readdirSync(tempRoot));
-    process.env.FLOWLAB_GDB_TIMEOUT_MS = '1500';
-    process.env.FLOWLAB_MAX_STEPS = '1000000000';
+    const configuredRounds = Number.parseInt(process.env.FLOWLAB_GDB_TIMEOUT_STRESS_ROUNDS || (process.platform === 'win32' ? '2' : '1'), 10);
+    assert.ok(Number.isInteger(configuredRounds) && configuredRounds >= 1 && configuredRounds <= 5,
+      'FLOWLAB_GDB_TIMEOUT_STRESS_ROUNDS must be between one and five');
     try {
       const loopingCode = `int main() {
   volatile unsigned long counter = 0;
   while (true) { ++counter; }
   return 0;
 }`;
-      const timeoutStartedAt = Date.now();
-      const activeRuns = Array.from({ length: 8 }, () => runCppCode(loopingCode, ''));
-      const saturated = await runCppCode('#include <iostream>\nint main() { return 0; }', '');
-      assert.strictEqual(saturated.success, false, 'The ninth concurrent request must be rejected at the configured limit');
-      assert.ok(saturated.buildOutput.includes('đang bận'), 'Concurrency rejection must remain explicit');
+      for (let round = 1; round <= configuredRounds; round++) {
+        const before = new Set(fs.readdirSync(tempRoot));
+        process.env.FLOWLAB_GDB_TIMEOUT_MS = '1500';
+        process.env.FLOWLAB_MAX_STEPS = '1000000000';
+        const timeoutStartedAt = Date.now();
+        const activeRuns = Array.from({ length: 8 }, () => runCppCode(loopingCode, ''));
+        const saturated = await runCppCode('#include <iostream>\nint main() { return 0; }', '');
+        assert.strictEqual(saturated.success, false, 'The ninth concurrent request must be rejected at the configured limit');
+        assert.ok(saturated.buildOutput.includes('đang bận'), 'Concurrency rejection must remain explicit');
 
-      const outcomes = await Promise.all(activeRuns);
-      assert.ok(Date.now() - timeoutStartedAt < 20000, 'Timeout tree termination and all eight promises must settle within a bounded interval');
-      assert.ok(outcomes.every(result => result.success === false), 'Every timed-out GDB run must settle as a failure');
-      assert.ok(outcomes.every(result => result.terminationStatus === 'timeout'),
-        `Each killed GDB process tree must report timeout; outcomes=${JSON.stringify(outcomes.map(result => ({
-          success: result.success,
-          terminationStatus: result.terminationStatus,
-          terminationReason: result.terminationReason,
-          buildOutput: result.buildOutput
-        })))}`);
-      assert.ok(outcomes.every(result => result.trace.length === 0), 'A killed tracer must not fabricate a partial trace');
-      const after = new Set(fs.readdirSync(tempRoot));
-      assert.deepStrictEqual([...after].filter(name => !before.has(name)), [],
-        'Every timed-out execution must remove its temporary workspace');
+        const outcomes = await Promise.all(activeRuns);
+        assert.ok(Date.now() - timeoutStartedAt < 20000,
+          `GDB timeout batch ${round}/${configuredRounds} must settle eight owned process trees within the existing bounded interval`);
+        assert.ok(outcomes.every(result => result.success === false), 'Every timed-out GDB run must settle as a failure');
+        assert.ok(outcomes.every(result => result.terminationStatus === 'timeout'),
+          `Each killed GDB process tree must report timeout; outcomes=${JSON.stringify(outcomes.map(result => ({
+            success: result.success,
+            terminationStatus: result.terminationStatus,
+            terminationReason: result.terminationReason,
+            buildOutput: result.buildOutput
+          })))}`);
+        assert.ok(outcomes.every(result => result.trace.length === 0), 'A killed tracer must not fabricate a partial trace');
+        const after = new Set(fs.readdirSync(tempRoot));
+        assert.deepStrictEqual([...after].filter(name => !before.has(name)), [],
+          'Every verified timed-out execution must remove its temporary workspace');
+        console.log(`  [MI-18] Real GDB timeout batch ${round}/${configuredRounds}: eight concurrent requests timed out with verified Job Object cleanup.`);
 
-      // Restore the normal debugger budget before the success-path probe so
-      // this assertion measures slot recovery rather than the forced timeout budget.
-      if (oldTimeout === undefined) delete process.env.FLOWLAB_GDB_TIMEOUT_MS;
-      else process.env.FLOWLAB_GDB_TIMEOUT_MS = oldTimeout;
-      if (oldMaxSteps === undefined) delete process.env.FLOWLAB_MAX_STEPS;
-      else process.env.FLOWLAB_MAX_STEPS = oldMaxSteps;
-      const recovered = await runCppCode('#include <iostream>\nint main() { std::cout << 9; return 0; }', '');
-      assert.strictEqual(recovered.success, true, `A new request must run after timed-out slots are released: ${recovered.buildOutput || recovered.terminationReason || 'no runner diagnostic'}`);
-      assert.strictEqual(recovered.finalStdout.trim(), '9');
+        // Restore the normal debugger budget before each success-path probe so
+        // this assertion measures recovery rather than the forced timeout.
+        if (oldTimeout === undefined) delete process.env.FLOWLAB_GDB_TIMEOUT_MS;
+        else process.env.FLOWLAB_GDB_TIMEOUT_MS = oldTimeout;
+        if (oldMaxSteps === undefined) delete process.env.FLOWLAB_MAX_STEPS;
+        else process.env.FLOWLAB_MAX_STEPS = oldMaxSteps;
+        const recovered = await runCppCode('#include <iostream>\nint main() { std::cout << 9; return 0; }', '');
+        assert.strictEqual(recovered.success, true, `A new request must run after timed-out slots are released: ${recovered.buildOutput || recovered.terminationReason || 'no runner diagnostic'}`);
+        assert.strictEqual(recovered.finalStdout.trim(), '9');
+      }
     } finally {
       if (oldTimeout === undefined) delete process.env.FLOWLAB_GDB_TIMEOUT_MS;
       else process.env.FLOWLAB_GDB_TIMEOUT_MS = oldTimeout;

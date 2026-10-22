@@ -5,6 +5,7 @@ const assert = require('assert');
 const { runNormalizerUnitTests } = require('./normalizerUnitTests.js');
 const { runMemoryInvariantTests } = require('./test_invariants.js');
 const { runProcessTreeTests } = require('./processTreeTests.js');
+const { runWindowsJobRunnerTests } = require('./windowsJobRunnerTests.js');
 
 const BASE_GOLDEN_CODE = `#include <iostream>
 using namespace std;
@@ -318,6 +319,10 @@ async function runTests() {
   console.log('='.repeat(70));
   const processTreeSummary = await runProcessTreeTests();
   console.log(`Process-tree assertions: ${processTreeSummary.passed}/${processTreeSummary.total}`);
+  const windowsJobSummary = await runWindowsJobRunnerTests();
+  if (!windowsJobSummary.skipped) {
+    console.log(`Windows Job Object stress assertions: ${windowsJobSummary.passed}/${windowsJobSummary.total}; timeout batches=${windowsJobSummary.rounds}; eight-way timeouts=${windowsJobSummary.timedOutExecutions}`);
+  }
 
   // 1. Ensure backend server is ready
   let serverProcess = null;

@@ -93,7 +93,7 @@ async function runProcessTreeTests() {
   if (process.platform === 'win32') console.log('✅ Windows process-tree verifier warmed before lifecycle timing assertions');
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowlab-process-tree-'));
   let passed = 0;
-  const total = process.platform === 'win32' ? 11 : 4;
+  const total = process.platform === 'win32' ? 13 : 4;
   try {
     const baseline = await startAndTimeOut(tempDir, process.env);
     const startedAt = Date.now();
@@ -147,6 +147,60 @@ async function runProcessTreeTests() {
     await assertHeartbeatStops(fallbackRun.heartbeatFile);
     passed++;
     console.log('✅ Windows failing taskkill: native identity fallback terminated captured tree and heartbeat stopped');
+
+    async function runDelayedVerifierScenario(label, delayEnvironment, markerPath) {
+      const scenarioDirectory = path.join(tempDir, label);
+      fs.mkdirSync(scenarioDirectory);
+      const timingFile = path.join(scenarioDirectory, 'lifecycle-timings.log');
+      const delayedEnv = {
+        ...process.env,
+        ...delayEnvironment,
+        FLOWLAB_TEST_LIFECYCLE_TIMING_FILE: timingFile,
+      };
+      const run = await startAndTimeOut(scenarioDirectory, delayedEnv);
+      const startedAt = Date.now();
+      await assert.rejects(run.command, error => /Quá thời gian thực thi cho phép/.test(error.message),
+        `${label} must still report a verified timeout after the delayed legacy helper completes`);
+      assert.ok(Date.now() - startedAt < 15000, `${label} must respect the existing bounded helper deadline`);
+      await waitForFile(markerPath, 2000);
+      assert.ok(await waitForProcessesToExit([run.pids.parent, run.pids.child], 1500),
+        `${label} must verify the target and descendant are gone after the injected delay`);
+      await assertHeartbeatStops(run.heartbeatFile);
+      const timings = fs.readFileSync(timingFile, 'utf8').trim().split(/\r?\n/)
+        .map(line => line.split('|'))
+        .reduce((result, [phase, time]) => ({ ...result, [phase]: Date.parse(time) }), {});
+      assert.ok(Number.isFinite(timings['helper-start']) && Number.isFinite(timings['helper-start-delay-complete']),
+        `${label} must capture helper startup phase timestamps`);
+      assert.ok(Number.isFinite(timings['initial-snapshot-start']) && Number.isFinite(timings['initial-snapshot-complete']),
+        `${label} must capture native snapshot phase timestamps`);
+      if (label === 'delayed-helper-startup') {
+        assert.ok(timings['helper-start-delay-complete'] - timings['helper-start'] >= 400,
+          'Artificial PowerShell startup delay must be measured in phase timestamps');
+      } else {
+        assert.ok(timings['initial-snapshot-complete'] - timings['initial-snapshot-start'] >= 100,
+          'Artificial Toolhelp snapshot delay must be measured in phase timestamps');
+      }
+      const phaseMs = {
+        helperStartup: timings['helper-start-delay-complete'] - timings['helper-start'],
+        initialSnapshot: timings['initial-snapshot-complete'] - timings['initial-snapshot-start'],
+        primaryKill: timings['primary-kill-complete'] - timings['primary-kill-start'],
+        verification: timings['verification-complete'] - timings['verification-start'],
+      };
+      console.log(`✅ Windows legacy Toolhelp ${label}: elapsed phases=${JSON.stringify(phaseMs)}ms; marker observed; timeout bounded; fixture PIDs and heartbeat stopped.`);
+      passed++;
+    }
+
+    const helperStartMarker = path.join(tempDir, 'helper-start-delay-reached.log');
+    await runDelayedVerifierScenario('delayed-helper-startup', {
+      FLOWLAB_TEST_HELPER_START_DELAY_MS: '450',
+      FLOWLAB_TEST_HELPER_START_DELAY_MARKER: helperStartMarker,
+    }, helperStartMarker);
+
+    const snapshotDelayMarker = path.join(tempDir, 'snapshot-delay-reached.log');
+    await runDelayedVerifierScenario('delayed-snapshot-enumeration', {
+      FLOWLAB_TEST_SNAPSHOT_DELAY_MS: '120',
+      FLOWLAB_TEST_SNAPSHOT_DELAY_MARKER: snapshotDelayMarker,
+    }, snapshotDelayMarker);
     async function runLateChildScenario(label, injectNextError = false) {
       const fixture = path.join(__dirname, 'processTreeChild.js');
       const files = {
@@ -174,6 +228,11 @@ async function runProcessTreeTests() {
       const command = execFileWithTimeout(process.execPath, [
         fixture, 'late-parent', files.pid, files.trigger, files.ready, files.heartbeat, files.spawned
       ], { cwd: tempDir, env }, 1800);
+      // The late-child harness deliberately waits for Toolhelp snapshot
+      // markers before awaiting the timeout result. Attach a rejection handler
+      // immediately so Node cannot treat the expected bounded timeout as an
+      // unhandled rejection during that evidence-gathering interval.
+      void command.catch(() => {});
       let parent;
       let child;
       let faultInjectionChecks = 0;

@@ -121,6 +121,9 @@ jobs:
           npm run build
 
       - name: Run Full Automated Verification Suite
+        env:
+          FLOWLAB_GDB_TIMEOUT_STRESS_ROUNDS: '2'
+          FLOWLAB_WINDOWS_JOB_STRESS_ROUNDS: '2'
         run: npm test
 
       - name: Configure real Chrome and browser evidence directory

@@ -4,8 +4,8 @@
   "description": "Backend API and C++ Execution Runner for DSA FlowLab",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc && node -e \"const fs=require('fs'); fs.copyFileSync('src/runner/tracer.py', 'dist/runner/tracer.py'); fs.copyFileSync('src/runner/windowsProcessTree.ps1', 'dist/runner/windowsProcessTree.ps1');\"",
+    "dev": "node scripts/buildWindowsJobRunner.js --dev && tsx watch src/index.ts",
+    "build": "tsc && node -e \"const fs=require('fs'); fs.copyFileSync('src/runner/tracer.py', 'dist/runner/tracer.py'); fs.copyFileSync('src/runner/windowsProcessTree.ps1', 'dist/runner/windowsProcessTree.ps1');\" && node scripts/buildWindowsJobRunner.js",
     "start": "node dist/index.js"
   },
   "dependencies": {

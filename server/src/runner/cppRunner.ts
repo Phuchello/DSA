@@ -41,11 +41,11 @@ function waitForChildClose(child: ChildProcess | undefined, timeoutMs: number): 
   if (!child || closedChildProcesses.has(child)) return Promise.resolve(true);
   return new Promise((resolve) => {
     let finished = false;
-    let timer: NodeJS.Timeout;
+    let timer: NodeJS.Timeout | null = null;
     const finish = (closed: boolean) => {
       if (finished) return;
       finished = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       child.removeListener('close', onClose);
       resolve(closed);
     };
@@ -69,6 +69,12 @@ type WindowsTreeHelperDiagnostic = {
   testSnapshotErrorCode?: number;
   exceptionTypes?: string[];
   exceptionMessages?: string[];
+  runnerStrategy?: string;
+  helperPhase?: string;
+  activeProcesses?: number;
+  jobRootPid?: number;
+  jobRootCreation?: string;
+  jobProcesses?: Array<{ pid: number; creation: string }>;
 };
 
 class ProcessTreeTerminationError extends Error {
@@ -94,6 +100,23 @@ type WindowsTreeHelperResult = {
   reason?: string;
   diagnostic?: WindowsTreeHelperDiagnostic;
   remaining?: Array<{ pid: number; creation: string }>;
+};
+
+type WindowsJobRunStatus = {
+  phase: string;
+  verified: boolean;
+  timedOut: boolean;
+  exitCode: number;
+  rootPid: number;
+  rootCreation: string;
+  activeProcesses: number;
+  reason: string;
+  processes: Array<{ pid: number; creation: string }>;
+};
+
+type CommandLifecycle = {
+  terminate?: (child: ChildProcess, pid: number) => Promise<ProcessTreeTerminationResult>;
+  onClose?: (code: number | null, signal: NodeJS.Signals | null) => Error | null;
 };
 
 let windowsTreeNativeAssemblyPath: string | null = null;
@@ -158,10 +181,24 @@ function ensureWindowsTreeNativeAssembly(env?: NodeJS.ProcessEnv): Promise<strin
   return windowsTreeNativeAssemblyPromise;
 }
 
-/** Prepare the cached Windows process-tree verifier before an execution can time out. */
+/** Warm the legacy Toolhelp verifier used by focused fault-injection tests. */
 export async function prewarmWindowsProcessTreeVerifier(): Promise<void> {
   if (process.platform !== 'win32') return;
   await ensureWindowsTreeNativeAssembly();
+}
+
+/** Check the production Windows Job Object launcher before serving requests. */
+export async function prewarmWindowsJobRunner(): Promise<void> {
+  if (process.platform !== 'win32') return;
+  ensureWindowsJobRunner();
+}
+
+function ensureWindowsJobRunner(): string {
+  const executable = path.join(__dirname, 'windowsJobRunner.exe');
+  if (!fs.existsSync(executable)) {
+    throw new Error(`Windows Job Object launcher is missing at ${executable}; rebuild the server with the Windows C++ toolchain`);
+  }
+  return executable;
 }
 
 async function terminateWindowsProcessTree(pid: number, rootProcess: ChildProcess | undefined, env?: NodeJS.ProcessEnv): Promise<ProcessTreeTerminationResult> {
@@ -291,12 +328,13 @@ function terminateProcessTree(pid: number, rootProcess?: ChildProcess, env?: Nod
 type StartCommand = () => ChildProcess;
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 
-function runCommandWithTimeout(start: StartCommand, timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<{ stdout: string; stderr: string }> {
+function runCommandWithTimeout(start: StartCommand, timeoutMs: number, env?: NodeJS.ProcessEnv, lifecycle?: CommandLifecycle): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     let child: ChildProcess | null = null;
     let timer: NodeJS.Timeout | null = null;
     let timedOut = false;
     let settled = false;
+    let closing = false;
     let termination: Promise<ProcessTreeTerminationResult> | null = null;
     let capturedStdout = '';
     let capturedStderr = '';
@@ -330,7 +368,11 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number, env?: Nod
     const stopAndFinish = (error: Error, isTimeout = false) => {
       if (settled || termination) return;
       timedOut = isTimeout;
-      termination = child?.pid ? terminateProcessTree(child.pid, child, env) : Promise.resolve({ fallbackUsed: false });
+      termination = child?.pid
+        ? (lifecycle?.terminate
+          ? lifecycle.terminate(child, child.pid)
+          : terminateProcessTree(child.pid, child, env))
+        : Promise.resolve({ fallbackUsed: false });
       void termination.then(
         outcome => {
           (error as any).processTreePrimaryExecutable = outcome.primaryExecutable;
@@ -360,18 +402,32 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number, env?: Nod
       child = start();
       child.stdout?.on('data', (chunk: Buffer | string) => capture('stdout', chunk));
       child.stderr?.on('data', (chunk: Buffer | string) => capture('stderr', chunk));
+      child.stdin?.on('error', () => { /* A close/timeout race may close the supervisor control pipe. */ });
       child.once('error', (error) => {
         if (!termination) finish(error);
       });
       child.once('close', (code, signal) => {
         closedChildProcesses.add(child!);
         if (settled || termination) return;
+        if (lifecycle?.onClose) {
+          closing = true;
+          if (timer) clearTimeout(timer);
+          try {
+            const lifecycleError = lifecycle.onClose(code, signal);
+            if (lifecycleError) finish(lifecycleError);
+            else if (code === 0 && signal === null) finish();
+            else finish(new Error(signal ? 'Command terminated by signal ' + signal : 'Command failed with exit code ' + code));
+          } catch (error: any) {
+            finish(error instanceof Error ? error : new Error(String(error)));
+          }
+          return;
+        }
         if (code === 0 && signal === null) finish();
         else finish(new Error(signal ? 'Command terminated by signal ' + signal : 'Command failed with exit code ' + code));
       });
 
       timer = setTimeout(() => {
-        if (settled || termination) return;
+        if (settled || termination || closing) return;
         stopAndFinish(new Error('Quá thời gian thực thi cho phép (' + timeoutMs / 1000 + 's)'), true);
       }, timeoutMs);
     } catch (error: any) {
@@ -380,16 +436,146 @@ function runCommandWithTimeout(start: StartCommand, timeoutMs: number, env?: Nod
   });
 }
 
+function readWindowsJobStatus(statusPath: string): WindowsJobRunStatus | null {
+  try {
+    const json = fs.readFileSync(statusPath, 'utf8').replace(/^\uFEFF/, '');
+    const status = JSON.parse(json) as WindowsJobRunStatus;
+    return status && typeof status.phase === 'string' && typeof status.verified === 'boolean' ? status : null;
+  } catch {
+    return null;
+  }
+}
+
+function windowsJobDiagnostic(status: WindowsJobRunStatus | null): WindowsTreeHelperDiagnostic | undefined {
+  if (!status) return { runnerStrategy: 'Windows Job Object', helperPhase: 'missing-final-status' };
+  return {
+    runnerStrategy: 'Windows Job Object',
+    helperPhase: status.phase,
+    activeProcesses: status.activeProcesses,
+    jobRootPid: status.rootPid,
+    jobRootCreation: status.rootCreation,
+    jobProcesses: status.processes || []
+  };
+}
+
+function describeWindowsJobStatus(status: WindowsJobRunStatus | null): string {
+  if (!status) return 'final Job Object status was missing or invalid';
+  const members = (status.processes || []).map(item => `${item.pid}@${item.creation}`).join(',');
+  return `phase=${status.phase}; verified=${status.verified}; active=${status.activeProcesses}; root=${status.rootPid}@${status.rootCreation}; members=[${members}]; ${status.reason || 'no helper detail'}`;
+}
+
+function terminateWindowsJobRunner(child: ChildProcess, pid: number, statusPath: string): Promise<ProcessTreeTerminationResult> {
+  const deadlineMs = 6000;
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    let timer: NodeJS.Timeout | null = null;
+    const finish = (error?: Error, status?: WindowsJobRunStatus | null) => {
+      if (finished) return;
+      finished = true;
+      if (timer) clearTimeout(timer);
+      child.removeListener('close', onClose);
+      if (error) reject(error);
+      else resolve({
+        fallbackUsed: false,
+        primaryExecutable: 'Windows Job Object',
+        ...(status?.reason ? { primaryError: status.reason } : {})
+      });
+    };
+    const onClose = () => {
+      const status = readWindowsJobStatus(statusPath);
+      if (!status?.verified) {
+        finish(new ProcessTreeTerminationError(pid,
+          `Windows Job Object supervisor exited without verified ownership cleanup; ${describeWindowsJobStatus(status)}`,
+          windowsJobDiagnostic(status)));
+        return;
+      }
+      finish(undefined, status);
+    };
+
+    child.once('close', onClose);
+    timer = setTimeout(() => {
+      const status = readWindowsJobStatus(statusPath);
+      // Killing the sole supervisor closes its non-inherited Job handle. The
+      // OS then enforces KILL_ON_JOB_CLOSE; without a final active-process
+      // count, the caller must retain its slot and workspace as unverified.
+      try { child.kill(); } catch { /* Preserve the fail-closed result below. */ }
+      finish(new ProcessTreeTerminationError(pid,
+        `Windows Job Object supervisor exceeded its ${deadlineMs}ms shutdown deadline; KILL_ON_JOB_CLOSE was requested; ${describeWindowsJobStatus(status)}`,
+        windowsJobDiagnostic(status)));
+    }, deadlineMs);
+
+    try {
+      if (!child.stdin || child.stdin.destroyed) throw new Error('Windows Job Object supervisor control pipe is unavailable');
+      child.stdin.write('TERMINATE\n');
+    } catch (error: any) {
+      const status = readWindowsJobStatus(statusPath);
+      // Closing the supervisor is the last-resort Job Object owner cleanup.
+      // The result stays unverified because no final active-process count was
+      // returned to this process.
+      try { child.kill(); } catch { /* Preserve fail-closed diagnostics. */ }
+      finish(new ProcessTreeTerminationError(pid,
+        `Could not request bounded Job Object termination: ${error?.message || String(error)}; ${describeWindowsJobStatus(status)}`,
+        windowsJobDiagnostic(status)));
+    }
+  });
+}
+
+function execWindowsJobWithTimeout(
+  file: string,
+  args: string[],
+  options: { cwd: string; env?: NodeJS.ProcessEnv; statusPath?: string },
+  timeoutMs: number
+): Promise<{ stdout: string; stderr: string }> {
+  let jobRunner: string;
+  try { jobRunner = ensureWindowsJobRunner(); }
+  catch (error: any) { return Promise.reject(error); }
+
+  const nonce = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const { statusPath: statusPathOverride, ...spawnOptions } = options;
+  const statusPath = statusPathOverride || path.join(options.cwd, `.flowlab-job-${nonce}.json`);
+  const lifecycle: CommandLifecycle = {
+    terminate: child => terminateWindowsJobRunner(child, child.pid || 0, statusPath),
+    onClose: (code, signal) => {
+      const status = readWindowsJobStatus(statusPath);
+      if (!status?.verified) {
+        return new ProcessTreeTerminationError(status?.rootPid || 0,
+          `Windows Job Object command closed without verified completion; ${describeWindowsJobStatus(status)}; wrapperExit=${code}; signal=${signal}`,
+          windowsJobDiagnostic(status));
+      }
+      if (status.phase === 'launch-failure' || status.phase === 'job-assignment-failed'
+          || status.phase === 'resume-failed' || status.phase === 'identity-capture-failed') {
+        return new Error(`Windows Job Object launch failed; ${describeWindowsJobStatus(status)}`);
+      }
+      if (status.exitCode !== code) {
+        return new Error(`Windows Job Object supervisor exit/status mismatch; ${describeWindowsJobStatus(status)}; wrapperExit=${code}`);
+      }
+      return null;
+    }
+  };
+
+  return runCommandWithTimeout(
+    () => spawn(jobRunner, [statusPath, options.cwd, file, ...args], {
+      ...spawnOptions,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    }),
+    timeoutMs,
+    options.env,
+    lifecycle
+  );
+}
+
 function execWithTimeout(
-  command: string,
+  file: string,
+  args: string[],
   options: { cwd: string; env?: NodeJS.ProcessEnv },
   timeoutMs: number
 ): Promise<{ stdout: string; stderr: string }> {
+  if (process.platform === 'win32') return execWindowsJobWithTimeout(file, args, options, timeoutMs);
   return runCommandWithTimeout(
-    () => spawn(command, {
+    () => spawn(file, args, {
       ...options,
-      shell: true,
-      detached: process.platform !== 'win32',
+      detached: true,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     }),
@@ -415,6 +601,17 @@ export function execFileWithTimeout(
     timeoutMs,
     options.env
   );
+}
+
+/** Windows-only test seam for exercising the production Job Object launcher. */
+export function execFileWithJobTimeout(
+  file: string,
+  args: string[],
+  options: { cwd: string; env?: NodeJS.ProcessEnv; statusPath?: string },
+  timeoutMs: number
+): Promise<{ stdout: string; stderr: string }> {
+  if (process.platform !== 'win32') return execFileWithTimeout(file, args, options, timeoutMs);
+  return execWindowsJobWithTimeout(file, args, options, timeoutMs);
 }
 
 export async function runCppCode(code: string, stdinText: string = ''): Promise<RunResult> {
@@ -493,10 +690,14 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
     // -mconsole is a MinGW/Windows-specific flag that must not be used on Linux.
     // On Linux/macOS we compile to a plain ELF binary.
     const outputBinary = isWin ? 'flowlab_runner.exe' : 'flowlab_runner';
-    const platformFlags = isWin ? '-mconsole' : '';
-    const compileCmd = `g++ -std=c++11 -g3 -O0 ${platformFlags} -fno-omit-frame-pointer -fasynchronous-unwind-tables source.cpp -o ${outputBinary}`.trim().replace(/  +/g, ' ');
+    const compileArgs = [
+      '-std=c++11', '-g3', '-O0',
+      ...(isWin ? ['-mconsole'] : []),
+      '-fno-omit-frame-pointer', '-fasynchronous-unwind-tables',
+      'source.cpp', '-o', outputBinary
+    ];
     try {
-      await execWithTimeout(compileCmd, { cwd: tempDir }, 25000);
+      await execWithTimeout('g++', compileArgs, { cwd: tempDir }, 25000);
     } catch (compileErr: any) {
       if (compileErr?.processTreeTerminationVerified === false) {
         releaseExecutionSlot = false;
@@ -529,14 +730,14 @@ export async function runCppCode(code: string, stdinText: string = ''): Promise<
       FLOWLAB_MAX_STEPS: process.env.FLOWLAB_MAX_STEPS || '1000'
     };
 
-    const gdbCmd = `gdb -batch -q -x tracer.py ${outputBinary}`;
+    const gdbArgs = ['-batch', '-q', '-x', 'tracer.py', outputBinary];
     const configuredGdbTimeout = Number.parseInt(process.env.FLOWLAB_GDB_TIMEOUT_MS || '', 10);
     const gdbTimeoutMs = Number.isFinite(configuredGdbTimeout) && configuredGdbTimeout > 0
       ? Math.min(configuredGdbTimeout, 35000)
       : 35000;
     let gdbExecutionError = '';
     try {
-      await execWithTimeout(gdbCmd, { env, cwd: tempDir }, gdbTimeoutMs);
+      await execWithTimeout('gdb', gdbArgs, { env, cwd: tempDir }, gdbTimeoutMs);
     } catch (gdbErr: any) {
       // Do not parse a partial trace or clean resources if descendant exit is unverified.
       gdbExecutionError = gdbErr?.message || String(gdbErr);

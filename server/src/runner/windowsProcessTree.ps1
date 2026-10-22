@@ -7,6 +7,22 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Write-FlowLabLifecycleTiming([string]$phase) {
+    if (-not $env:FLOWLAB_TEST_LIFECYCLE_TIMING_FILE) { return }
+    try {
+        $line = $phase + '|' + [DateTime]::UtcNow.ToString('o') + [Environment]::NewLine
+        [System.IO.File]::AppendAllText($env:FLOWLAB_TEST_LIFECYCLE_TIMING_FILE, $line)
+    } catch { }
+}
+Write-FlowLabLifecycleTiming 'helper-start'
+$helperStartDelay = 0
+if ([int]::TryParse($env:FLOWLAB_TEST_HELPER_START_DELAY_MS, [ref]$helperStartDelay) -and $helperStartDelay -gt 0) {
+    if ($env:FLOWLAB_TEST_HELPER_START_DELAY_MARKER) {
+        [System.IO.File]::WriteAllText($env:FLOWLAB_TEST_HELPER_START_DELAY_MARKER, [DateTime]::UtcNow.ToString('o'))
+    }
+    Start-Sleep -Milliseconds ([Math]::Min($helperStartDelay, 10000))
+}
+Write-FlowLabLifecycleTiming 'helper-start-delay-complete'
 $primaryError = ''
 $fallbackUsed = $false
 $primarySucceeded = $false
@@ -18,7 +34,9 @@ try {
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 public sealed class FlowLabProcessEntry {
     public int Pid { get; set; }
@@ -100,6 +118,13 @@ public static class FlowLabProcessTreeNative {
         TestFaultInjectionReached = false;
         TestInjectedErrorCode = 0;
         TestSnapshotErrorCode = 0;
+        int delayMilliseconds;
+        string delayText = Environment.GetEnvironmentVariable("FLOWLAB_TEST_SNAPSHOT_DELAY_MS");
+        if (int.TryParse(delayText, out delayMilliseconds) && delayMilliseconds > 0) {
+            Thread.Sleep(Math.Min(delayMilliseconds, 10000));
+            string marker = Environment.GetEnvironmentVariable("FLOWLAB_TEST_SNAPSHOT_DELAY_MARKER");
+            if (!String.IsNullOrEmpty(marker)) File.AppendAllText(marker, DateTime.UtcNow.ToString("o") + Environment.NewLine);
+        }
         IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snapshot == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateToolhelp32Snapshot failed");
         var entries = new List<FlowLabProcessEntry>();
@@ -196,6 +221,7 @@ public static class FlowLabProcessTreeNative {
     # Load raw bytes to avoid .NET treating sandboxed temporary paths as remote
     # LoadFrom locations under Windows App Control / zone policy.
     [void][System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($NativeAssemblyPath))
+    Write-FlowLabLifecycleTiming 'native-assembly-loaded'
 
     function Get-CurrentTree {
         $snapshot = [FlowLabProcessTreeNative]::Snapshot($RootPid)
@@ -249,8 +275,11 @@ public static class FlowLabProcessTreeNative {
         return @($tree.ToArray())
     }
 
+    Write-FlowLabLifecycleTiming 'initial-snapshot-start'
     $initialTree = @(Get-CurrentTree)
+    Write-FlowLabLifecycleTiming 'initial-snapshot-complete'
     $primaryError = ''
+    Write-FlowLabLifecycleTiming 'primary-kill-start'
     try {
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
         $startInfo.FileName = $TaskkillExecutable
@@ -278,11 +307,13 @@ public static class FlowLabProcessTreeNative {
     } catch {
         $primaryError = $_.Exception.Message
     }
+    Write-FlowLabLifecycleTiming 'primary-kill-complete'
 
     $deadline = [DateTime]::UtcNow.AddSeconds(3)
     $verified = $false
     $fallbackUsed = -not $primarySucceeded
     $remaining = @()
+    Write-FlowLabLifecycleTiming 'verification-start'
     do {
         $currentTree = @(Get-CurrentTree)
         $liveCaptured = New-Object 'System.Collections.Generic.List[object]'
@@ -335,9 +366,11 @@ public static class FlowLabProcessTreeNative {
         reason = if ($verified) { '' } else { $lastReason }
         remaining = @($remaining)
     }
+    Write-FlowLabLifecycleTiming 'verification-complete'
     [Console]::Out.WriteLine((ConvertTo-Json -InputObject $output -Compress -Depth 4))
     if ($verified) { exit 0 } else { exit 3 }
 } catch {
+    Write-FlowLabLifecycleTiming 'helper-failure'
     $caughtException = $_.Exception
     $exceptionTypes = @()
     $exceptionMessages = @()

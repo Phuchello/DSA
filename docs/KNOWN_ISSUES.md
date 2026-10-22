@@ -1,10 +1,12 @@
 # DSA FlowLab — Giới hạn đã biết
 
-Cập nhật trạng thái trên source/test SHA [9ecf6cc2facc5ec50e7fc9933740f551a08d473e](https://github.com/Phuchello/DSA/commit/9ecf6cc2facc5ec50e7fc9933740f551a08d473e), PR [#1](https://github.com/Phuchello/DSA/pull/1).
+Cập nhật trạng thái trên source/test SHA [e35ba3e7e004874dec7d6c2e69050ea34cb393c2](https://github.com/Phuchello/DSA/commit/e35ba3e7e004874dec7d6c2e69050ea34cb393c2), PR [#1](https://github.com/Phuchello/DSA/pull/1).
 
 ## Windows process ownership hiện tại
 
-Lỗi MI-18 trước đây được giải quyết bằng Windows Job Object launcher. Hai workflow độc lập chạy đồng thời trên cùng SHA PASS: PR [39725121832](https://github.com/Phuchello/DSA/actions/runs/39725121832) và push [39725116557](https://github.com/Phuchello/DSA/actions/runs/39725116557). Mỗi Windows job ghi nhận process-tree 13/13, Job stress 128/128, hai vòng × tám owned process trees, MI-18 hai vòng × tám GDB timeouts, full suite 74/74, cùng real Chrome smoke PASS. Chi tiết và artifacts trong [TEST_RESULTS.md](TEST_RESULTS.md).
+Lỗi MI-18 trước đây được chuyển từ Toolhelp polling sang Windows Job Object launcher. Trên source/test SHA [e35ba3e7e004874dec7d6c2e69050ea34cb393c2](https://github.com/Phuchello/DSA/commit/e35ba3e7e004874dec7d6c2e69050ea34cb393c2), PR [39731178032](https://github.com/Phuchello/DSA/actions/runs/39731178032) và push [39731173170](https://github.com/Phuchello/DSA/actions/runs/39731173170) đều pass ma trận Linux + Windows/native/Chrome. Mỗi Windows job: process-tree 13/13, Job stress 202/202, full native suite 74/74, hai batch × tám GDB timeout thật, cùng real Chrome smoke. Chi tiết, artifacts và các lần CI fail trong quá trình sửa ở [TEST_RESULTS.md](TEST_RESULTS.md).
+
+Sau root exit, launcher cho descendant tối đa 500 ms để kết thúc tự nhiên, đồng thời kiểm tra timeout event; regression xác nhận root có thể thoát trước descendant 250 ms. PR CI ghi nhận drain 265 ms, push CI 250 ms, cả hai exact identities thoát và Job active count verified bằng 0. Nếu hết bound mà process vẫn còn, launcher force-terminate và không báo completion bình thường.
 
 Launcher dùng `PROC_THREAD_ATTRIBUTE_JOB_LIST` để gắn process ngay trong `CreateProcessW`, khi target còn suspended; Job có `KILL_ON_JOB_CLOSE`. Timeout gọi `TerminateJobObject` rồi kiểm tra active count bằng 0 trong 3.5 giây. Node giới hạn supervisor shutdown ở 6 giây. Thiếu final verification thì API trả interrupted/unverified và giữ slot/workspace. Không suy diễn completion từ một timeout hoặc Promise settle.
 
@@ -26,11 +28,17 @@ Trên source/test SHA `159d5a9`, tám Windows GDB timeout đồng thời làm To
 
 Native g++/GDB chạy với quyền của tài khoản host. Static filters, request/time/concurrency limits, loopback binding và Job Objects chỉ là guardrails/lifecycle management, **không phải sandbox**. Chỉ chạy mã nguồn tin cậy local; không public hoặc multi-tenant trước khi có OS-level isolation. Không bật deployment trong remediation này.
 
+### Lịch sử regression trong lượt hardening này
+
+- [39728385384](https://github.com/Phuchello/DSA/actions/runs/39728385384): fixture metadata readiness timeout trước browser test.
+- [39729245592](https://github.com/Phuchello/DSA/actions/runs/39729245592) và [39729250557](https://github.com/Phuchello/DSA/actions/runs/39729250557): test giả định child không có standard handles hợp lệ. [39729820174](https://github.com/Phuchello/DSA/actions/runs/39729820174) và [39729824962](https://github.com/Phuchello/DSA/actions/runs/39729824962): assertion sai về handle validity lặp lại; bản cuối so khớp explicit fixture handle identity.
+- [39730307595](https://github.com/Phuchello/DSA/actions/runs/39730307595): MI-18 phát hiện root-exit/descendant race; fix và deterministic test có trên SHA hiện tại.
+
 ## Dependency và browser/build
 
 - CI client dependency install báo 7 vulnerabilities (2 moderate, 5 high); chưa triage/upgrade trong thay đổi tập trung process lifecycle.
 - Bundle Vite khoảng 725 kB chưa nén vượt cảnh báo 500 kB; không thuộc blocker này.
-- Hai real-browser CI smoke tests dùng Chrome 155.0.8059.85 và backend thật. Chỉ bao phủ flow linked-list, timeline, pointer topology, tiếng Việt và stale-request; không bảo đảm mọi browser/device/accessibility.
+- Latest real-browser evidence: PR [artifact 12404544012](https://github.com/Phuchello/DSA/actions/runs/39731178032/artifacts/12404544012) và push [artifact 12404743352](https://github.com/Phuchello/DSA/actions/runs/39731173170/artifacts/12404743352), Chrome 155.0.8059.85 và backend thật. Chỉ bao phủ flow linked-list, timeline, pointer topology, tiếng Việt và stale-request; không bảo đảm mọi browser/device/accessibility.
 - Local desktop browser smoke trên developer Windows không mở được DevTools do chuyển tới browser session đã chạy; đây là lần chạy FAIL local. Hai hosted CI jobs độc lập pass đầy đủ; local failure không được tính là pass.
 
 ## Trace semantics

@@ -1,6 +1,6 @@
 # DSA FlowLab — Kết quả kiểm thử PR #1
 
-Cập nhật: 22/10/2026. Source/test SHA đã kiểm chứng: [9ecf6cc2facc5ec50e7fc9933740f551a08d473e](https://github.com/Phuchello/DSA/commit/9ecf6cc2facc5ec50e7fc9933740f551a08d473e) trên `dev/flowlab-p0`. PR [#1](https://github.com/Phuchello/DSA/pull/1) vẫn mở, chưa merge.
+Cập nhật: 22/10/2026. Source/test SHA đã kiểm chứng: [e35ba3e7e004874dec7d6c2e69050ea34cb393c2](https://github.com/Phuchello/DSA/commit/e35ba3e7e004874dec7d6c2e69050ea34cb393c2) trên `dev/flowlab-p0`. PR [#1](https://github.com/Phuchello/DSA/pull/1) vẫn mở, chưa merge.
 
 ## Final Windows process-ownership gate
 
@@ -28,17 +28,34 @@ Khi timeout, supervisor gọi `TerminateJobObject` và đợi `QueryInformationJ
 
 Đây là process ownership/cleanup, không phải sandbox. Các phép thử xác nhận trên GitHub-hosted Windows runner và máy phát triển hiện tại; chưa khẳng định mọi cấu hình Windows/Job cha. Mã C++ vẫn chỉ được chạy local với nguồn tin cậy.
 
+### Root-exit/descendant race found and fixed
+
+A Windows MI-18 run on source/test SHA `7ea641d` exposed a real completion race: the root process could exit while a short-lived descendant remained in the Job Object. The launcher immediately sampled the active count and rejected/terminated that execution instead of allowing the child to finish naturally. The push Windows job [39730307595](https://github.com/Phuchello/DSA/actions/runs/39730307595/job/119663949921) reproduced it; an independent PR run passed, so this timing-sensitive failure required a deterministic regression.
+
+The regression fixture now has a child signal readiness, wait for the parent to exit, then stay alive for 250 ms. The production launcher drains naturally for at most 500 ms after root exit and checks the timeout event during that interval. A timeout still takes the existing `TerminateJobObject` path. If members remain after the drain bound, they are forcibly terminated and completion is not reported as normal. The test checks exact PID/creation identities and verified zero Job members.
+
+On final source/test SHA [e35ba3e7e004874dec7d6c2e69050ea34cb393c2](https://github.com/Phuchello/DSA/commit/e35ba3e7e004874dec7d6c2e69050ea34cb393c2), the PR Windows log recorded a 265 ms drain and the push Windows log a 250 ms drain; in each, both recorded process identities exited and final status was verified:
+[PR Windows job 119666657833](https://github.com/Phuchello/DSA/actions/runs/39731178032/job/119666657833) · [push Windows job 119666655469](https://github.com/Phuchello/DSA/actions/runs/39731173170/job/119666655469).
+
 ### Automated CI trên source/test SHA mới nhất
 
-Hai workflow chạy độc lập và đồng thời trên cùng SHA `9ecf6cc2facc5ec50e7fc9933740f551a08d473e`; cả hai ma trận Linux và Windows đều PASS:
+Source/test SHA [e35ba3e7e004874dec7d6c2e69050ea34cb393c2](https://github.com/Phuchello/DSA/commit/e35ba3e7e004874dec7d6c2e69050ea34cb393c2) đã được kiểm tra trên hai workflow độc lập; Linux và Windows/native/Chrome đều PASS:
 
-- PR [run 39725121832](https://github.com/Phuchello/DSA/actions/runs/39725121832): Linux [job 119647149233](https://github.com/Phuchello/DSA/actions/runs/39725121832/job/119647149233), Windows/native/Chrome [job 119647496134](https://github.com/Phuchello/DSA/actions/runs/39725121832/job/119647496134).
-- Push [run 39725116557](https://github.com/Phuchello/DSA/actions/runs/39725116557): Linux [job 119647132155](https://github.com/Phuchello/DSA/actions/runs/39725116557/job/119647132155), Windows/native/Chrome [job 119647526674](https://github.com/Phuchello/DSA/actions/runs/39725116557/job/119647526674).
-- Mỗi OS: 74/74 unique assertions; Linux process-tree 4/4; Windows process-tree 13/13.
-- Mỗi Windows job: Job Object stress 128/128 assertion checks, hai vòng × tám owned roots mỗi vòng (16 timeout executions), mỗi root có hai descendant; OS PID/creation identities, heartbeat dừng, inherited/non-inherited stdio và active Job count 0 được kiểm tra. Hai vòng GDB timeout thật của MI-18 cũng PASS (mỗi vòng tám request), sau đó workspace cleanup và slot recovery được xác nhận.
-- Windows fault-injection cũ vẫn PASS: Process32NextW error 5, `Win32Exception.NativeErrorCode=5`, 19/19 checks gồm cleanup; late-child và unverified paths vẫn fail-closed.
-- Stress supervisor deadline riêng PASS: response `interrupted`, không nhận là verified cleanup; đúng các GDB/inferior identities được xác nhận đã thoát sau khi Job handle đóng; workspace/slot được giữ, bảy slot còn lại chạy thành công. Node handle count: PR 192→193; push 200→203, trong ngưỡng +4.
-- Cả hai OS báo `17/17 baseline; 11/11 normalizer; 21/21 invariants; 25 client assertions; 74/74 unique assertions`. MI-09, MI-14, MI-19, MI-20, MI-21 đều PASS.
+- PR [run 39731178032](https://github.com/Phuchello/DSA/actions/runs/39731178032): Linux [job 119666335082](https://github.com/Phuchello/DSA/actions/runs/39731178032/job/119666335082), Windows/native/Chrome [job 119666657833](https://github.com/Phuchello/DSA/actions/runs/39731178032/job/119666657833).
+- Push [run 39731173170](https://github.com/Phuchello/DSA/actions/runs/39731173170): Linux [job 119666320150](https://github.com/Phuchello/DSA/actions/runs/39731173170/job/119666320150), Windows/native/Chrome [job 119666655469](https://github.com/Phuchello/DSA/actions/runs/39731173170/job/119666655469).
+- Mỗi OS: 17/17 baseline, 11/11 normalizer, 21/21 invariants, 25 client assertions; **74/74 unique assertions**.
+- Mỗi Windows job: Process32NextW fault injection **18/18 trước cleanup, 19/19 gồm cleanup**; process-tree **13/13**; Job Object stress **202/202**, hai vòng với tám roots và 16 timeout executions; MI-18 chạy hai batch thật, mỗi batch tám timeout GDB đồng thời, sau đó xác minh process cleanup, workspace removal và slot recovery.
+- Root-exit regression xác minh descendant ngắn hạn được drain tự nhiên (250 ms push, 265 ms PR), không bị nhầm thành timeout hay success trước khi active count về 0.
+- Chi tiết từng lần chạy thất bại trong quá trình hardening và nguyên nhân đã tách riêng bên dưới; không lược bỏ chúng khỏi hồ sơ.
+
+### Các lỗi CI trong quá trình hardening
+
+Các lượt sau là bằng chứng cho những regression/harness defects đã phát hiện và sửa, không phải kết quả của head cuối:
+
+- CI [39728385384](https://github.com/Phuchello/DSA/actions/runs/39728385384) dừng ở fixture metadata chờ quá hạn trước browser smoke; đây là lỗi readiness của fixture.
+- CI [39729245592](https://github.com/Phuchello/DSA/actions/runs/39729245592) và [39729250557](https://github.com/Phuchello/DSA/actions/runs/39729250557) bắt được giả định sai rằng Windows descendant không có standard handles hợp lệ. CI [39729820174](https://github.com/Phuchello/DSA/actions/runs/39729820174) và [39729824962](https://github.com/Phuchello/DSA/actions/runs/39729824962) lặp lại lỗi assertion tương tự sau lần thử dùng NULL startup handles. Regression cuối so sánh handle identity do fixture tạo thay vì giả định handle mặc định không hợp lệ.
+- CI [39730307595](https://github.com/Phuchello/DSA/actions/runs/39730307595) tái hiện root-exit/descendant race trong MI-18. Bản sửa có regression deterministic ở commit [e35ba3e](https://github.com/Phuchello/DSA/commit/e35ba3e7e004874dec7d6c2e69050ea34cb393c2) và hai ma trận cuối đều pass.
+- Lỗi lịch sử Toolhelp/PowerShell deadline trên MI-18 ở [PR job 119324367670](https://github.com/Phuchello/DSA/actions/runs/39629546638/job/119324367670) và [push job 119324625939](https://github.com/Phuchello/DSA/actions/runs/39629540435/job/119324625939) là trigger ban đầu để chuyển ownership sang Job Object. Log không có timestamp cho từng phase nên không quy lỗi cho một syscall cụ thể.
 
 ### Real-browser verification
 
@@ -52,13 +69,13 @@ Hai Windows CI jobs dùng Chrome thật `155.0.8059.85` cùng backend C++/GDB th
 
 Một lần chạy Chrome từ desktop developer không mở được DevTools endpoint vì executable chuyển sang browser session hiện có; lần đó được tính là FAIL local, không phải browser PASS. Hai hosted real-Chrome runs nêu trên đã chạy đầy đủ và là bằng chứng chấp nhận.
 
-### Local automated verification và limitations
+### Local verification and limitations
 
-- `npm run build`: server TypeScript, native Windows launcher và client build PASS; Vite vẫn cảnh báo bundle 725 kB vượt ngưỡng 500 kB.
-- `npm test`: 74/74 unique assertions PASS trên Windows; process-tree 13/13, Job Object 128/128, MI-18 hai vòng tám GDB timeout, cleanup/recovery PASS. Client Vitest riêng: 25/25.
-- `npm ci` của client trên CI báo 7 dependency vulnerabilities (2 moderate, 5 high); thay đổi process lifecycle không nâng cấp dependency. Cần triage riêng trước khi public release.
-- Khi cleanup không được xác minh, service giữ một concurrency slot và workspace để bảo toàn tài nguyên; điều đó có thể làm giảm capacity tới khi operator xử lý/restart. Hosted tests xác minh đường này báo `interrupted`, không giả thành timeout thành công.
-- Job Object không chặn code độc hại khỏi host API, không cách ly filesystem/network và không thay thế OS sandbox. Không mở native runner cho public/multi-tenant execution.
-- Local full Chrome smoke không hoàn thành trên desktop này; chỉ hai job CI trên đây chứng minh browser flow.
+- Trên worktree hiện tại, `node --check tests\\windowsJobRunnerTests.js` và compile độc lập cả test fixture lẫn production launcher bằng MinGW đã PASS. Không chạy Windows executable trong desktop local do Windows Application Control; full native process execution được xác nhận bằng Windows-hosted Actions dưới đây.
+- Hosted Windows full suite: 74/74 unique assertions; Job Object stress 202/202; root-exit drain; MI-18 hai batch tám GDB timeout; workspace cleanup và slot recovery PASS. Client Vitest là 25 assertions trong aggregate.
+- Vite cảnh báo bundle 725 kB vượt ngưỡng 500 kB; CI client install có 7 dependency vulnerabilities (2 moderate, 5 high). Đây là hạn chế ngoài thay đổi process lifecycle và cần triage trước public release.
+- Nếu supervisor mất final status, API vẫn báo interrupted/unverified và giữ concurrency slot/workspace. Điều này bảo toàn tài nguyên nhưng có thể giảm capacity tới khi operator xử lý hoặc restart service.
+- Job Object quản lý vòng đời process, không cô lập filesystem/network/host APIs và không phải sandbox. Native C++ runner vẫn local-only cho nguồn tin cậy; không public/multi-tenant.
+- Browser acceptance evidence là hai hosted real-Chrome jobs; local desktop Chrome smoke không hoàn tất do DevTools endpoint không mở được.
 
 PR vẫn mở, review threads chưa được resolve; khuyến nghị **GO cho independent reviewer re-review, NO-GO merge/release khi chưa có reviewer decision và human authorization**. `main` không đổi; không merge, tag, GitHub Release hay deployment.

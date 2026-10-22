@@ -157,6 +157,7 @@ function startJobSupervisor(runnerPath, statusPath, cwd, executable, args, env) 
     child,
     closedPromise,
     get closed() { return closed; },
+    get stderr() { return stderr; },
     terminate() {
       if (closed) return;
       child.stdin?.write('TERMINATE\n');
@@ -204,11 +205,29 @@ async function runWindowsJobRunnerTests() {
       });
 
       const fixtures = await Promise.all(executions.map(async execution => {
-        const root = await waitForJson(execution.pidFile);
+        let root;
+        try {
+          root = await waitForJson(execution.pidFile);
+        } catch (error) {
+          const outcome = await Promise.race([execution.supervisor.closedPromise, delay(100).then(() => null)]);
+          const status = readJsonIfValid(execution.statusPath);
+          const supervisor = outcome || {
+            closed: execution.supervisor.closed,
+            stderr: execution.supervisor.stderr,
+          };
+          throw new Error(`${error.message}; supervisor=${JSON.stringify(supervisor)}; status=${JSON.stringify(status)}`);
+        }
         assert.ok(Number.isInteger(root.pid) && root.pid > 0, `${execution.label} root must publish a PID`);
         for (const child of root.children) {
           assert.ok(Number.isInteger(child.pid) && child.pid > 0, `${execution.label} ${child.handleMode} descendant must publish a PID`);
-          await waitForJson(child.metadata);
+          const childMetadata = await waitForJson(child.metadata);
+          assert.strictEqual(childMetadata.parentPid, root.pid,
+            `${execution.label} ${child.handleMode} descendant must identify the recorded root as its parent`);
+          const expectedStandardHandles = child.handleMode === 'inherited'
+            ? [true, true, true]
+            : [false, false, false];
+          assert.deepStrictEqual(childMetadata.standardHandlesAvailable, expectedStandardHandles,
+            `${execution.label} ${child.handleMode} descendant must prove its standard-handle inheritance mode`);
           const heartbeatStart = Date.now();
           while (Date.now() - heartbeatStart < 2500 && !fs.existsSync(child.heartbeat)) await delay(15);
           assert.ok(fs.existsSync(child.heartbeat), `${execution.label} ${child.handleMode} descendant must write an independent heartbeat`);
@@ -252,7 +271,7 @@ async function runWindowsJobRunnerTests() {
         }
       }
       inspectWindowsIdentities(trackedIdentities);
-      passed += batchSize * 7 + 1;
+      passed += batchSize * 11 + 1;
       console.log(`✅ Windows Job Object round ${round}/${rounds}: ${batchElapsedMs}ms; eight roots and sixteen descendants terminated; inherited/non-inherited stdio, OS identities, heartbeats, and active member counts verified.`);
 
       const recoveredStatusPath = path.join(tempDir, `round-${round}-recovery-status.json`);

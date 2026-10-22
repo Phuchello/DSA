@@ -1,8 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <algorithm>
+#include <array>
 #include <cstdint>
+#include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 static std::wstring quote_arg(const std::wstring& value) {
@@ -84,6 +86,8 @@ struct Child {
     std::wstring heartbeat;
     std::wstring nonce;
     std::wstring mode;
+    DWORD win32_error = ERROR_SUCCESS;
+    const char* failure_phase = "unknown";
 };
 
 static bool spawn_child(const std::wstring& executable, Child& child, DWORD parent_pid) {
@@ -99,33 +103,52 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
     DWORD flags = CREATE_NO_WINDOW;
     BOOL inherit_handles = FALSE;
     LPPROC_THREAD_ATTRIBUTE_LIST attributes = nullptr;
-    std::vector<HANDLE> inherited;
+    std::array<HANDLE, 3> inherited = { INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE };
 
     if (child.mode == L"inherited") {
-        HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-        HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
-        HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
-        if (!input || !output || !error || input == INVALID_HANDLE_VALUE || output == INVALID_HANDLE_VALUE || error == INVALID_HANDLE_VALUE) return false;
-        inherited = { input, output, error };
+        // Use dedicated inheritable handles. Node/supervisor standard handles
+        // are not guaranteed to carry HANDLE_FLAG_INHERIT on every runner.
+        SECURITY_ATTRIBUTES security = { sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE };
+        for (HANDLE& handle : inherited) {
+            handle = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (handle == INVALID_HANDLE_VALUE) {
+                child.win32_error = GetLastError();
+                child.failure_phase = "CreateFileW(NUL)";
+                for (HANDLE opened : inherited) if (opened != INVALID_HANDLE_VALUE) CloseHandle(opened);
+                return false;
+            }
+        }
         startup.StartupInfo.cb = sizeof(startup);
         SIZE_T bytes = 0;
-        InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
-        if (!bytes) return false;
+        if (InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes) || !bytes) {
+            child.win32_error = GetLastError();
+            child.failure_phase = "InitializeProcThreadAttributeList(size)";
+            for (HANDLE handle : inherited) CloseHandle(handle);
+            return false;
+        }
         attributes = (LPPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, bytes);
         if (!attributes || !InitializeProcThreadAttributeList(attributes, 1, 0, &bytes)) {
+            child.win32_error = GetLastError();
+            child.failure_phase = "InitializeProcThreadAttributeList";
             if (attributes) HeapFree(GetProcessHeap(), 0, attributes);
+            for (HANDLE handle : inherited) CloseHandle(handle);
             return false;
         }
         if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
                 inherited.data(), (DWORD)(inherited.size() * sizeof(HANDLE)), nullptr, nullptr)) {
+            child.win32_error = GetLastError();
+            child.failure_phase = "UpdateProcThreadAttribute(HANDLE_LIST)";
             DeleteProcThreadAttributeList(attributes);
             HeapFree(GetProcessHeap(), 0, attributes);
+            for (HANDLE handle : inherited) CloseHandle(handle);
             return false;
         }
         startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-        startup.StartupInfo.hStdInput = input;
-        startup.StartupInfo.hStdOutput = output;
-        startup.StartupInfo.hStdError = error;
+        startup.StartupInfo.hStdInput = inherited[0];
+        startup.StartupInfo.hStdOutput = inherited[1];
+        startup.StartupInfo.hStdError = inherited[2];
         startup.lpAttributeList = attributes;
         flags |= EXTENDED_STARTUPINFO_PRESENT;
         inherit_handles = TRUE;
@@ -133,15 +156,26 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
 
     const BOOL created = CreateProcessW(executable.c_str(), mutable_command.data(), nullptr, nullptr,
         inherit_handles, flags, nullptr, nullptr, &startup.StartupInfo, &process);
+    if (!created) {
+        child.win32_error = GetLastError();
+        child.failure_phase = "CreateProcessW";
+    }
     if (attributes) {
         DeleteProcThreadAttributeList(attributes);
         HeapFree(GetProcessHeap(), 0, attributes);
     }
+    for (HANDLE handle : inherited) if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
     if (!created) return false;
     child.pid = process.dwProcessId;
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
     return true;
+}
+
+static bool has_valid_standard_handle(DWORD which) {
+    HANDLE handle = GetStdHandle(which);
+    DWORD flags = 0;
+    return handle && handle != INVALID_HANDLE_VALUE && GetHandleInformation(handle, &flags);
 }
 
 int wmain(int argc, wchar_t* argv[]) {
@@ -152,9 +186,14 @@ int wmain(int argc, wchar_t* argv[]) {
         const std::wstring nonce = argv[4];
         const std::wstring mode = argv[5];
         const DWORD parent_pid = (DWORD)_wtoi(argv[6]);
+        const bool stdin_available = has_valid_standard_handle(STD_INPUT_HANDLE);
+        const bool stdout_available = has_valid_standard_handle(STD_OUTPUT_HANDLE);
+        const bool stderr_available = has_valid_standard_handle(STD_ERROR_HANDLE);
         const std::string metadata = "{\"pid\":" + std::to_string(GetCurrentProcessId())
             + ",\"parentPid\":" + std::to_string(parent_pid)
-            + ",\"nonce\":" + json_string(nonce) + ",\"handleMode\":" + json_string(mode) + "}";
+            + ",\"nonce\":" + json_string(nonce) + ",\"handleMode\":" + json_string(mode)
+            + ",\"standardHandlesAvailable\":[" + (stdin_available ? "true" : "false")
+            + "," + (stdout_available ? "true" : "false") + "," + (stderr_available ? "true" : "false") + "]}";
         if (!write_atomic(metadata_path, metadata)) return 3;
         heartbeat(heartbeat_path, std::to_wstring(GetCurrentProcessId()) + L":" + nonce);
     }
@@ -171,7 +210,11 @@ int wmain(int argc, wchar_t* argv[]) {
     for (const std::wstring& mode : { L"inherited", L"isolated" }) {
         const std::wstring nonce = std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()) + L"-" + mode;
         Child child = { 0, base_path + L"-" + mode + L".json", base_path + L"-" + mode + L".heartbeat", nonce, mode };
-        if (!spawn_child(executable, child, GetCurrentProcessId())) return 5;
+        if (!spawn_child(executable, child, GetCurrentProcessId())) {
+            std::cerr << "Could not create " << (child.mode == L"inherited" ? "inherited" : "isolated")
+                << " descendant during " << child.failure_phase << " (Win32 " << child.win32_error << ")\n";
+            return 5;
+        }
         children.push_back(child);
     }
 

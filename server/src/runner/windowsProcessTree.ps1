@@ -1,0 +1,431 @@
+param(
+    [Parameter(Mandatory = $true)][int]$RootPid,
+    [Parameter(Mandatory = $true)][string]$TaskkillExecutable,
+    [Parameter(Mandatory = $true)][string]$NativeAssemblyPath,
+    [switch]$CompileOnly,
+    [switch]$DisableFallback
+)
+
+$ErrorActionPreference = 'Stop'
+function Write-FlowLabLifecycleTiming([string]$phase) {
+    if (-not $env:FLOWLAB_TEST_LIFECYCLE_TIMING_FILE) { return }
+    try {
+        $line = $phase + '|' + [DateTime]::UtcNow.ToString('o') + [Environment]::NewLine
+        [System.IO.File]::AppendAllText($env:FLOWLAB_TEST_LIFECYCLE_TIMING_FILE, $line)
+    } catch { }
+}
+Write-FlowLabLifecycleTiming 'helper-start'
+$helperStartDelay = 0
+if ([int]::TryParse($env:FLOWLAB_TEST_HELPER_START_DELAY_MS, [ref]$helperStartDelay) -and $helperStartDelay -gt 0) {
+    if ($env:FLOWLAB_TEST_HELPER_START_DELAY_MARKER) {
+        [System.IO.File]::WriteAllText($env:FLOWLAB_TEST_HELPER_START_DELAY_MARKER, [DateTime]::UtcNow.ToString('o'))
+    }
+    Start-Sleep -Milliseconds ([Math]::Min($helperStartDelay, 10000))
+}
+Write-FlowLabLifecycleTiming 'helper-start-delay-complete'
+$primaryError = ''
+$fallbackUsed = $false
+$primarySucceeded = $false
+$captured = @{}
+$lastReason = ''
+
+try {
+    $nativeSource = @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+public sealed class FlowLabProcessEntry {
+    public int Pid { get; set; }
+    public int ParentPid { get; set; }
+    public long Creation { get; set; }
+}
+
+public static class FlowLabProcessTreeNative {
+    private const uint TH32CS_SNAPPROCESS = 0x00000002;
+    private const uint PROCESS_TERMINATE = 0x0001;
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    private const uint SYNCHRONIZE = 0x00100000;
+    private const uint WAIT_OBJECT_0 = 0;
+    private const uint WAIT_TIMEOUT = 0x102;
+    private const int ERROR_NO_MORE_FILES = 18;
+
+    // Read by the PowerShell catch block only to explain the test-only injected failure.
+    public static bool TestFaultInjectionAttempted;
+    public static bool TestFaultInjectionReached;
+    public static int TestInjectedErrorCode;
+    public static int TestSnapshotErrorCode;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct PROCESSENTRY32 {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FILETIME { public uint Low; public uint High; }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY32 entry);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32 entry);
+    [DllImport("kernel32.dll", EntryPoint = "SetLastError", ExactSpelling = true, SetLastError = true)]
+    private static extern void SetLastErrorNative(uint errorCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetProcessTimes(IntPtr process, out FILETIME creation, out FILETIME exit, out FILETIME kernel, out FILETIME user);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(IntPtr process, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    private static bool Process32NextForSnapshot(IntPtr snapshot, ref PROCESSENTRY32 entry, int rootPid) {
+        string injectedFailure = Environment.GetEnvironmentVariable("FLOWLAB_TEST_PROCESS32NEXT_FAIL_AFTER_ROOT");
+        int injectedRootPid;
+        if ((injectedFailure == "1"
+                || (int.TryParse(injectedFailure, out injectedRootPid) && injectedRootPid == rootPid))
+            && entry.th32ProcessID == (uint)rootPid) {
+            // Test seam: model Process32NextW returning FALSE with a non-EOF last-error.
+            // Record before and after the P/Invoke so binding failures cannot masquerade
+            // as a successful fault injection.
+            TestFaultInjectionAttempted = true;
+            SetLastErrorNative(5);
+            TestInjectedErrorCode = Marshal.GetLastWin32Error();
+            TestFaultInjectionReached = true;
+            return false;
+        }
+        return Process32NextW(snapshot, ref entry);
+    }
+
+    public static FlowLabProcessEntry[] Snapshot(int rootPid) {
+        TestFaultInjectionAttempted = false;
+        TestFaultInjectionReached = false;
+        TestInjectedErrorCode = 0;
+        TestSnapshotErrorCode = 0;
+        int delayMilliseconds;
+        string delayText = Environment.GetEnvironmentVariable("FLOWLAB_TEST_SNAPSHOT_DELAY_MS");
+        if (int.TryParse(delayText, out delayMilliseconds) && delayMilliseconds > 0) {
+            Thread.Sleep(Math.Min(delayMilliseconds, 10000));
+            string marker = Environment.GetEnvironmentVariable("FLOWLAB_TEST_SNAPSHOT_DELAY_MARKER");
+            if (!String.IsNullOrEmpty(marker)) File.AppendAllText(marker, DateTime.UtcNow.ToString("o") + Environment.NewLine);
+        }
+        IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snapshot == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateToolhelp32Snapshot failed");
+        var entries = new List<FlowLabProcessEntry>();
+        try {
+            var entry = new PROCESSENTRY32();
+            entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+            if (!Process32FirstW(snapshot, ref entry)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Process32First failed");
+            while (true) {
+                entries.Add(new FlowLabProcessEntry { Pid = (int)entry.th32ProcessID, ParentPid = (int)entry.th32ParentProcessID });
+                entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+                if (Process32NextForSnapshot(snapshot, ref entry, rootPid)) continue;
+                int error = Marshal.GetLastWin32Error();
+                if (TestFaultInjectionReached) TestSnapshotErrorCode = error;
+                if (error == ERROR_NO_MORE_FILES) break;
+                var failure = new Win32Exception(error, "Process32Next failed during process snapshot");
+                failure.Data["FlowLabFailurePhase"] = "snapshot-enumeration";
+                failure.Data["FlowLabTestFaultInjectionAttempted"] = TestFaultInjectionAttempted;
+                failure.Data["FlowLabTestFaultInjectionReached"] = TestFaultInjectionReached;
+                failure.Data["FlowLabTestInjectedErrorCode"] = TestInjectedErrorCode;
+                failure.Data["FlowLabTestSnapshotErrorCode"] = TestSnapshotErrorCode;
+                throw failure;
+            }
+        } finally { CloseHandle(snapshot); }
+        return entries.ToArray();
+    }
+
+    private static long? TryCreation(int pid, out IntPtr handle) {
+        handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, false, (uint)pid);
+        if (handle == IntPtr.Zero) {
+            int error = Marshal.GetLastWin32Error();
+            if (error == 87 || error == 1168) return null; // The process exited between the snapshot and open.
+            throw new Win32Exception(error, "OpenProcess(query) failed for PID " + pid);
+        }
+        FILETIME creation, exit, kernel, user;
+        if (!GetProcessTimes(handle, out creation, out exit, out kernel, out user)) {
+            int error = Marshal.GetLastWin32Error();
+            CloseHandle(handle);
+            handle = IntPtr.Zero;
+            if (error == 87 || error == 1168) return null;
+            throw new Win32Exception(error, "GetProcessTimes failed for PID " + pid);
+        }
+        return ((long)creation.High << 32) | creation.Low;
+    }
+
+    public static long? Creation(int pid) {
+        IntPtr handle;
+        long? creation = TryCreation(pid, out handle);
+        if (handle != IntPtr.Zero) CloseHandle(handle);
+        return creation;
+    }
+
+    public static bool IsSameProcess(int pid, long creation) {
+        IntPtr handle;
+        long? current = TryCreation(pid, out handle);
+        if (handle == IntPtr.Zero) return false;
+        try {
+            if (!current.HasValue || current.Value != creation) return false;
+            uint state = WaitForSingleObject(handle, 0);
+            if (state == WAIT_OBJECT_0) return false;
+            if (state == WAIT_TIMEOUT) return true;
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "WaitForSingleObject failed for PID " + pid);
+        } finally { CloseHandle(handle); }
+    }
+
+    public static bool TerminateExact(int pid, long creation) {
+        IntPtr handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE, false, (uint)pid);
+        if (handle == IntPtr.Zero) {
+            int error = Marshal.GetLastWin32Error();
+            if (error == 87 || error == 1168) return true;
+            throw new Win32Exception(error, "OpenProcess(terminate) failed for PID " + pid);
+        }
+        try {
+            FILETIME current, exit, kernel, user;
+            if (!GetProcessTimes(handle, out current, out exit, out kernel, out user)) {
+                int error = Marshal.GetLastWin32Error();
+                if (error == 87 || error == 1168) return true;
+                throw new Win32Exception(error, "GetProcessTimes before terminate failed for PID " + pid);
+            }
+            long currentCreation = ((long)current.High << 32) | current.Low;
+            if (currentCreation != creation) return true; // PID has been reused; never kill the unrelated process.
+            if (!TerminateProcess(handle, 137)) {
+                int error = Marshal.GetLastWin32Error();
+                if (error != 5 && error != 87 && error != 1168) throw new Win32Exception(error, "TerminateProcess failed for PID " + pid);
+            }
+            return WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+        } finally { CloseHandle(handle); }
+    }
+}
+'@
+    if ($CompileOnly) {
+        Add-Type -TypeDefinition $nativeSource -Language CSharp -OutputAssembly $NativeAssemblyPath | Out-Null
+        exit 0
+    }
+    # Load raw bytes to avoid .NET treating sandboxed temporary paths as remote
+    # LoadFrom locations under Windows App Control / zone policy.
+    [void][System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($NativeAssemblyPath))
+    Write-FlowLabLifecycleTiming 'native-assembly-loaded'
+
+    function Get-CurrentTree {
+        $snapshot = [FlowLabProcessTreeNative]::Snapshot($RootPid)
+        $rootEntry = @($snapshot | Where-Object { $_.Pid -eq $RootPid } | Select-Object -First 1)
+        if (-not $captured.ContainsKey([string]$RootPid)) {
+            if ($rootEntry.Count -eq 0) {
+                throw "Root PID $RootPid was absent from the initial process snapshot; refusing to risk killing a reused PID"
+            }
+            $rootCreation = [FlowLabProcessTreeNative]::Creation($RootPid)
+            if ($null -eq $rootCreation) { throw "Could not capture the creation identity for root PID $RootPid" }
+            $captured[[string]$RootPid] = [long]$rootCreation
+        }
+        # Preserve historical ancestor PIDs even after exit so a late child
+        # remains visible. Historical ancestry is uncertain after exit/PID reuse:
+        # such candidates are reported but never terminated by guessed identity.
+        $known = @{}
+        $tree = New-Object 'System.Collections.Generic.List[object]'
+        foreach ($key in @($captured.Keys)) {
+            $creation = [long]$captured[$key]
+            $matchingEntry = @($snapshot | Where-Object { $_.Pid -eq [int]$key } | Select-Object -First 1)
+            $sameProcess = $matchingEntry.Count -gt 0 -and [FlowLabProcessTreeNative]::IsSameProcess([int]$key, $creation)
+            $known[[string]$key] = [pscustomobject]@{ Confirmed = $sameProcess; Creation = $creation }
+        }
+        $changed = $true
+        while ($changed) {
+            $changed = $false
+            foreach ($entry in $snapshot) {
+                $pidKey = [string]$entry.Pid
+                $parentKey = [string]$entry.ParentPid
+                if (-not $known.ContainsKey($parentKey) -or $known.ContainsKey($pidKey)) { continue }
+                $parentConfirmed = [bool]$known[$parentKey].Confirmed
+                $creation = [FlowLabProcessTreeNative]::Creation($entry.Pid)
+                $confirmed = $parentConfirmed -and $null -ne $creation
+                $item = [pscustomobject]@{
+                    Pid = $entry.Pid
+                    ParentPid = $entry.ParentPid
+                    Creation = if ($null -ne $creation) { [long]$creation } else { $null }
+                    Confirmed = $confirmed
+                }
+                $tree.Add($item)
+                if ($null -ne $creation -and $parentConfirmed) {
+                    $captured[$pidKey] = [long]$creation
+                }
+                $known[$pidKey] = [pscustomobject]@{
+                    Confirmed = $confirmed
+                    Creation = if ($null -ne $creation) { [long]$creation } else { $null }
+                }
+                $changed = $true
+            }
+        }
+        return @($tree.ToArray())
+    }
+
+    Write-FlowLabLifecycleTiming 'initial-snapshot-start'
+    $initialTree = @(Get-CurrentTree)
+    Write-FlowLabLifecycleTiming 'initial-snapshot-complete'
+    $primaryError = ''
+    Write-FlowLabLifecycleTiming 'primary-kill-start'
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $TaskkillExecutable
+        $startInfo.Arguments = "/PID $RootPid /T /F"
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $killer = New-Object System.Diagnostics.Process
+        $killer.StartInfo = $startInfo
+        if (-not $killer.Start()) { throw 'taskkill helper process did not start' }
+        $stdoutTask = $killer.StandardOutput.ReadToEndAsync()
+        $stderrTask = $killer.StandardError.ReadToEndAsync()
+        if (-not $killer.WaitForExit(1500)) {
+            try { $killer.Kill() } catch { }
+            $killer.WaitForExit(500) | Out-Null
+            $stdout = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
+            $stderr = if ($stderrTask.IsCompleted) { $stderrTask.Result } else { '' }
+            throw "taskkill exceeded its 1.5s limit; stdout=$stdout stderr=$stderr"
+        }
+        if ($killer.ExitCode -ne 0) {
+            throw "taskkill exit=$($killer.ExitCode); stdout=$($stdoutTask.Result) stderr=$($stderrTask.Result)"
+        }
+        $primarySucceeded = $true
+    } catch {
+        $primaryError = $_.Exception.Message
+    }
+    Write-FlowLabLifecycleTiming 'primary-kill-complete'
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    $verified = $false
+    $fallbackUsed = -not $primarySucceeded
+    $remaining = @()
+    Write-FlowLabLifecycleTiming 'verification-start'
+    do {
+        $currentTree = @(Get-CurrentTree)
+        $liveCaptured = New-Object 'System.Collections.Generic.List[object]'
+        foreach ($key in @($captured.Keys)) {
+            $creation = [long]$captured[$key]
+            if ([FlowLabProcessTreeNative]::IsSameProcess([int]$key, $creation)) {
+                $liveCaptured.Add([pscustomobject]@{ Pid = [int]$key; Creation = $creation })
+            }
+        }
+        $uncertainDescendants = @($currentTree | Where-Object { -not $_.Confirmed })
+        if ($uncertainDescendants.Count -gt 0) {
+            $uncertainIds = ($uncertainDescendants | ForEach-Object { '{0}@{1}' -f $_.Pid, $_.Creation }) -join ','
+            $lastReason = "possible descendants remain but their exited/reused ancestor identity cannot be verified: $uncertainIds"
+        }
+        if ($currentTree.Count -eq 0 -and $liveCaptured.Count -eq 0) {
+            $verified = $true
+            break
+        }
+        if (-not $DisableFallback) {
+            if ($liveCaptured.Count -gt 0) { $fallbackUsed = $true }
+            foreach ($entry in $liveCaptured) {
+                try {
+                    if (-not [FlowLabProcessTreeNative]::TerminateExact($entry.Pid, $entry.Creation)) {
+                        $lastReason = "PID $($entry.Pid) did not signal exit within 1.5s"
+                    }
+                } catch { $lastReason = $_.Exception.Message }
+            }
+        }
+        $remaining = @($liveCaptured | ForEach-Object { [pscustomobject]@{ pid = $_.Pid; creation = [string]$_.Creation } })
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    if (-not $verified) {
+        $currentTree = @(Get-CurrentTree)
+        $remaining = @($currentTree | ForEach-Object { [pscustomobject]@{ pid = $_.Pid; creation = [string]$_.Creation; confirmed = [bool]$_.Confirmed } })
+        foreach ($key in @($captured.Keys)) {
+            $creation = [long]$captured[$key]
+            if ([FlowLabProcessTreeNative]::IsSameProcess([int]$key, $creation) -and -not ($remaining | Where-Object { $_.pid -eq [int]$key })) {
+                $remaining += [pscustomobject]@{ pid = [int]$key; creation = [string]$creation; confirmed = $true }
+            }
+        }
+        if (-not $lastReason) { $lastReason = 'captured process identities remained after the 3s shutdown deadline' }
+    }
+
+    $output = [pscustomobject]@{
+        verified = $verified
+        fallbackUsed = $fallbackUsed
+        primaryError = $primaryError
+        primaryExecutable = $TaskkillExecutable
+        reason = if ($verified) { '' } else { $lastReason }
+        remaining = @($remaining)
+    }
+    Write-FlowLabLifecycleTiming 'verification-complete'
+    [Console]::Out.WriteLine((ConvertTo-Json -InputObject $output -Compress -Depth 4))
+    if ($verified) { exit 0 } else { exit 3 }
+} catch {
+    Write-FlowLabLifecycleTiming 'helper-failure'
+    $caughtException = $_.Exception
+    $exceptionTypes = @()
+    $exceptionMessages = @()
+    $nativeErrorCode = $null
+    $failurePhase = $null
+    $currentException = $caughtException
+    $depth = 0
+    while ($null -ne $currentException -and $depth -lt 12) {
+        $exceptionTypes += $currentException.GetType().FullName
+        $exceptionMessages += $currentException.Message
+        if ($null -eq $nativeErrorCode -and $currentException -is [System.ComponentModel.Win32Exception]) {
+            $nativeErrorCode = $currentException.NativeErrorCode
+        }
+        if ($null -eq $failurePhase -and $null -ne $currentException.Data) {
+            try {
+                if ($currentException.Data.Contains('FlowLabFailurePhase')) {
+                    $failurePhase = [string]$currentException.Data['FlowLabFailurePhase']
+                }
+            } catch { }
+        }
+        $currentException = $currentException.InnerException
+        $depth++
+    }
+
+    $testFaultInjectionAttempted = $false
+    $testFaultInjectionReached = $false
+    $testInjectedErrorCode = 0
+    $testSnapshotErrorCode = 0
+    try {
+        $testFaultInjectionAttempted = [bool][FlowLabProcessTreeNative]::TestFaultInjectionAttempted
+        $testFaultInjectionReached = [bool][FlowLabProcessTreeNative]::TestFaultInjectionReached
+        $testInjectedErrorCode = [int][FlowLabProcessTreeNative]::TestInjectedErrorCode
+        $testSnapshotErrorCode = [int][FlowLabProcessTreeNative]::TestSnapshotErrorCode
+    } catch { }
+
+    $failure = [pscustomobject]@{
+        verified = $false
+        fallbackUsed = $fallbackUsed
+        primaryError = $primaryError
+        primaryExecutable = $TaskkillExecutable
+        reason = $caughtException.ToString()
+        diagnostic = [pscustomobject]@{
+            failurePhase = $failurePhase
+            failureType = $caughtException.GetType().FullName
+            nativeErrorCode = $nativeErrorCode
+            testFaultInjectionAttempted = $testFaultInjectionAttempted
+            testFaultInjectionReached = $testFaultInjectionReached
+            testInjectedErrorCode = $testInjectedErrorCode
+            testSnapshotErrorCode = $testSnapshotErrorCode
+            exceptionTypes = @($exceptionTypes)
+            exceptionMessages = @($exceptionMessages)
+        }
+        remaining = @()
+    }
+    [Console]::Out.WriteLine((ConvertTo-Json -InputObject $failure -Compress -Depth 6))
+    exit 4
+}
+

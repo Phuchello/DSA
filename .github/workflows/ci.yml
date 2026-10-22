@@ -1,0 +1,152 @@
+name: DSA FlowLab CI
+
+on:
+  push:
+    branches: [ dev/flowlab-p0, main ]
+  pull_request:
+    branches: [ dev/flowlab-p0, main ]
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 1: Build, unit tests, and native C++/GDB runtime tests on POSIX
+  # ─────────────────────────────────────────────────────────────────────────────
+  lint-and-unit-tests:
+    name: Build, Full C++/GDB & Unit Tests (Linux/POSIX)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            server/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Type Check & Build Client
+        working-directory: client
+        run: npm run build
+
+      - name: Run Client UI & Localization Tests (Vitest)
+        working-directory: client
+        run: npm test
+
+      - name: Type Check & Build Server
+        working-directory: server
+        run: npm run build
+
+      - name: Run DSA Normalizer & Pointer Classification Unit Tests
+        run: node tests/normalizerUnitTests.js
+
+      - name: Install native Linux toolchain (g++ and GDB)
+        run: sudo apt-get update && sudo apt-get install -y g++ gdb
+
+      - name: Run full native C++/GDB and process-tree regression suite (Linux/POSIX)
+        run: npm test
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2: Full GDB integration tests and real Chrome smoke test. The Windows
+  # hosted image includes Chrome; MSYS2 supplies the same g++/GDB toolchain used
+  # by the native backend in this job.
+  # ─────────────────────────────────────────────────────────────────────────────
+  gdb-integration-tests:
+    name: Full C++ & GDB Tests + Real Chrome Smoke (Windows)
+    runs-on: windows-latest
+    needs: lint-and-unit-tests
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            server/package-lock.json
+
+      - name: Install MSYS2 MinGW toolchain (g++ + gdb)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-gdb
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-python-pip
+
+      - name: Add MinGW to PATH
+        run: echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify toolchain & Python GDB support
+        run: |
+          g++ --version
+          gdb --version
+          gdb -batch -ex 'python import sys; print("GDB Python version:", sys.version)'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Build server and client
+        run: |
+          cd server
+          npm run build
+          cd ../client
+          npm run build
+
+      - name: Run Full Automated Verification Suite
+        env:
+          FLOWLAB_GDB_TIMEOUT_STRESS_ROUNDS: '2'
+          FLOWLAB_WINDOWS_JOB_STRESS_ROUNDS: '2'
+        run: npm test
+
+      - name: Configure real Chrome and browser evidence directory
+        shell: pwsh
+        run: |
+          $chromePath = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+          if (-not (Test-Path -LiteralPath $chromePath)) {
+            throw "Expected preinstalled Chrome at $chromePath"
+          }
+          & $chromePath --version
+          Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$chromePath"
+          $artifactPath = Join-Path $env:RUNNER_TEMP 'flowlab-browser-smoke'
+          New-Item -ItemType Directory -Force -Path $artifactPath | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "FLOWLAB_BROWSER_ARTIFACT_DIR=$artifactPath"
+
+      - name: Run real Chrome browser smoke against native C++/GDB backend
+        run: npm run test:browser
+
+      - name: Preserve real browser logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/flowlab-browser-smoke/
+          if-no-files-found: error
+          retention-days: 14

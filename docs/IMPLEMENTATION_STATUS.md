@@ -1,16 +1,20 @@
-# DSA FlowLab: Implementation Status
+# DSA FlowLab — Implementation Status
 
-| Feature / Subsystem | Status | Target Milestone | Notes |
-|---|---|---|---|
-| Project Scaffolding & Git Workflow | COMPLETED | Baseline | Initialized official repo, main & dev branch |
-| Upstream See++ Audit | COMPLETED | Baseline | Completed detailed audit in Phase 0 audit report |
-| Real C++ Execution Engine (g++ + GDB/MI Python) | COMPLETED | M1 - Engine | Tested native g++/GDB memory inspection |
-| `stdin` Redirection & `cin` Support | COMPLETED | M2 - Stdin | Supported via file redirection & input stream |
-| DSA Memory Normalizer (NODE / LIST) | IN PROGRESS | M3 - Normalizer | Extracts topology, node addresses, and pointer states |
-| Singly Linked List Interactive Visualizer | IN PROGRESS | M4 - UI | Visual cards, pointer arrows, badge overlays |
-| Vietnamese Pedagogical Explanations | IN PROGRESS | M5 - Educational | Beginner & Advanced modes, diff narrative |
-| IT003 TimKiemVaXoa Golden Test & Edge Cases | PLANNED | M6 - Tests | 8 edge cases test suite with verification |
-| Resource Throttling & Security Sandbox | IN PROGRESS | M7 - Security | Timeouts, step limits, forbidden syscall checks |
+Code candidate verified: [0e518054625133b56ff983f0926a89e49b0f18ed](https://github.com/Phuchello/DSA/commit/0e518054625133b56ff983f0926a89e49b0f18ed).  
+GitHub Actions [run 39606982961](https://github.com/Phuchello/DSA/actions/runs/39606982961): Linux and Windows/native/Chrome PASS.  
+Browser evidence [artifact 12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), expires 04/11/2026 13:24:07 UTC.
 
----
-**Current Phase:** dev/flowlab-p0 active development.
+| Area | Status | Evidence |
+|---|---|---|
+| POSIX/Windows process-tree cleanup | PASS | Bounded termination, verified cleanup, fallback/unverified cases; MI-18 on both CI jobs. |
+| Frame-qualified pointer identity | PASS | Caller/recursive frames and CreateNode local pointer remain separate; normalizer and MI-20. |
+| Crash, interruption, truncation model | PASS | Status/reason/partial trace preserved; MI-17/21 and frontend regression tests. |
+| NODE stack/heap classification | PASS | GDB allocator-return evidence; insufficient evidence unknown; MI-19/23. |
+| Independent LIST roots | PASS | Two roots/chains/endpoint pointers preserved; MI-22. |
+| Linux native suite | PASS | 74/74 unique assertions. |
+| Windows native suite | PASS | MinGW g++/GDB, 74/74 unique assertions. |
+| Real Chrome smoke | PASS | Chrome 155.0.8059.40; real backend; edit/stdin/stdout, timeline, topology, Vietnamese modes, stale-response test. |
+| Artifact retention | PASS | [12348299743](https://github.com/Phuchello/DSA/actions/runs/39606982961/artifacts/12348299743), expires 04/11/2026 13:24:07 UTC. |
+| Reviewer approval and merge | PENDING | Four threads remain unresolved. No merge authorization. |
+
+P0 remediation is technically ready for reviewer re-review. The PR is **not approved to merge**. The native runner remains local-only for trusted code and is not a sandbox.

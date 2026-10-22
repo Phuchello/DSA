@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { execFileWithJobTimeout } = require('../server/dist/runner/cppRunner.js');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -134,6 +134,36 @@ function stressRounds() {
   return configured;
 }
 
+function startJobSupervisor(runnerPath, statusPath, cwd, executable, args, env) {
+  const child = spawn(runnerPath, [statusPath, cwd, executable, ...args], {
+    cwd,
+    env,
+    windowsHide: true,
+    stdio: ['pipe', 'ignore', 'pipe'],
+  });
+  let closed = false;
+  let spawnError = null;
+  let stderr = '';
+  child.stderr?.on('data', chunk => {
+    if (stderr.length < 32 * 1024) stderr += String(chunk).slice(0, 32 * 1024 - stderr.length);
+  });
+  child.stdin?.on('error', () => { /* Closing the supervisor after a timeout can close this pipe. */ });
+  child.once('error', error => { spawnError = error; });
+  const closedPromise = new Promise(resolve => child.once('close', (code, signal) => {
+    closed = true;
+    resolve({ code, signal, spawnError, stderr });
+  }));
+  return {
+    child,
+    closedPromise,
+    get closed() { return closed; },
+    terminate() {
+      if (closed) return;
+      child.stdin?.write('TERMINATE\n');
+    },
+  };
+}
+
 async function runWindowsJobRunnerTests() {
   if (process.platform !== 'win32') {
     console.log('Windows Job Object stress: skipped on non-Windows host (Windows CI executes this suite).');
@@ -145,6 +175,8 @@ async function runWindowsJobRunnerTests() {
   const tempDir = fs.mkdtempSync(path.join(tempRoot, 'flowlab-job-object-'));
   const fixtureSource = path.join(__dirname, 'windowsJobChild.cpp');
   const fixture = path.join(tempDir, 'windowsJobChild.exe');
+  const jobRunner = path.join(__dirname, '../server/dist/runner/windowsJobRunner.exe');
+  assert.ok(fs.existsSync(jobRunner), `Windows Job Object launcher is missing: ${jobRunner}`);
   const fixtureBuild = spawnSync('g++', ['-std=c++17', '-O2', '-municode', fixtureSource, '-o', fixture], {
     encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024,
   });
@@ -152,6 +184,7 @@ async function runWindowsJobRunnerTests() {
   assert.strictEqual(fixtureBuild.status, 0,
     `Could not build the native Windows Job Object fixture: ${fixtureBuild.stdout}\n${fixtureBuild.stderr}`);
   const trackedIdentities = [];
+  const activeSupervisors = [];
   let passed = 0;
   const batchSize = 8;
   const rounds = stressRounds();
@@ -163,15 +196,11 @@ async function runWindowsJobRunnerTests() {
         const pidFile = path.join(tempDir, `${label}-root.json`);
         const basePath = path.join(tempDir, label);
         const statusPath = path.join(tempDir, `${label}-job-status.json`);
-        const command = execFileWithJobTimeout(process.execPath,
-          [fixture, 'parent', pidFile, basePath],
-          { cwd: tempDir, env: process.env, statusPath }, 1400);
-        // Fixture startup can exceed the timeout under CI load. Attach a
-        // rejection observer now; Promise.allSettled below still owns and
-        // asserts the result, but Node must not treat an expected timeout as
-        // an unhandled rejection while the process metadata is being gathered.
-        void command.catch(() => {});
-        return { label, pidFile, basePath, statusPath, command };
+        const supervisor = startJobSupervisor(jobRunner, statusPath, tempDir, fixture,
+          ['parent', pidFile, basePath], process.env);
+        const execution = { label, pidFile, basePath, statusPath, supervisor };
+        activeSupervisors.push(execution);
+        return execution;
       });
 
       const fixtures = await Promise.all(executions.map(async execution => {
@@ -188,17 +217,21 @@ async function runWindowsJobRunnerTests() {
       }));
       assert.strictEqual(fixtures.length, batchSize, `Round ${round} must include eight real process trees`);
 
+      // Do not spend the 1.4-second production timeout budget creating the
+      // test tree. Each real Job Object supervisor starts the native fixture;
+      // after all 8 roots, 16 descendants, and heartbeats are observed, send
+      // the same TERMINATE control message the production timeout sends.
+      // MI-18 separately exercises the real Node timeout path with GDB.
       const startedAt = Date.now();
-      const outcomes = await Promise.allSettled(executions.map(execution => execution.command));
+      for (const execution of executions) execution.supervisor.terminate();
+      const outcomes = await Promise.all(executions.map(execution => execution.supervisor.closedPromise));
       const batchElapsedMs = Date.now() - startedAt;
       assert.ok(batchElapsedMs < 7000, `Eight Job Object timeouts in round ${round} must settle within a bounded interval`);
       for (let index = 0; index < executions.length; index++) {
         const outcome = outcomes[index];
-        assert.strictEqual(outcome.status, 'rejected', `${executions[index].label} must reject on timeout`);
-        assert.match(outcome.reason.message, /Quá thời gian thực thi cho phép/,
-          `${executions[index].label} must retain the timeout reason: ${outcome.reason.message}`);
-        assert.notStrictEqual(outcome.reason.processTreeTerminationVerified, false,
-          `${executions[index].label} must not report an unverified timeout as successful cleanup`);
+        assert.ifError(outcome.spawnError);
+        assert.strictEqual(outcome.signal, null, `${executions[index].label} supervisor must exit normally after verified timeout cleanup`);
+        assert.strictEqual(outcome.code, 137, `${executions[index].label} supervisor must retain the timeout exit code: ${outcome.stderr}`);
         const status = await waitForStatus(executions[index].statusPath,
           value => value.phase === 'job-terminated' && value.activeProcesses === 0);
         assert.strictEqual(status.verified, true, `${executions[index].label} Job Object must verify zero active members`);
@@ -295,6 +328,20 @@ async function runWindowsJobRunnerTests() {
     return { passed, failed: 0, total: passed, rounds, timedOutExecutions: batchSize * rounds };
   } finally {
     try {
+      for (const execution of activeSupervisors) {
+        if (execution.supervisor.closed) continue;
+        execution.supervisor.terminate();
+        const outcome = await Promise.race([
+          execution.supervisor.closedPromise,
+          delay(6500).then(() => null),
+        ]);
+        if (!outcome) {
+          try { execution.supervisor.child.kill(); } catch { /* Closing the supervisor closes its sole Job handle. */ }
+          await Promise.race([execution.supervisor.closedPromise, delay(4000)]);
+        }
+        const status = readJsonIfValid(execution.statusPath);
+        if (Array.isArray(status?.processes)) trackedIdentities.push(...status.processes);
+      }
       inspectWindowsIdentities(trackedIdentities, true);
     } catch (error) {
       console.error(`Test-only exact-identity cleanup reported: ${error.message}`);

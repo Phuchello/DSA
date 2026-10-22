@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <array>
 #include <cstdint>
+#include <cwchar>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -91,9 +92,29 @@ struct Child {
 };
 
 static bool spawn_child(const std::wstring& executable, Child& child, DWORD parent_pid) {
+    // Create unique handles for every child mode. The isolated child is
+    // launched with bInheritHandles=FALSE; comparing handle identity in each
+    // child proves that it did not receive these fixture-owned handles even
+    // if Windows supplies its normal default standard streams.
+    SECURITY_ATTRIBUTES security = { sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE };
+    std::array<HANDLE, 3> inherited = { INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE };
+    for (HANDLE& handle : inherited) {
+        handle = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            child.win32_error = GetLastError();
+            child.failure_phase = "CreateFileW(NUL)";
+            for (HANDLE opened : inherited) if (opened != INVALID_HANDLE_VALUE) CloseHandle(opened);
+            return false;
+        }
+    }
+
     std::wstring command = quote_arg(executable) + L" leaf " + quote_arg(child.metadata) + L" "
         + quote_arg(child.heartbeat) + L" " + quote_arg(child.nonce) + L" " + quote_arg(child.mode)
         + L" " + std::to_wstring(parent_pid);
+    for (HANDLE handle : inherited)
+        command += L" " + std::to_wstring(reinterpret_cast<std::uintptr_t>(handle));
     std::vector<wchar_t> mutable_command(command.begin(), command.end());
     mutable_command.push_back(L'\0');
 
@@ -103,23 +124,8 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
     DWORD flags = CREATE_NO_WINDOW;
     BOOL inherit_handles = FALSE;
     LPPROC_THREAD_ATTRIBUTE_LIST attributes = nullptr;
-    std::array<HANDLE, 3> inherited = { INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE };
 
     if (child.mode == L"inherited") {
-        // Use dedicated inheritable handles. Node/supervisor standard handles
-        // are not guaranteed to carry HANDLE_FLAG_INHERIT on every runner.
-        SECURITY_ATTRIBUTES security = { sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE };
-        for (HANDLE& handle : inherited) {
-            handle = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (handle == INVALID_HANDLE_VALUE) {
-                child.win32_error = GetLastError();
-                child.failure_phase = "CreateFileW(NUL)";
-                for (HANDLE opened : inherited) if (opened != INVALID_HANDLE_VALUE) CloseHandle(opened);
-                return false;
-            }
-        }
         startup.StartupInfo.cb = sizeof(startup);
         SIZE_T bytes = 0;
         if (InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes) || !bytes) {
@@ -152,15 +158,6 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
         startup.lpAttributeList = attributes;
         flags |= EXTENDED_STARTUPINFO_PRESENT;
         inherit_handles = TRUE;
-    } else {
-        // A process created without STARTF_USESTDHANDLES can receive the
-        // parent's default standard streams even when bInheritHandles is
-        // FALSE. Make the isolated case explicit so it cannot accidentally
-        // inherit the supervisor's standard handles.
-        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-        startup.StartupInfo.hStdInput = nullptr;
-        startup.StartupInfo.hStdOutput = nullptr;
-        startup.StartupInfo.hStdError = nullptr;
     }
 
     const BOOL created = CreateProcessW(executable.c_str(), mutable_command.data(), nullptr, nullptr,
@@ -181,12 +178,6 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
     return true;
 }
 
-static bool has_valid_standard_handle(DWORD which) {
-    HANDLE handle = GetStdHandle(which);
-    DWORD flags = 0;
-    return handle && handle != INVALID_HANDLE_VALUE && GetHandleInformation(handle, &flags);
-}
-
 int wmain(int argc, wchar_t* argv[]) {
     if (argc >= 3 && std::wstring(argv[1]) == L"leaf") {
         if (argc < 7) return 2;
@@ -195,14 +186,34 @@ int wmain(int argc, wchar_t* argv[]) {
         const std::wstring nonce = argv[4];
         const std::wstring mode = argv[5];
         const DWORD parent_pid = (DWORD)_wtoi(argv[6]);
-        const bool stdin_available = has_valid_standard_handle(STD_INPUT_HANDLE);
-        const bool stdout_available = has_valid_standard_handle(STD_OUTPUT_HANDLE);
-        const bool stderr_available = has_valid_standard_handle(STD_ERROR_HANDLE);
+        if (argc < 10) return 2;
+        const std::array<std::uintptr_t, 3> expected_standard_handles = {
+            (std::uintptr_t)std::wcstoull(argv[7], nullptr, 10),
+            (std::uintptr_t)std::wcstoull(argv[8], nullptr, 10),
+            (std::uintptr_t)std::wcstoull(argv[9], nullptr, 10),
+        };
+        const std::array<DWORD, 3> standard_handle_kinds = {
+            STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE,
+        };
+        std::array<bool, 3> standard_handles_available = {};
+        std::array<bool, 3> standard_handles_match = {};
+        for (size_t i = 0; i < standard_handle_kinds.size(); ++i) {
+            HANDLE handle = GetStdHandle(standard_handle_kinds[i]);
+            DWORD flags = 0;
+            standard_handles_available[i] = handle && handle != INVALID_HANDLE_VALUE
+                && GetHandleInformation(handle, &flags);
+            standard_handles_match[i] = standard_handles_available[i]
+                && reinterpret_cast<std::uintptr_t>(handle) == expected_standard_handles[i];
+        }
         const std::string metadata = "{\"pid\":" + std::to_string(GetCurrentProcessId())
             + ",\"parentPid\":" + std::to_string(parent_pid)
             + ",\"nonce\":" + json_string(nonce) + ",\"handleMode\":" + json_string(mode)
-            + ",\"standardHandlesAvailable\":[" + (stdin_available ? "true" : "false")
-            + "," + (stdout_available ? "true" : "false") + "," + (stderr_available ? "true" : "false") + "]}";
+            + ",\"standardHandlesAvailable\":[" + (standard_handles_available[0] ? "true" : "false")
+            + "," + (standard_handles_available[1] ? "true" : "false") + ","
+            + (standard_handles_available[2] ? "true" : "false")
+            + "],\"standardHandlesMatchExpected\":[" + (standard_handles_match[0] ? "true" : "false")
+            + "," + (standard_handles_match[1] ? "true" : "false") + ","
+            + (standard_handles_match[2] ? "true" : "false") + "]}";
         if (!write_atomic(metadata_path, metadata)) return 3;
         heartbeat(heartbeat_path, std::to_wstring(GetCurrentProcessId()) + L":" + nonce);
     }

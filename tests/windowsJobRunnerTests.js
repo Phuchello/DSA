@@ -223,11 +223,11 @@ async function runWindowsJobRunnerTests() {
           const childMetadata = await waitForJson(child.metadata);
           assert.strictEqual(childMetadata.parentPid, root.pid,
             `${execution.label} ${child.handleMode} descendant must identify the recorded root as its parent`);
-          const expectedStandardHandles = child.handleMode === 'inherited'
+          const expectedHandleIdentity = child.handleMode === 'inherited'
             ? [true, true, true]
             : [false, false, false];
-          assert.deepStrictEqual(childMetadata.standardHandlesAvailable, expectedStandardHandles,
-            `${execution.label} ${child.handleMode} descendant must prove its standard-handle inheritance mode`);
+          assert.deepStrictEqual(childMetadata.standardHandlesMatchExpected, expectedHandleIdentity,
+            `${execution.label} ${child.handleMode} descendant must prove whether its standard handles match the fixture-owned handles`);
           const heartbeatStart = Date.now();
           while (Date.now() - heartbeatStart < 2500 && !fs.existsSync(child.heartbeat)) await delay(15);
           assert.ok(fs.existsSync(child.heartbeat), `${execution.label} ${child.handleMode} descendant must write an independent heartbeat`);

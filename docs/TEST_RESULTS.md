@@ -59,7 +59,12 @@ Các lượt sau là bằng chứng cho những regression/harness defects đã 
 
 ### Real-browser verification
 
-Cả PR và push Windows jobs chạy Chrome thật `155.0.8059.85` cùng backend C++/GDB thật, không mock `/api/run`. Hai smoke test đều PASS:
+Các smoke test đều chạy Chrome thật với backend C++/GDB thật, không mock `/api/run`. Phiên bản Chrome được ghi theo đúng từng job:
+
+- Source/test SHA `e35ba3e`: PR run [39731178032](https://github.com/Phuchello/DSA/actions/runs/39731178032), Windows job `119666657833` dùng Chrome `155.0.8059.85`; push run [39731173170](https://github.com/Phuchello/DSA/actions/runs/39731173170), Windows job `119666655469` dùng Chrome `155.0.8059.40`.
+- Audit HEAD `b8add328`: PR run [39732281847](https://github.com/Phuchello/DSA/actions/runs/39732281847), Windows job `119670157253` dùng Chrome `155.0.8059.40`; push run [39732274748](https://github.com/Phuchello/DSA/actions/runs/39732274748), Windows job `119670156388` dùng Chrome `155.0.8059.85`.
+
+Cả bốn browser smoke tests đều PASS:
 
 - Paste/edit C++ trong CodeMirror; đổi stdin; chương trình thật trả stdout `0 8`; timeline tiến/lùi `0→1→0`; linked-list topology và pointer identities `L.pHead`, `L.pTail`, `k`, `L`, `p`.
 - Chuyển Beginner/Advanced rồi trở lại Vietnamese Beginner; UI mặc định tiếng Việt.

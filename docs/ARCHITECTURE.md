@@ -20,7 +20,7 @@ DSA FlowLab is an educational runtime visualizer for C++ data structures and alg
 |                     Backend Orchestrator                    |
 |  - Node.js + Express + TypeScript (Strict Localhost Binding) |
 |  - Request Limits (1MB Payload, 50k Code, 20k Stdin)        |
-|  - Concurrency Limiter (Max 2 Concurrent Executions)        |
+|  - Concurrency Limiter (Max 8 Concurrent Executions)        |
 |  - Ephemeral Workspace Manager (~/.dsa_flowlab_tmp)         |
 +-------------------------------------------------------------+
                                |
@@ -81,7 +81,15 @@ Instead of drawing linear arrows between consecutive displayed elements, the nor
   - Request body limit: 1 MB.
   - Source code limit: 50,000 characters.
   - Stdin limit: 20,000 characters.
-  - Concurrency control: Maximum 2 concurrent compilation/tracing executions.
-  - Process tree cleanup: Child process trees are forcefully terminated on timeout.
+  - Concurrency control: Maximum 8 concurrent compilation/tracing executions.
+  - Process ownership: POSIX commands use detached process groups; Windows targets enter a Job Object during process creation. Unverified cleanup retains the slot and workspace.
 - **Truth in Security**: Static pattern checking (blocking `#include <windows.h>`, `system()`) is a supplementary sanity check, NOT a secure execution sandbox. Host g++ and GDB execution must never be exposed to public, untrusted networks.
 - **Future Production Isolation Architecture**: For future online deployments, the execution worker will run in ephemeral, unprivileged Linux microVMs or containers (e.g. gVisor, Firecracker, or isolated seccomp-bpf sandbox) without network access, without Docker socket mounts, and with strict CPU, RAM, and PID quotas.
+
+## 3. Windows Process Ownership and Termination
+
+The Windows runner builds a small native launcher with the same MinGW toolchain already required for C++ execution. It creates a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, configures `PROC_THREAD_ATTRIBUTE_JOB_LIST` on `STARTUPINFOEX`, and creates the target suspended. The target belongs to the Job before its first instruction; the launcher resumes it only after capturing process identity. The explicit handle list passes only target stdin/stdout/stderr, not the Job handle.
+
+Timeout termination calls `TerminateJobObject`, then verifies `QueryInformationJobObject` reports zero active processes (3.5-second bound). Node waits for the supervisor up to 6 seconds. If final ownership status is missing or unverified, the supervisor is terminated so closing its sole Job handle asks Windows to terminate members; Node still returns interrupted/unverified and retains the workspace and concurrency slot. This prevents false success and avoids deleting files while processes may still use them.
+
+`PROC_THREAD_ATTRIBUTE_JOB_LIST` requires Windows 10+ or Windows Server 2016+. A parent Job may reject nested assignment; that failure is closed before the target starts. Ordinary descendants inherit Job membership unless a parent Job policy permits breakaway. This lifecycle mechanism is not a security sandbox and does not make arbitrary host code safe. See [Microsoft UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute) and [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).

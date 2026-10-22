@@ -1,29 +1,38 @@
 # DSA FlowLab — Giới hạn đã biết
 
-Source/test SHA mới nhất: [159d5a9ddd65cd4c459a3a33d8a9364366090ae0](https://github.com/Phuchello/DSA/commit/159d5a9ddd65cd4c459a3a33d8a9364366090ae0). PR matrix [run 39629546638, attempt 2](https://github.com/Phuchello/DSA/actions/runs/39629546638) PASS; Linux [job 119580238268](https://github.com/Phuchello/DSA/actions/runs/39629546638/job/119580238268), Windows/native/Chrome [job 119580237225](https://github.com/Phuchello/DSA/actions/runs/39629546638/job/119580237225). Browser evidence [artifact 12393674663](https://github.com/Phuchello/DSA/actions/runs/39629546638/artifacts/12393674663), 255,732 bytes, SHA-256 `b3abed9fe0bc0d611476a3d2703f16d6a11cae2c0022af7fe5e5cd791d7c234b`.
+Cập nhật trạng thái trên source/test SHA [9ecf6cc2facc5ec50e7fc9933740f551a08d473e](https://github.com/Phuchello/DSA/commit/9ecf6cc2facc5ec50e7fc9933740f551a08d473e), PR [#1](https://github.com/Phuchello/DSA/pull/1).
 
-## P/Invoke fault-injection evidence
+## Windows process ownership hiện tại
 
-Original `SetLastErrorNative` binding reproduced `EntryPointNotFoundException`: kernel32 exports `SetLastError`, not `SetLastErrorNative`. Correct binding captured native code 5. Test now proves injection reached, both observed codes equal 5, exception chain contains `Win32Exception.NativeErrorCode=5`, no binding/DLL failure, no primary taskkill, bounded settlement and fixture cleanup. Latest Windows log shows 18/18 pre-cleanup checks and 19/19 including cleanup; full Windows suite is 74/74 unique assertions and process-tree 11/11.
+Lỗi MI-18 trước đây được giải quyết bằng Windows Job Object launcher. Hai workflow độc lập chạy đồng thời trên cùng SHA PASS: PR [39725121832](https://github.com/Phuchello/DSA/actions/runs/39725121832) và push [39725116557](https://github.com/Phuchello/DSA/actions/runs/39725116557). Mỗi Windows job ghi nhận process-tree 13/13, Job stress 128/128, hai vòng × tám owned process trees, MI-18 hai vòng × tám GDB timeouts, full suite 74/74, cùng real Chrome smoke PASS. Chi tiết và artifacts trong [TEST_RESULTS.md](TEST_RESULTS.md).
 
-**Intermittent contention limitation:** CI attempt 1 in PR [Windows job 119324367670](https://github.com/Phuchello/DSA/actions/runs/39629546638/job/119324367670) and push [Windows job 119324625939](https://github.com/Phuchello/DSA/actions/runs/39629540435/job/119324625939) ran the same source/test SHA concurrently. During MI-18's eight simultaneous timeouts, the Node 12-second outer bound killed PowerShell tree-verifier helpers (`signal=SIGTERM, killed=true`); results were labeled interrupted and hosted-runner cleanup reported orphan GDB processes. The same PR run's attempt 2, with no source or assertion changes, passed MI-18 and the full native/browser suite. The helper remains fail-closed, but termination under high host contention can exceed its outer bound and leave a child process requiring runner/operator cleanup. This is not resolved by the P/Invoke test fix; retain local-only trusted-source restrictions and do not claim atomic process ownership.
+Launcher dùng `PROC_THREAD_ATTRIBUTE_JOB_LIST` để gắn process ngay trong `CreateProcessW`, khi target còn suspended; Job có `KILL_ON_JOB_CLOSE`. Timeout gọi `TerminateJobObject` rồi kiểm tra active count bằng 0 trong 3.5 giây. Node giới hạn supervisor shutdown ở 6 giây. Thiếu final verification thì API trả interrupted/unverified và giữ slot/workspace. Không suy diễn completion từ một timeout hoặc Promise settle.
 
+### Process32NextW fault-injection test
 
-## Process ownership trên Windows
+P/Invoke test-validity issue đã được sửa: tên export `SetLastError` được khai báo tường minh; regression yêu cầu injected error và error đọc lại từ snapshot đều là 5, exception chain là `Win32Exception.NativeErrorCode=5`, không có lỗi binding/loading ngoài dự kiến, `taskkill` chưa chạy, và fixture cleanup hoàn tất. Windows CI hiện tại xác nhận 18/18 check trước cleanup, 19/19 gồm cleanup. Chi tiết tái hiện trước sửa và log sau sửa trong [TEST_RESULTS.md](TEST_RESULTS.md). Toolhelp test seam không thay thế production Job Object.
 
-- Toolhelp snapshot + process creation-time identity phát hiện race đã tái hiện. Khi root đã thoát, late descendant có thể được nhận diện qua PID tổ tiên lịch sử nhưng ancestry được coi là không chắc chắn; runner báo cleanup unverified và không kill theo PID phỏng đoán để tránh giết process không liên quan sau PID reuse.
-- Snapshot polling không phải ownership boundary nguyên tử. Descendant có thể được tạo/quan sát ngay sau lần snapshot cuối; helper không thể bảo đảm không có orphan trong mọi interleaving. Job Object với JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE chưa được thêm vì launcher hiện chưa tạo process suspended rồi assign atomically trước khi code có thể spawn child.
-- Khi shutdown unverified, [cppRunner.ts](https://github.com/Phuchello/DSA/blob/75cac8f64442c6230a4dc90624ef5585e8779273/server/src/runner/cppRunner.ts#L480-L481) giữ execution slot và temp workspace để tránh xóa tài nguyên/process đang dùng. Server có thể cần operator restart; trước khi dọn workspace thủ công phải xác minh child đã dừng.
-- Các PR attempt trung gian [39617257621](https://github.com/Phuchello/DSA/actions/runs/39617257621) từng vượt phép đo 15 giây khi helper compile lạnh. Fix hiện tại prewarm verifier trước khi server bind và trước phép đo; assertion 15 giây không bị nới. PR run [39620598658](https://github.com/Phuchello/DSA/actions/runs/39620598658) và push run [39620589502](https://github.com/Phuchello/DSA/actions/runs/39620589502) đều PASS trên code SHA 75cac8f64442c6230a4dc90624ef5585e8779273; PR run [39621877776](https://github.com/Phuchello/DSA/actions/runs/39621877776) cũng PASS sau docs-only update. Nếu prewarm khởi động thất bại, server cảnh báo và cleanup vẫn fail-closed.
+API `PROC_THREAD_ATTRIBUTE_JOB_LIST` yêu cầu Windows 10+ hoặc Windows Server 2016+; môi trường Job cha có thể áp dụng ràng buộc nested-job. Không hỗ trợ tương thích sẽ fail closed trước khi target chạy. Đã xác minh trên GitHub-hosted `windows-latest` và developer Windows này, không phải mọi phiên bản/host policy. Xem [Microsoft UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute) và [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 
-## An toàn thực thi
+### Failure path còn lại
 
-Backend chạy g++/GDB với quyền của tài khoản host. Static filters, size/time/concurrency limits, CORS/Host checks, loopback mặc định và process-tree cleanup **không phải sandbox**. Chỉ chạy code tin cậy local. Không public hoặc multi-tenant trước khi có OS-level isolation/microVM. CI evidence không thay đổi hạn chế này.
+Nếu supervisor mất status cuối, caller không thể chứng minh số process cuối cùng bằng Job API vì handle chỉ thuộc supervisor. Việc đóng supervisor yêu cầu kernel `KILL_ON_JOB_CLOSE`; response vẫn unverified, còn execution slot và workspace được giữ. Stress harness chứng minh đúng GDB/inferior identities đã thoát sau khi handle đóng, nhưng sản phẩm không báo verified cho đường này. Giữ capacity bảo thủ có thể cần operator xử lý hoặc restart service.
 
-## Phạm vi trace, browser và build
+### Root cause lịch sử đã khắc phục
 
-Visualizer theo dõi tập con C++ đã kiểm thử; không phải debugger tổng quát. Semantics/topology là contract, không phải byte-identical trace giữa compiler/GDB/OS. Heap NODE chỉ xác nhận khi có evidence allocator từ GDB; thiếu evidence location/relationship có thể là unknown. Buffered stdout chỉ gắn bước khi quan sát được; output flush lúc thoát hiển thị riêng final output.
+Trên source/test SHA `159d5a9`, tám Windows GDB timeout đồng thời làm Toolhelp/PowerShell helper vượt outer limit Node 12 giây; attempt lỗi log helper bị kết thúc (`signal=SIGTERM`, `killed=true`) và runner cleanup thấy orphan GDB. Các job lỗi lịch sử: PR [119324367670](https://github.com/Phuchello/DSA/actions/runs/39629546638/job/119324367670), push [119324625939](https://github.com/Phuchello/DSA/actions/runs/39629540435/job/119324625939). Log không đo từng phase trong lần lỗi nên không quy nguyên nhân cho một syscall cụ thể. Toolhelp không có ownership boundary nguyên tử; chỉ tăng timeout không đủ.
 
-Browser smoke dùng headless Chrome 155.0.8059.40 trên Windows với backend thật; bao phủ golden linked-list flow và Vietnamese modes, không thay cho kiểm thử mọi browser/device/accessibility. Artifact CI hết hạn sau 14 ngày.
+## Giới hạn bảo mật
 
-Build tạo JS chunk 725.13 kB chưa nén, vượt cảnh báo Vite 500 kB; build vẫn PASS. Code splitting không thuộc fix review này.
+Native g++/GDB chạy với quyền của tài khoản host. Static filters, request/time/concurrency limits, loopback binding và Job Objects chỉ là guardrails/lifecycle management, **không phải sandbox**. Chỉ chạy mã nguồn tin cậy local; không public hoặc multi-tenant trước khi có OS-level isolation. Không bật deployment trong remediation này.
+
+## Dependency và browser/build
+
+- CI client dependency install báo 7 vulnerabilities (2 moderate, 5 high); chưa triage/upgrade trong thay đổi tập trung process lifecycle.
+- Bundle Vite khoảng 725 kB chưa nén vượt cảnh báo 500 kB; không thuộc blocker này.
+- Hai real-browser CI smoke tests dùng Chrome 155.0.8059.85 và backend thật. Chỉ bao phủ flow linked-list, timeline, pointer topology, tiếng Việt và stale-request; không bảo đảm mọi browser/device/accessibility.
+- Local desktop browser smoke trên developer Windows không mở được DevTools do chuyển tới browser session đã chạy; đây là lần chạy FAIL local. Hai hosted CI jobs độc lập pass đầy đủ; local failure không được tính là pass.
+
+## Trace semantics
+
+Visualizer hỗ trợ tập con C++ đã kiểm thử, không phải debugger tổng quát. Heap NODE cần evidence allocator từ GDB; địa chỉ không đủ chứng minh ownership được phân loại unknown. Stdout được ghi theo snapshot khi quan sát được; output cuối được hiển thị riêng nếu chỉ biết sau khi chương trình kết thúc.

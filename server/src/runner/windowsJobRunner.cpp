@@ -13,7 +13,7 @@
 #define PROC_THREAD_ATTRIBUTE_JOB_LIST ProcThreadAttributeValue(13, FALSE, TRUE, FALSE)
 #endif
 
-static const DWORD KILL_CODE = 137, WAIT_BOUND_MS = 3500;
+static const DWORD KILL_CODE = 137, WAIT_BOUND_MS = 3500, DESCENDANT_DRAIN_MS = 500;
 struct Identity { DWORD pid; unsigned long long creation; };
 
 static std::wstring quote(const std::wstring& s) {
@@ -62,13 +62,21 @@ static std::string members_json(const std::vector<Identity>& v){
     o<<"]";return o.str();
 }
 static void write_status(const std::wstring& file,const char* phase,bool verified,bool timeout,int exitCode,
-    DWORD root,unsigned long long creation,DWORD active,const std::string& reason,const std::vector<Identity>& ids){
+    DWORD root,unsigned long long creation,DWORD active,const std::string& reason,const std::vector<Identity>& ids,
+    DWORD drainWaitMs=0){
     if(file.empty())return;std::ostringstream o;
     o<<"{\"phase\":\""<<phase<<"\",\"verified\":"<<(verified?"true":"false")<<",\"timedOut\":"<<(timeout?"true":"false")
-     <<",\"exitCode\":"<<exitCode<<",\"rootPid\":"<<root<<",\"rootCreation\":\""<<creation<<"\",\"activeProcesses\":";
+     <<",\"exitCode\":"<<exitCode<<",\"rootPid\":"<<root<<",\"rootCreation\":\""<<creation
+     <<"\",\"activeProcesses\":";
     if(active==MAXDWORD)o<<-1;else o<<active;o<<",\"reason\":\""<<esc(reason)<<"\",\"processes\":"<<members_json(ids)<<"}";
+    // Record the bounded natural-exit drain separately from forced cleanup so
+    // CI can distinguish a transient parent/child exit race from termination.
+    const std::string json=o.str();
+    std::string statusJson=json;
+    const size_t closing=statusJson.rfind('}');
+    if(closing!=std::string::npos)statusJson.insert(closing,",\"drainWaitMs\":"+std::to_string(drainWaitMs));
     HANDLE h=CreateFileW(file.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
-    if(h!=INVALID_HANDLE_VALUE){std::string s=o.str();DWORD n=0;WriteFile(h,s.data(),(DWORD)s.size(),&n,nullptr);FlushFileBuffers(h);CloseHandle(h);}
+    if(h!=INVALID_HANDLE_VALUE){DWORD n=0;WriteFile(h,statusJson.data(),(DWORD)statusJson.size(),&n,nullptr);FlushFileBuffers(h);CloseHandle(h);}
 }
 static bool kill_and_wait(HANDLE job,DWORD& active,std::string& reason){
     if(!TerminateJobObject(job,KILL_CODE)){if(!reason.empty())reason+="; ";reason+=error_text("TerminateJobObject");}
@@ -150,7 +158,7 @@ int wmain(int argc,wchar_t* argv[]){
         std::string why=error_text("ResumeThread");DWORD active=0;bool ok=kill_and_wait(job,active,why);
         write_status(status,"resume-failed",ok,false,1,root,creation,active,why,ids);
         CloseHandle(pi.hThread);CloseHandle(pi.hProcess);DeleteProcThreadAttributeList(attrs);HeapFree(GetProcessHeap(),0,attrs);HeapFree(GetProcessHeap(),0,handles);CloseHandle(nul);CloseHandle(job);CloseHandle(stop);return ok?1:4;}
-    bool timedOut=false;DWORD exitCode=0,active=0;std::string reason,phase="running";
+    bool timedOut=false;DWORD exitCode=0,active=0,drainWaitMs=0;std::string reason,phase="running";
     for(;;){
         DWORD w=WaitForSingleObject(pi.hProcess,25);
         if(w==WAIT_OBJECT_0){if(!GetExitCodeProcess(pi.hProcess,&exitCode)){phase="completion-verification-failed";reason=error_text("GetExitCodeProcess");exitCode=1;}break;}
@@ -161,9 +169,25 @@ int wmain(int argc,wchar_t* argv[]){
             else{timedOut=true;break;}
         }
     }
+    if(!timedOut&&phase=="running"){
+        // A root can signal exit a few scheduler ticks before a short-lived
+        // compiler/debugger helper in the same Job Object. Wait briefly for
+        // natural completion; never treat an active descendant as success.
+        if(!active_count(job,active,reason))phase="completion-verification-failed";
+        else if(active>0){
+            const ULONGLONG drainStart=GetTickCount64();
+            const ULONGLONG drainDeadline=drainStart+DESCENDANT_DRAIN_MS;
+            while(active>0&&GetTickCount64()<drainDeadline){
+                if(WaitForSingleObject(stop,0)==WAIT_OBJECT_0){timedOut=true;break;}
+                Sleep(10);
+                if(!active_count(job,active,reason)){phase="completion-verification-failed";break;}
+            }
+            drainWaitMs=(DWORD)std::min<ULONGLONG>(GetTickCount64()-drainStart,DESCENDANT_DRAIN_MS);
+        }
+    }
     if(timedOut){ids=members(job);
         bool ok=kill_and_wait(job,active,reason);phase="job-terminated";
-        write_status(status,phase.c_str(),ok,true,KILL_CODE,root,creation,active,reason,ids);
+        write_status(status,phase.c_str(),ok,true,KILL_CODE,root,creation,active,reason,ids,drainWaitMs);
         CloseHandle(pi.hThread);CloseHandle(pi.hProcess);DeleteProcThreadAttributeList(attrs);HeapFree(GetProcessHeap(),0,attrs);HeapFree(GetProcessHeap(),0,handles);CloseHandle(nul);CloseHandle(job);CloseHandle(stop);return ok?(int)KILL_CODE:4;
     }
     bool ok=false;
@@ -172,7 +196,7 @@ int wmain(int argc,wchar_t* argv[]){
     else if(active==0){ok=true;phase="completed";}
     else{ids=members(job);phase="completed-with-descendants";ok=kill_and_wait(job,active,reason);if(ok){exitCode=1;reason="Root exited before all Job Object descendants; descendants were terminated";}}
     if(!ok&&reason.empty())reason="Job Object did not verify zero active processes";
-    write_status(status,phase.c_str(),ok,false,(int)exitCode,root,creation,active,reason,ids);
+    write_status(status,phase.c_str(),ok,false,(int)exitCode,root,creation,active,reason,ids,drainWaitMs);
     if(!reason.empty())std::cerr<<reason<<"\n";
     CloseHandle(pi.hThread);CloseHandle(pi.hProcess);DeleteProcThreadAttributeList(attrs);HeapFree(GetProcessHeap(),0,attrs);HeapFree(GetProcessHeap(),0,handles);
     CloseHandle(nul);CloseHandle(job);CloseHandle(stop);

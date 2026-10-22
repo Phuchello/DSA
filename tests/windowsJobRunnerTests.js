@@ -191,6 +191,39 @@ async function runWindowsJobRunnerTests() {
   const rounds = stressRounds();
   const initialHandleCount = windowsHandleCount(process.pid);
   try {
+    const rootExitStatusPath = path.join(tempDir, 'root-exits-before-child-status.json');
+    const rootExitMetadataPath = path.join(tempDir, 'root-exits-before-child-root.json');
+    const shortLivedChildMetadataPath = path.join(tempDir, 'root-exits-before-child-child.json');
+    const rootExitStartedAt = Date.now();
+    await execFileWithJobTimeout(fixture,
+      ['parent-exits', rootExitMetadataPath, shortLivedChildMetadataPath],
+      { cwd: tempDir, env: process.env, statusPath: rootExitStatusPath }, 5000);
+    const rootExitElapsedMs = Date.now() - rootExitStartedAt;
+    const rootExitStatus = await waitForStatus(rootExitStatusPath,
+      value => value.phase === 'completed' && value.activeProcesses === 0);
+    const rootExitMetadata = await waitForJson(rootExitMetadataPath);
+    const shortLivedChildMetadata = await waitForJson(shortLivedChildMetadataPath);
+    assert.strictEqual(rootExitStatus.verified, true,
+      'A root with a naturally exiting Job Object descendant must complete only after verified drain');
+    assert.strictEqual(rootExitStatus.timedOut, false);
+    assert.strictEqual(rootExitStatus.exitCode, 0);
+    assert.strictEqual(rootExitStatus.rootPid, rootExitMetadata.pid);
+    assert.strictEqual(rootExitStatus.rootCreation, rootExitMetadata.creation);
+    assert.strictEqual(shortLivedChildMetadata.parentPid, rootExitMetadata.pid,
+      'The delayed descendant must be a child of the recorded root');
+    assert.strictEqual(shortLivedChildMetadata.parentWaitReady, true,
+      'The child must confirm it stayed alive until the root exited');
+    assert.ok(rootExitStatus.drainWaitMs > 0 && rootExitStatus.drainWaitMs <= 500,
+      `The launcher must record a bounded natural-exit drain (got ${rootExitStatus.drainWaitMs}ms)`);
+    assert.ok(rootExitElapsedMs < 3000,
+      `Root/child completion verification must stay bounded (got ${rootExitElapsedMs}ms)`);
+    inspectWindowsIdentities([
+      { pid: rootExitMetadata.pid, creation: rootExitMetadata.creation },
+      { pid: rootExitMetadata.childPid, creation: rootExitMetadata.childCreation },
+    ], true);
+    passed += 10;
+    console.log(`✅ Windows Job Object root-exit race: child remained live after its parent; natural drain ${rootExitStatus.drainWaitMs}ms, both exact identities exited, status verified.`);
+
     for (let round = 1; round <= rounds; round++) {
       const executions = Array.from({ length: batchSize }, (_, index) => {
         const label = `round-${round}-case-${index + 1}`;

@@ -67,6 +67,12 @@ static bool write_atomic(const std::wstring& path, const std::string& contents) 
     return true;
 }
 
+static unsigned long long process_creation_time(HANDLE process) {
+    FILETIME creation = {}, exit = {}, kernel = {}, user = {};
+    if (!GetProcessTimes(process, &creation, &exit, &kernel, &user)) return 0;
+    return ((unsigned long long)creation.dwHighDateTime << 32) | creation.dwLowDateTime;
+}
+
 static void heartbeat(const std::wstring& path, const std::wstring& record) {
     const std::string bytes = to_utf8(record + L"\n");
     for (;;) {
@@ -179,6 +185,64 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
 }
 
 int wmain(int argc, wchar_t* argv[]) {
+    if (argc >= 4 && std::wstring(argv[1]) == L"short-lived") {
+        const std::wstring metadata_path = argv[2];
+        const DWORD parent_pid = (DWORD)_wtoi(argv[3]);
+        HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, parent_pid);
+        if (!parent) return 7;
+        const unsigned long long creation = process_creation_time(GetCurrentProcess());
+        const std::string metadata = "{\"pid\":" + std::to_string(GetCurrentProcessId())
+            + ",\"parentPid\":" + std::to_string(parent_pid)
+            + ",\"creation\":\"" + std::to_string(creation) + "\",\"parentWaitReady\":true}";
+        if (!creation || !write_atomic(metadata_path, metadata)) { CloseHandle(parent); return 8; }
+        // Keep the child alive after its root exits so the production launcher
+        // must observe and drain the real Job Object membership race.
+        const DWORD parentWait = WaitForSingleObject(parent, 5000);
+        CloseHandle(parent);
+        if (parentWait != WAIT_OBJECT_0) return 9;
+        Sleep(250);
+        return 0;
+    }
+
+    if (argc >= 4 && std::wstring(argv[1]) == L"parent-exits") {
+        const std::wstring root_metadata = argv[2];
+        const std::wstring child_metadata = argv[3];
+        wchar_t executable_buffer[32768] = {};
+        DWORD executable_length = GetModuleFileNameW(nullptr, executable_buffer, (DWORD)std::size(executable_buffer));
+        if (!executable_length || executable_length >= std::size(executable_buffer)) return 10;
+        const std::wstring executable(executable_buffer, executable_length);
+        std::wstring command = quote_arg(executable) + L" short-lived " + quote_arg(child_metadata)
+            + L" " + std::to_wstring(GetCurrentProcessId());
+        std::vector<wchar_t> mutable_command(command.begin(), command.end());
+        mutable_command.push_back(L'\0');
+        STARTUPINFOW startup = {};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION child = {};
+        if (!CreateProcessW(executable.c_str(), mutable_command.data(), nullptr, nullptr, FALSE,
+                CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child)) return 11;
+        const DWORD child_pid = child.dwProcessId;
+        const unsigned long long child_creation = process_creation_time(child.hProcess);
+        const unsigned long long root_creation = process_creation_time(GetCurrentProcess());
+        ULONGLONG ready_deadline = GetTickCount64() + 5000;
+        while (GetFileAttributesW(child_metadata.c_str()) == INVALID_FILE_ATTRIBUTES
+                && GetTickCount64() < ready_deadline) Sleep(10);
+        if (GetFileAttributesW(child_metadata.c_str()) == INVALID_FILE_ATTRIBUTES || !child_creation || !root_creation) {
+            TerminateProcess(child.hProcess, 12);
+            WaitForSingleObject(child.hProcess, 1000);
+            CloseHandle(child.hThread);
+            CloseHandle(child.hProcess);
+            return 12;
+        }
+        const std::string root = "{\"pid\":" + std::to_string(GetCurrentProcessId())
+            + ",\"creation\":\"" + std::to_string(root_creation)
+            + "\",\"childPid\":" + std::to_string(child_pid)
+            + ",\"childCreation\":\"" + std::to_string(child_creation) + "\"}";
+        const bool written = write_atomic(root_metadata, root);
+        CloseHandle(child.hThread);
+        CloseHandle(child.hProcess);
+        return written ? 0 : 13;
+    }
+
     if (argc >= 3 && std::wstring(argv[1]) == L"leaf") {
         if (argc < 7) return 2;
         const std::wstring metadata_path = argv[2];

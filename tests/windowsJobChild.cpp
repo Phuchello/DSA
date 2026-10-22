@@ -152,6 +152,15 @@ static bool spawn_child(const std::wstring& executable, Child& child, DWORD pare
         startup.lpAttributeList = attributes;
         flags |= EXTENDED_STARTUPINFO_PRESENT;
         inherit_handles = TRUE;
+    } else {
+        // A process created without STARTF_USESTDHANDLES can receive the
+        // parent's default standard streams even when bInheritHandles is
+        // FALSE. Make the isolated case explicit so it cannot accidentally
+        // inherit the supervisor's standard handles.
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = nullptr;
+        startup.StartupInfo.hStdOutput = nullptr;
+        startup.StartupInfo.hStdError = nullptr;
     }
 
     const BOOL created = CreateProcessW(executable.c_str(), mutable_command.data(), nullptr, nullptr,

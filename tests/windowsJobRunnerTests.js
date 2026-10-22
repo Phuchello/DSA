@@ -159,6 +159,11 @@ async function runWindowsJobRunnerTests() {
         const command = execFileWithJobTimeout(process.execPath,
           [fixture, 'parent', pidFile, basePath],
           { cwd: tempDir, env: process.env, statusPath }, 1400);
+        // Fixture startup can exceed the timeout under CI load. Attach a
+        // rejection observer now; Promise.allSettled below still owns and
+        // asserts the result, but Node must not treat an expected timeout as
+        // an unhandled rejection while the process metadata is being gathered.
+        void command.catch(() => {});
         return { label, pidFile, basePath, statusPath, command };
       });
 

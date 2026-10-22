@@ -143,7 +143,14 @@ async function runWindowsJobRunnerTests() {
   const tempRoot = process.env.FLOWLAB_TEST_TEMP_ROOT || os.tmpdir();
   fs.mkdirSync(tempRoot, { recursive: true });
   const tempDir = fs.mkdtempSync(path.join(tempRoot, 'flowlab-job-object-'));
-  const fixture = path.join(__dirname, 'windowsJobChild.js');
+  const fixtureSource = path.join(__dirname, 'windowsJobChild.cpp');
+  const fixture = path.join(tempDir, 'windowsJobChild.exe');
+  const fixtureBuild = spawnSync('g++', ['-std=c++17', '-O2', '-municode', fixtureSource, '-o', fixture], {
+    encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024,
+  });
+  assert.ifError(fixtureBuild.error);
+  assert.strictEqual(fixtureBuild.status, 0,
+    `Could not build the native Windows Job Object fixture: ${fixtureBuild.stdout}\n${fixtureBuild.stderr}`);
   const trackedIdentities = [];
   let passed = 0;
   const batchSize = 8;

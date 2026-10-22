@@ -1,8 +1,38 @@
 # DSA FlowLab — Kết quả kiểm thử PR #1
 
-Cập nhật: 21/10/2026. Code và regression được xác minh: [75cac8f](https://github.com/Phuchello/DSA/commit/75cac8f64442c6230a4dc90624ef5585e8779273) trên dev/flowlab-p0. PR [#1](https://github.com/Phuchello/DSA/pull/1) đang mở, chưa merge.
+Cập nhật: 22/10/2026. Source/test SHA mới nhất đã xác minh: [159d5a9ddd65cd4c459a3a33d8a9364366090ae0](https://github.com/Phuchello/DSA/commit/159d5a9ddd65cd4c459a3a33d8a9364366090ae0) trên `dev/flowlab-p0`. PR [#1](https://github.com/Phuchello/DSA/pull/1) đang mở, chưa merge.
 
-## Final audit-head rerun
+## Windows Process32NextW: kiểm chứng tính hợp lệ của fault injection
+
+### Tái hiện trước sửa
+
+Probe trực tiếp trên Windows PowerShell/.NET xác nhận:
+
+`SetLastError export=True; SetLastErrorNative export=False; original declaration=System.EntryPointNotFoundException; corrected NativeErrorCode=5`
+
+Khai báo cũ tìm export theo tên managed `SetLastErrorNative`, trong khi export kernel32 tên `SetLastError`; P/Invoke cũ ném `EntryPointNotFoundException`. Trên baseline `74791e69fd013a820bc4b3b1e067b6134b3fa585`, regression chỉ assert `processTreeTerminationVerified === false`; lỗi bind này có thể làm test pass sai lý do. Log Windows cũ chỉ cho thấy trạng thái “unverified”, không có exception type/native code để phân biệt.
+
+### Automated CI trên source/test SHA mới nhất
+
+Implementation tại [`04598d0`](https://github.com/Phuchello/DSA/commit/04598d08f18fea2e0a47463e22ec7e9b4d4dc97f) dùng `EntryPoint = "SetLastError"`, `ExactSpelling = true`, `SetLastError = true`. Helper ghi diagnostic phase, exception chain, error code và trạng thái injection; runner truyền diagnostic ra lỗi process-tree chưa xác minh. Regression/log correction tại [`159d5a9`](https://github.com/Phuchello/DSA/commit/159d5a9ddd65cd4c459a3a33d8a9364366090ae0) kiểm tra nhánh injection, code 5 ngay sau P/Invoke và khi snapshot đọc lỗi, `Win32Exception.NativeErrorCode = 5`, không có lỗi entry-point/DLL/exception ngoài PowerShell wrappers cho phép, không gọi primary taskkill, Promise bounded và fixture cleanup.
+
+PR run [39629546638, attempt 2](https://github.com/Phuchello/DSA/actions/runs/39629546638) PASS trên source/test SHA `159d5a9ddd65cd4c459a3a33d8a9364366090ae0`:
+
+- Linux [job 119580238268](https://github.com/Phuchello/DSA/actions/runs/39629546638/job/119580238268): 74/74 unique assertions; process-tree 4/4.
+- Windows/MinGW g++/GDB [job 119580237225](https://github.com/Phuchello/DSA/actions/runs/39629546638/job/119580237225): 74/74 unique assertions; process-tree 11/11; fault injection and cleanup 19/19 (18/18 before cleanup).
+- Windows log: `phase=snapshot-enumeration, nativeErrorCode=5, Win32Exception confirmed, no P/Invoke binding error`; MI-18, MI-19, MI-20, MI-21 all PASS.
+
+### Real-browser verification
+
+Real Chrome 155.0.8059.40 used the local native C++/GDB backend: paste/edit C++, stdin `3\n3 0 8\n3`, stdout `0 8`, timeline forward/back, linked-list topology and `L.pHead/L.pTail/k/L/p`, Advanced/Beginner Vietnamese UI, stale old-stdin response ignored, matching rerun replaces stale trace, and browser console has no runtime errors.
+
+Logs, traces and screenshots: [artifact 12393674663](https://github.com/Phuchello/DSA/actions/runs/39629546638/artifacts/12393674663), 255,732 bytes, SHA-256 `b3abed9fe0bc0d611476a3d2703f16d6a11cae2c0022af7fe5e5cd791d7c234b`, retained until 05/11/2026 01:15:31 UTC.
+
+### CI retry and unresolved limitation
+
+Attempt 1 failed MI-18 in concurrent PR [Windows job 119324367670](https://github.com/Phuchello/DSA/actions/runs/39629546638/job/119324367670) and push [Windows job 119324625939](https://github.com/Phuchello/DSA/actions/runs/39629540435/job/119324625939): eight simultaneous timeouts caused the Node 12-second outer bound to kill PowerShell helpers (`signal=SIGTERM, killed=true`); results became interrupted and hosted-runner cleanup reported orphan GDB processes. No source or assertion change preceded attempt 2. The isolated PR rerun passed MI-18 and the full Windows/browser job. This intermittent high-contention limitation is still open and is not fixed by the P/Invoke correction; see [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+
+## Historical audit-head rerun (docs-only baseline)
 
 Sau khi cập nhật audit docs tại head docs-only [1d72c3b](https://github.com/Phuchello/DSA/commit/1d72c3b12190cdf8419d982ea00052524acb25c7), PR CI [run 39621877776](https://github.com/Phuchello/DSA/actions/runs/39621877776) chạy trên đúng head và PASS: Linux [job 119297206546](https://github.com/Phuchello/DSA/actions/runs/39621877776/job/119297206546) và Windows/native/Chrome [job 119297820920](https://github.com/Phuchello/DSA/actions/runs/39621877776/job/119297820920). Cả hai đều báo 74/74 unique assertions; process-tree là 4/4 POSIX, 11/11 Windows. Source/test code không đổi so với [75cac8f](https://github.com/Phuchello/DSA/commit/75cac8f64442c6230a4dc90624ef5585e8779273).
 
@@ -12,7 +42,7 @@ Chrome thật 155.0.8059.85 với backend C++/GDB PASS; log có stdout 0 8, time
 
 Commit regression-only [0333e4c](https://github.com/Phuchello/DSA/commit/0333e4c41c7ef3ec9d0daa9517157632842b2b88) thêm đồng bộ liên tiến trình để: hoàn tất snapshot ban đầu, tạo child mới, rồi dùng primary tool chỉ kết thúc root. Windows run [39614137541](https://github.com/Phuchello/DSA/actions/runs/39614137541), job [119271145305](https://github.com/Phuchello/DSA/actions/runs/39614137541/job/119271145305) thất bại đúng tại regression: child PID 6116, identity creation-time 134370655205316505 vẫn sống và heartbeat tiếp tục, nhưng runner chỉ trả lỗi timeout thông thường, không phát processTreeTerminationVerified=false. Đây là false-positive cleanup mà regression chặn.
 
-## Kiểm chứng tự động trên source/test SHA 75cac8f
+## Historical automated verification on source/test SHA 75cac8f
 
 PR CI [run 39620598658](https://github.com/Phuchello/DSA/actions/runs/39620598658) chạy trên đúng SHA 75cac8f64442c6230a4dc90624ef5585e8779273; cả hai job PASS:
 
@@ -31,8 +61,8 @@ Log Windows trên SHA này xác nhận:
 
 Không che giấu các lần CI đỏ trong quá trình sửa:
 
-- PR run [39615069050](https://github.com/Phuchello/DSA/actions/runs/39615069050) trên SHA 2b10986 trượt MI-18 khi một số helper bị kill ở giới hạn ngoài 12 giây. Commit [2097253](https://github.com/Phuchello/DSA/commit/209725315ee23993f6bc814c1de491dcf86dab85) giảm thời gian chờ primary/fallback; latest PR run ở trên PASS.
-- PR run [39617257621](https://github.com/Phuchello/DSA/actions/runs/39617257621) trên SHA 20972531 từng vượt phép đo 15 giây của regression process-tree khởi động đầu tiên; push run cùng SHA [39617249991](https://github.com/Phuchello/DSA/actions/runs/39617249991) PASS. Không nới phép đo. Latest PR run trên SHA 75cac8f64442c6230a4dc90624ef5585e8779273 PASS với bộ đếm 11/11 và guard lỗi nếu số assertion không khớp.
+- PR run [39615069050](https://github.com/Phuchello/DSA/actions/runs/39615069050) trên SHA 2b10986 trượt MI-18 khi một số helper bị kill ở giới hạn ngoài 12 giây. Commit [2097253](https://github.com/Phuchello/DSA/commit/209725315ee23993f6bc814c1de491dcf86dab85) giảm thời gian chờ primary/fallback; PR run 39620598658 trên source SHA 75cac8f PASS.
+- PR run [39617257621](https://github.com/Phuchello/DSA/actions/runs/39617257621) trên SHA 20972531 từng vượt phép đo 15 giây của regression process-tree khởi động đầu tiên; push run cùng SHA [39617249991](https://github.com/Phuchello/DSA/actions/runs/39617249991) PASS. Không nới phép đo. PR run 39620598658 trên SHA 75cac8f64442c6230a4dc90624ef5585e8779273 PASS với bộ đếm 11/11 và guard lỗi nếu số assertion không khớp.
 - SHA bf56c22 từng in nhầm 11/12 dù các assertion đều qua; tổng đúng là 11. SHA 75cac8f64442c6230a4dc90624ef5585e8779273 sửa tổng và bắt CI thất bại nếu bộ đếm lệch.
 
 ## Prewarm và hành vi process-tree

@@ -57,6 +57,24 @@ export const MemoryInspector: React.FC<MemoryInspectorProps> = ({
                     varAddr = val[1];
                     valType = val[2];
                     displayVal = `{struct ${valType}}`;
+                  } else if (Array.isArray(val) && val[0] === 'C_ARRAY') {
+                    varAddr = val[1];
+                    const count = Math.max(0, val.length - 2);
+                    const firstElem = val.length > 2 && Array.isArray(val[2]) && val[2][0] === 'C_DATA' ? val[2] : null;
+                    const elemType = firstElem ? firstElem[2] : '';
+                    valType = count >= 50
+                      ? (elemType ? `${elemType}[≥50]` : 'array[≥50]')
+                      : (elemType ? `${elemType}[${count}]` : `array[${count}]`);
+                    const items = val.slice(2).map((item: any) => {
+                      if (Array.isArray(item) && item[0] === 'C_DATA') {
+                        return String(item[3]);
+                      } else if (Array.isArray(item) && item[0] === 'C_ARRAY') {
+                        return '[array]';
+                      }
+                      return '?';
+                    });
+                    const capNote = count >= 50 ? ' ... (thu thập tối đa 50)' : '';
+                    displayVal = `[${items.join(', ')}${capNote}]`;
                   }
 
                   return (

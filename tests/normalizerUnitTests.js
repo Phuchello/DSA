@@ -325,6 +325,76 @@ function runNormalizerUnitTests() {
     assert.strictEqual(point.dsa.mainChain.length, 0);
   });
 
+  test('AT-10: Loop explanation is neutral for array/scalar loops even if pointer p and heap nodes exist in scope', () => {
+    // Case 1: Unrelated array loop when pointer p and heap nodes exist in scope
+    const rawUnrelated = [{
+      event: 'stepLine', line: 12, funcName: 'main',
+      codeText: 'for (int i = 0; i < 5; i++) {',
+      stackToRender: [{
+        funcName: 'main', frameId: 'f0', isHighlighted: true, line: 12,
+        orderedVarNames: ['p', 'i'],
+        encodedLocals: {
+          p: ['C_DATA', '0x2000', 'pointer', '0x5000'],
+          i: ['C_DATA', '0x1000', 'int', 0]
+        }
+      }],
+      heap: {
+        '0x5000': ['C_STRUCT', '0x5000', 'NODE', ['info', ['C_DATA', '0x5000', 'int', 42]], ['pNext', ['C_DATA', '0x0', 'pointer', '0x0']]]
+      },
+      deletedAddresses: []
+    }];
+    const resUnrelated = normalizeTrace(rawUnrelated);
+    const explUnrelated = resUnrelated[0].dsa.vietnameseExplanation;
+    assert.ok(explUnrelated.includes('Chuẩn bị đánh giá điều kiện lặp') || explUnrelated.includes('for'),
+      `Expected neutral loop explanation, got: ${explUnrelated}`);
+    assert.ok(!explUnrelated.includes('Con trỏ duyệt p đang ở địa chỉ'),
+      `Unrelated loop must not mention pointer traversal, got: ${explUnrelated}`);
+
+    // Case 2: Actual linked-list traversal loop (while (p != nullptr))
+    const rawTraversal = [{
+      event: 'stepLine', line: 20, funcName: 'PrintList',
+      codeText: 'while (p != nullptr) {',
+      stackToRender: [{
+        funcName: 'PrintList', frameId: 'f1', isHighlighted: true, line: 20,
+        orderedVarNames: ['p'],
+        encodedLocals: { p: ['C_DATA', '0x2000', 'pointer', '0x5000'] }
+      }],
+      heap: {
+        '0x5000': ['C_STRUCT', '0x5000', 'NODE', ['info', ['C_DATA', '0x5000', 'int', 42]], ['pNext', ['C_DATA', '0x0', 'pointer', '0x0']]]
+      },
+      deletedAddresses: []
+    }];
+    const resTraversal = normalizeTrace(rawTraversal);
+    const explTraversal = resTraversal[0].dsa.vietnameseExplanation;
+    assert.ok(explTraversal.includes('Con trỏ duyệt p đang ở địa chỉ 0x5000'),
+      `Actual list traversal must mention pointer p, got: ${explTraversal}`);
+  });
+
+  // AT-10c: while(p == nullptr) must NOT produce pointer traversal narration
+  // p == nullptr means pointer IS null => loop exits, NOT a traversal
+  test('AT-10c: while(p == nullptr) generates neutral loop narration, NOT pointer traversal', () => {
+    const rawPEqNull = [{
+      event: 'stepLine', line: 15, funcName: 'main',
+      codeText: 'while (p == nullptr) {',
+      stackToRender: [{
+        funcName: 'main', frameId: 'f0', isHighlighted: true, line: 15,
+        orderedVarNames: ['p'],
+        encodedLocals: { p: ['C_DATA', '0x2000', 'pointer', '0x0'] }
+      }],
+      heap: {
+        '0x5000': ['C_STRUCT', '0x5000', 'NODE', ['info', ['C_DATA', '0x5000', 'int', 1]], ['pNext', ['C_DATA', '0x0', 'pointer', '0x0']]]
+      },
+      deletedAddresses: []
+    }];
+    const resPEqNull = normalizeTrace(rawPEqNull);
+    const explPEqNull = resPEqNull[0].dsa.vietnameseExplanation;
+    // Must NOT produce pointer traversal narration
+    assert.ok(
+      !explPEqNull.includes('Con tr') || !explPEqNull.includes('duy'),
+      `while(p == nullptr) must NOT produce traversal narration, got: ${explPEqNull}`
+    );
+  });
+
   console.log(`Unit Test Summary: ${passed} PASS, ${failed} FAIL`);
   const summary = { passed, failed, total: passed + failed };
   if (failed > 0) {

@@ -560,8 +560,32 @@ export function generateVietnameseExplanation(
   // Loop traversal
   if (trimmed.startsWith('while') || trimmed.startsWith('for')) {
     const pPtr = [...pointers].reverse().find(p => p.name === 'p');
-    explanation = `Kiểm tra điều kiện lặp: ${trimmed}. Con trỏ duyệt p đang ở địa chỉ ${pPtr?.targetAddress || 'nullptr'}.`;
-    advanced = `Nếu p != nullptr, vòng lặp tiếp tục xử lý nút hiện tại. Khi p trỏ tới nullptr, quá trình duyệt kết thúc an toàn.`;
+    // Only attribute loop to pointer traversal if the loop syntax actually references pointer p
+    // and evaluates its traversal/termination condition (e.g. while (p != nullptr), while (p), for (...p...))
+    // FIX-03 & F5: Exclude equality-to-null check (e.g. while (p == nullptr) loops while null, not traversing nodes)
+    const isEqualityToNull = /\bp\s*==\s*(nullptr|NULL|0)\b/.test(trimmed) || /!\s*p\b/.test(trimmed);
+    const isPointerTraversalLoop = Boolean(
+      pPtr &&
+      nodes.length > 0 &&
+      /\bp\b/.test(trimmed) &&
+      !/for\s*\(\s*(int|size_t|long|char|auto)\s+p\b/.test(trimmed) &&
+      !isEqualityToNull &&
+      (trimmed.includes('pNext') ||
+       trimmed.includes('->') ||
+       /while\s*\(\s*p\s*\)/.test(trimmed) ||
+       /while\s*\(\s*p\s*!=/.test(trimmed) ||
+       (trimmed.includes('!=') && (trimmed.includes('nullptr') || trimmed.includes('NULL'))))
+    );
+    // NOTE: while(p == nullptr) is NOT a traversal — p IS null, loop exits immediately
+
+    if (isPointerTraversalLoop && pPtr) {
+      explanation = `Kiểm tra điều kiện lặp: ${trimmed}. Con trỏ duyệt p đang ở địa chỉ ${pPtr.targetAddress || 'nullptr'}.`;
+      advanced = `Vong lap ket thuc khi p la nullptr, dia chi khong con trong nodeMap, hoac phat hien chu ky. Viec duyet an toan phu thuoc vao nhieu dieu kien, khong chi rieng p != nullptr.`;
+      return { explanation, advanced };
+    }
+    // Neutral loop explanation for general loops (arrays, indices, or loops not traversing via pointer p)
+    explanation = `Chuẩn bị đánh giá điều kiện lặp: ${trimmed}.`;
+    advanced = `Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này.`;
     return { explanation, advanced };
   }
 

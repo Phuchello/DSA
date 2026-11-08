@@ -39,7 +39,7 @@ export const MemoryInspector: React.FC<MemoryInspectorProps> = ({
                     </span>
                   )}
                 </span>
-                <span className="text-[10px] text-slate-500">FP: {frame.frameId}</span>
+                <span className="text-[10px] text-slate-500">ID: {frame.frameId}</span>
               </div>
 
               {/* Local Variables */}

@@ -6,6 +6,7 @@ export interface ArrayVariablesCanvasProps {
   codeText?: string;
   isTraceStale?: boolean;
   previousStackToRender?: any[];
+  event?: string;
 }
 
 interface ResolvedArray {
@@ -79,6 +80,7 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
   codeText,
   isTraceStale = false,
   previousStackToRender,
+  event,
 }) => {
   // Empty state handling
   if (!stackToRender || stackToRender.length === 0) {
@@ -277,17 +279,37 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
 
   const framesInStackOrder = [...frameGroups].reverse();
 
-  // Neutral push / pop transition indicator
+  // Evidenced push / pop transition indicator based on runtime semantics and shared-prefix frame continuity
   let transitionNotice: { type: 'push' | 'pop'; text: string } | null = null;
-  if (previousStackToRender && Array.isArray(previousStackToRender)) {
+  if (previousStackToRender && Array.isArray(previousStackToRender) && stackToRender && Array.isArray(stackToRender)) {
     const prevCount = previousStackToRender.length;
     const currCount = stackToRender.length;
-    if (currCount > prevCount) {
+
+    let sharedPrefix = 0;
+    while (
+      sharedPrefix < prevCount &&
+      sharedPrefix < currCount &&
+      previousStackToRender[sharedPrefix]?.frameId &&
+      stackToRender[sharedPrefix]?.frameId &&
+      previousStackToRender[sharedPrefix].frameId === stackToRender[sharedPrefix].frameId
+    ) {
+      sharedPrefix++;
+    }
+
+    const isEvidencedExtension =
+      (event === 'call' && currCount > prevCount) ||
+      (currCount > prevCount && sharedPrefix === prevCount);
+
+    const isEvidencedContraction =
+      (event === 'return' && currCount < prevCount) ||
+      (currCount < prevCount && sharedPrefix === currCount);
+
+    if (isEvidencedExtension) {
       transitionNotice = {
         type: 'push',
         text: `Gọi hàm — thêm khung (+${currCount - prevCount})`,
       };
-    } else if (currCount < prevCount) {
+    } else if (isEvidencedContraction) {
       transitionNotice = {
         type: 'pop',
         text: `Trở về hàm gọi — giảm số khung (-${prevCount - currCount})`,
@@ -593,7 +615,7 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
                           Độ sâu #{group.frameDepth}
                         </span>
                         <span className="text-[10px] text-slate-500">
-                          FP: {group.frameId}
+                          ID: {group.frameId}
                         </span>
                       </div>
                     </div>

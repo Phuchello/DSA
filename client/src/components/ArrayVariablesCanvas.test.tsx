@@ -640,13 +640,13 @@ describe('ArrayVariablesCanvas Component Tests', () => {
     const frameTop = screen.getByTestId('call-stack-frame-4');
     expect(frameTop.textContent).toContain('ĐỈNH NGĂN XẾP (TOP)');
     expect(frameTop.textContent).toContain('Đang thực thi (Active)');
-    expect(frameTop.textContent).toContain('FP: 0x5ffd80');
+    expect(frameTop.textContent).toContain('ID: 0x5ffd80');
     expect(frameTop.textContent).toContain('1');
 
     // Bottom frame (depth 0: main)
     const frameBottom = screen.getByTestId('call-stack-frame-0');
     expect(frameBottom.textContent).toContain('ĐÁY NGĂN XẾP (BOTTOM)');
-    expect(frameBottom.textContent).toContain('FP: 0x5ffe40');
+    expect(frameBottom.textContent).toContain('ID: 0x5ffe40');
     expect(frameBottom.textContent).toContain('result');
 
     // Call connectors between 5 frames (4 connectors)
@@ -841,5 +841,63 @@ describe('ArrayVariablesCanvas Component Tests', () => {
 
     const popBadge = screen.getByTestId('stack-transition-indicator');
     expect(popBadge.textContent).toContain('Trở về hàm gọi — giảm số khung (-1)');
+  });
+
+  // AT-26 (M1.2a - Regression): Ambiguous frame transition safety
+  it('AT-26 (M1.2a - Regression): omits push/pop indicator when stack transitions ambiguously without runtime call/return event', () => {
+    const frameA = { funcName: 'main', frameId: '0x1000', frameDepth: 0, isHighlighted: false, encodedLocals: {} };
+    const frameB = { funcName: 'workerA', frameId: '0x1050', frameDepth: 1, isHighlighted: false, encodedLocals: {} };
+    const frameC = { funcName: 'altMain', frameId: '0x2000', frameDepth: 0, isHighlighted: false, encodedLocals: {} };
+    const frameD = { funcName: 'workerB', frameId: '0x2050', frameDepth: 1, isHighlighted: false, encodedLocals: {} };
+    const frameE = { funcName: 'workerC', frameId: '0x20a0', frameDepth: 2, isHighlighted: true, encodedLocals: {} };
+
+    // Ambiguous growth: prev has [frameA, frameB] (count 2), curr has [frameC, frameD, frameE] (count 3)
+    // Shared prefix is 0 (mismatch at base). Without event === 'call', indicator must be omitted.
+    const { unmount } = render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameC, frameD, frameE]}
+        previousStackToRender={[frameA, frameB]}
+        currentLine={10}
+        event="stepLine"
+      />
+    );
+    expect(screen.queryByTestId('stack-transition-indicator')).toBeNull();
+    unmount();
+
+    // But if event === 'call' is explicitly certified by tracer, push indicator is honored
+    const { unmount: unmount2 } = render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameC, frameD, frameE]}
+        previousStackToRender={[frameA, frameB]}
+        currentLine={10}
+        event="call"
+      />
+    );
+    expect(screen.getByTestId('stack-transition-indicator').textContent).toContain('Gọi hàm — thêm khung (+1)');
+    unmount2();
+
+    // Ambiguous shrinkage: prev has [frameC, frameD, frameE] (count 3), curr has [frameA, frameB] (count 2)
+    // Shared prefix is 0 (mismatch at base). Without event === 'return', indicator must be omitted.
+    const { unmount: unmount3 } = render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameA, frameB]}
+        previousStackToRender={[frameC, frameD, frameE]}
+        currentLine={10}
+        event="stepLine"
+      />
+    );
+    expect(screen.queryByTestId('stack-transition-indicator')).toBeNull();
+    unmount3();
+
+    // If event === 'return' is explicitly certified by tracer, pop indicator is honored
+    render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameA, frameB]}
+        previousStackToRender={[frameC, frameD, frameE]}
+        currentLine={10}
+        event="return"
+      />
+    );
+    expect(screen.getByTestId('stack-transition-indicator').textContent).toContain('Trở về hàm gọi — giảm số khung (-1)');
   });
 });

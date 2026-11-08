@@ -569,4 +569,335 @@ describe('ArrayVariablesCanvas Component Tests', () => {
     expect(() => isDeclarationStatement('int a.b[2];', 'a.b')).not.toThrow();
     expect(isDeclarationStatement('xyz[0] = 1;', 'a.b')).toBe(false);
   });
+  // AT-21 (M1.2a - Fixture A): factorial(4) multi-frame Call Stack in LIFO order
+  it('AT-21 (M1.2a - Fixture A): groups recursive activations of factorial(4) in LIFO order with clear indicators', () => {
+    const stackToRender = [
+      {
+        funcName: 'main',
+        frameId: '0x5ffe40',
+        frameDepth: 0,
+        isHighlighted: false,
+        line: 10,
+        encodedLocals: {
+          result: ['C_DATA', '0x0', 'uninitialized', '?'],
+        },
+      },
+      {
+        funcName: 'factorial',
+        frameId: '0x5ffe10',
+        frameDepth: 1,
+        isHighlighted: false,
+        line: 6,
+        encodedLocals: {
+          n: ['C_DATA', '0x5ffe40', 'int', 4],
+        },
+      },
+      {
+        funcName: 'factorial',
+        frameId: '0x5ffde0',
+        frameDepth: 2,
+        isHighlighted: false,
+        line: 6,
+        encodedLocals: {
+          n: ['C_DATA', '0x5ffe10', 'int', 3],
+        },
+      },
+      {
+        funcName: 'factorial',
+        frameId: '0x5ffdb0',
+        frameDepth: 3,
+        isHighlighted: false,
+        line: 6,
+        encodedLocals: {
+          n: ['C_DATA', '0x5ffde0', 'int', 2],
+        },
+      },
+      {
+        funcName: 'factorial',
+        frameId: '0x5ffd80',
+        frameDepth: 4,
+        isHighlighted: true,
+        line: 5,
+        encodedLocals: {
+          n: ['C_DATA', '0x5ffdb0', 'int', 1],
+        },
+      },
+    ];
+
+    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} />);
+
+    // Verify section header & frame count badge
+    expect(screen.getByTestId('call-stack-section')).toBeDefined();
+    expect(screen.getByTestId('stack-frame-count').textContent).toContain('5 khung lệnh');
+    expect(screen.getByText(/Ngăn xếp Gọi hàm/)).toBeDefined();
+
+    // Verify all 5 frame containers exist
+    for (let depth = 0; depth <= 4; depth++) {
+      expect(screen.getByTestId(`call-stack-frame-${depth}`)).toBeDefined();
+    }
+
+    // Top active frame (depth 4: factorial n=1)
+    const frameTop = screen.getByTestId('call-stack-frame-4');
+    expect(frameTop.textContent).toContain('ĐỈNH NGĂN XẾP (TOP)');
+    expect(frameTop.textContent).toContain('Đang thực thi (Active)');
+    expect(frameTop.textContent).toContain('ID: 0x5ffd80');
+    expect(frameTop.textContent).toContain('1');
+
+    // Bottom frame (depth 0: main)
+    const frameBottom = screen.getByTestId('call-stack-frame-0');
+    expect(frameBottom.textContent).toContain('ĐÁY NGĂN XẾP (BOTTOM)');
+    expect(frameBottom.textContent).toContain('ID: 0x5ffe40');
+    expect(frameBottom.textContent).toContain('result');
+
+    // Call connectors between 5 frames (4 connectors)
+    const connectors = screen.getAllByText(/được gọi bởi/);
+    expect(connectors.length).toBe(4);
+  });
+
+  // AT-22 (M1.2a - Fixture B): factorial(1) Base-case Call Stack
+  it('AT-22 (M1.2a - Fixture B): renders base-case factorial(1) with 2 frames correctly', () => {
+    const stackToRender = [
+      {
+        funcName: 'main',
+        frameId: '0x1000',
+        frameDepth: 0,
+        isHighlighted: false,
+        line: 10,
+        encodedLocals: {
+          result: ['C_DATA', '0x0', 'uninitialized', '?'],
+        },
+      },
+      {
+        funcName: 'factorial',
+        frameId: '0x1050',
+        frameDepth: 1,
+        isHighlighted: true,
+        line: 5,
+        encodedLocals: {
+          n: ['C_DATA', '0x1000', 'int', 1],
+        },
+      },
+    ];
+
+    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} />);
+
+    expect(screen.getByTestId('stack-frame-count').textContent).toContain('2 khung lệnh');
+    const frame1 = screen.getByTestId('call-stack-frame-1');
+    expect(frame1.textContent).toContain('ĐỈNH NGĂN XẾP (TOP)');
+    expect(frame1.textContent).toContain('n');
+    expect(frame1.textContent).toContain('1');
+
+    const frame0 = screen.getByTestId('call-stack-frame-0');
+    expect(frame0.textContent).toContain('ĐÁY NGĂN XẾP (BOTTOM)');
+  });
+
+  // AT-23 (M1.2a - Fixture C): Generic Call Stack (compute -> helper)
+  it('AT-23 (M1.2a - Fixture C): renders generic non-recursive call stack with distinct function names', () => {
+    const stackToRender = [
+      {
+        funcName: 'main',
+        frameId: '0x2000',
+        frameDepth: 0,
+        isHighlighted: false,
+        line: 16,
+        encodedLocals: {
+          val: ['C_DATA', '0x0', 'uninitialized', '?'],
+        },
+      },
+      {
+        funcName: 'compute',
+        frameId: '0x2050',
+        frameDepth: 1,
+        isHighlighted: false,
+        line: 11,
+        encodedLocals: {
+          a: ['C_DATA', '0x2050', 'int', 5],
+          x: ['C_DATA', '0x2054', 'int', 15],
+        },
+      },
+      {
+        funcName: 'helper',
+        frameId: '0x20a0',
+        frameDepth: 2,
+        isHighlighted: true,
+        line: 5,
+        encodedLocals: {
+          b: ['C_DATA', '0x20a0', 'int', 15],
+          y: ['C_DATA', '0x20a4', 'int', 30],
+        },
+      },
+    ];
+
+    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} />);
+
+    expect(screen.getByTestId('stack-frame-count').textContent).toContain('3 khung lệnh');
+
+    const helperFrame = screen.getByTestId('call-stack-frame-2');
+    expect(helperFrame.textContent).toContain('helper()');
+    expect(helperFrame.textContent).toContain('Đang thực thi (Active)');
+    expect(helperFrame.textContent).toContain('30');
+
+    const computeFrame = screen.getByTestId('call-stack-frame-1');
+    expect(computeFrame.textContent).toContain('compute()');
+    expect(computeFrame.textContent).toContain('15');
+
+    const mainFrame = screen.getByTestId('call-stack-frame-0');
+    expect(mainFrame.textContent).toContain('main()');
+  });
+
+  // AT-24 (M1.2a - Fixture D): Frame isolation with identical variable names
+  it('AT-24 (M1.2a - Fixture D): isolates frames with identical variable names (count, step)', () => {
+    const stackToRender = [
+      {
+        funcName: 'main',
+        frameId: '0x3000',
+        frameDepth: 0,
+        isHighlighted: false,
+        line: 12,
+        encodedLocals: {
+          total: ['C_DATA', '0x0', 'uninitialized', '?'],
+        },
+      },
+      {
+        funcName: 'countdown',
+        frameId: '0x3050',
+        frameDepth: 1,
+        isHighlighted: false,
+        line: 7,
+        encodedLocals: {
+          count: ['C_DATA', '0x3050', 'int', 3],
+          step: ['C_DATA', '0x3054', 'int', 30],
+        },
+      },
+      {
+        funcName: 'countdown',
+        frameId: '0x30a0',
+        frameDepth: 2,
+        isHighlighted: true,
+        line: 6,
+        encodedLocals: {
+          count: ['C_DATA', '0x30a0', 'int', 2],
+          step: ['C_DATA', '0x30a4', 'int', 20],
+        },
+      },
+    ];
+
+    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={6} />);
+
+    const frame1 = screen.getByTestId('call-stack-frame-1');
+    expect(frame1.textContent).toContain('30');
+    expect(frame1.textContent).toContain('3');
+
+    const frame2 = screen.getByTestId('call-stack-frame-2');
+    expect(frame2.textContent).toContain('20');
+    expect(frame2.textContent).toContain('2');
+  });
+
+  // AT-25 (M1.2a - Fixture E): Push and Pop Transition notices
+  it('AT-25 (M1.2a - Fixture E): truthfully displays neutral push and pop indicators upon frame transitions', () => {
+    const frameMain = {
+      funcName: 'main',
+      frameId: '0x4000',
+      frameDepth: 0,
+      isHighlighted: false,
+      encodedLocals: {},
+    };
+    const frameRecur1 = {
+      funcName: 'factorial',
+      frameId: '0x4050',
+      frameDepth: 1,
+      isHighlighted: false,
+      encodedLocals: { n: ['C_DATA', '0x4050', 'int', 4] },
+    };
+    const frameRecur2 = {
+      funcName: 'factorial',
+      frameId: '0x40a0',
+      frameDepth: 2,
+      isHighlighted: true,
+      encodedLocals: { n: ['C_DATA', '0x40a0', 'int', 3] },
+    };
+
+    // Case 1: Push (Calling function, frame count increases 2 -> 3)
+    const { unmount } = render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameMain, frameRecur1, frameRecur2]}
+        previousStackToRender={[frameMain, frameRecur1]}
+        currentLine={5}
+      />
+    );
+
+    const pushBadge = screen.getByTestId('stack-transition-indicator');
+    expect(pushBadge.textContent).toContain('Gọi hàm — thêm khung (+1)');
+    unmount();
+
+    // Case 2: Pop (Returning from function, frame count decreases 3 -> 2)
+    render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameMain, frameRecur1]}
+        previousStackToRender={[frameMain, frameRecur1, frameRecur2]}
+        currentLine={6}
+      />
+    );
+
+    const popBadge = screen.getByTestId('stack-transition-indicator');
+    expect(popBadge.textContent).toContain('Trở về hàm gọi — giảm số khung (-1)');
+  });
+
+  // AT-26 (M1.2a - Regression): Ambiguous frame transition safety
+  it('AT-26 (M1.2a - Regression): omits push/pop indicator when stack transitions ambiguously without runtime call/return event', () => {
+    const frameA = { funcName: 'main', frameId: '0x1000', frameDepth: 0, isHighlighted: false, encodedLocals: {} };
+    const frameB = { funcName: 'workerA', frameId: '0x1050', frameDepth: 1, isHighlighted: false, encodedLocals: {} };
+    const frameC = { funcName: 'altMain', frameId: '0x2000', frameDepth: 0, isHighlighted: false, encodedLocals: {} };
+    const frameD = { funcName: 'workerB', frameId: '0x2050', frameDepth: 1, isHighlighted: false, encodedLocals: {} };
+    const frameE = { funcName: 'workerC', frameId: '0x20a0', frameDepth: 2, isHighlighted: true, encodedLocals: {} };
+
+    // Ambiguous growth: prev has [frameA, frameB] (count 2), curr has [frameC, frameD, frameE] (count 3)
+    // Shared prefix is 0 (mismatch at base). Without event === 'call', indicator must be omitted.
+    const { unmount } = render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameC, frameD, frameE]}
+        previousStackToRender={[frameA, frameB]}
+        currentLine={10}
+        event="stepLine"
+      />
+    );
+    expect(screen.queryByTestId('stack-transition-indicator')).toBeNull();
+    unmount();
+
+    // But if event === 'call' is explicitly certified by tracer, push indicator is honored
+    const { unmount: unmount2 } = render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameC, frameD, frameE]}
+        previousStackToRender={[frameA, frameB]}
+        currentLine={10}
+        event="call"
+      />
+    );
+    expect(screen.getByTestId('stack-transition-indicator').textContent).toContain('Gọi hàm — thêm khung (+1)');
+    unmount2();
+
+    // Ambiguous shrinkage: prev has [frameC, frameD, frameE] (count 3), curr has [frameA, frameB] (count 2)
+    // Shared prefix is 0 (mismatch at base). Without event === 'return', indicator must be omitted.
+    const { unmount: unmount3 } = render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameA, frameB]}
+        previousStackToRender={[frameC, frameD, frameE]}
+        currentLine={10}
+        event="stepLine"
+      />
+    );
+    expect(screen.queryByTestId('stack-transition-indicator')).toBeNull();
+    unmount3();
+
+    // If event === 'return' is explicitly certified by tracer, pop indicator is honored
+    render(
+      <ArrayVariablesCanvas
+        stackToRender={[frameA, frameB]}
+        previousStackToRender={[frameC, frameD, frameE]}
+        currentLine={10}
+        event="return"
+      />
+    );
+    expect(screen.getByTestId('stack-transition-indicator').textContent).toContain('Trở về hàm gọi — giảm số khung (-1)');
+  });
 });

@@ -6,6 +6,7 @@ export interface ArrayVariablesCanvasProps {
   codeText?: string;
   isTraceStale?: boolean;
   previousStackToRender?: any[];
+  event?: string;
 }
 
 interface ResolvedArray {
@@ -46,6 +47,17 @@ interface ScalarVar {
   frameId: string;
   isCurrentFrame: boolean;
   isIndexCandidate?: boolean;
+  isUninitialized?: boolean;
+  isMutated?: boolean;
+}
+
+interface FrameGroup {
+  frameId: string;
+  funcName: string;
+  frameDepth: number;
+  isHighlighted: boolean;
+  line?: number;
+  scalars: ScalarVar[];
 }
 
 /**
@@ -68,6 +80,7 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
   codeText,
   isTraceStale = false,
   previousStackToRender,
+  event,
 }) => {
   // Empty state handling
   if (!stackToRender || stackToRender.length === 0) {
@@ -112,6 +125,20 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
     }
   }
 
+  // Previous step scalar values for mutation detection per frame: `${prevFrameId}::${varName}` -> rawVal
+  const previousScalarValues = new Map<string, any>();
+  if (previousStackToRender && Array.isArray(previousStackToRender)) {
+    for (const prevFrame of previousStackToRender) {
+      if (!prevFrame?.encodedLocals) continue;
+      const prevFrameId = String(prevFrame.frameId ?? "");
+      for (const [varName, val] of Object.entries<any>(prevFrame.encodedLocals)) {
+        if (Array.isArray(val) && val[0] === "C_DATA") {
+          previousScalarValues.set(`${prevFrameId}::${varName}`, val[3]);
+        }
+      }
+    }
+  }
+
   // Build set of previously-known array identities (frameId + varName) for uninitialized detection
   // If a C_ARRAY appears in current step but NOT in previous step's same frame → declaration step → values uninitialized
   const previouslyKnownArrayKeys = new Set<string>();
@@ -127,6 +154,8 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
     }
   }
 
+  const frameGroups: FrameGroup[] = [];
+
   // Traverse stack frames
   for (let fIdx = 0; fIdx < stackToRender.length; fIdx++) {
     const frame = stackToRender[fIdx];
@@ -134,7 +163,11 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
 
     const frameName = frame.funcName || `frame_${fIdx}`;
     const frameId = String(frame.frameId || fIdx);
+    const frameDepth = typeof frame.frameDepth === "number" ? frame.frameDepth : fIdx;
     const isCurrentFrame = frame === activeFrame;
+    const frameLine = typeof frame.line === "number" ? frame.line : undefined;
+
+    const currentFrameScalars: ScalarVar[] = [];
 
     for (const [varName, val] of Object.entries<any>(frame.encodedLocals)) {
       if (!Array.isArray(val)) continue;
@@ -212,7 +245,11 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
           });
         } else {
           const isNumeric = typeof rawVal === 'number' && !Number.isNaN(rawVal);
-          allScalars.push({
+          const isUninitialized = valType === 'uninitialized' || rawVal === '?' || rawVal === null || rawVal === undefined;
+          const prevScalarVal = previousScalarValues.get(`${frameId}::${varName}`);
+          const isMutated = prevScalarVal !== undefined && prevScalarVal !== rawVal;
+
+          const scVar: ScalarVar = {
             name: varName,
             type: valType,
             value: rawVal !== null && rawVal !== undefined ? String(rawVal) : '?',
@@ -221,9 +258,62 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
             frameId,
             isCurrentFrame,
             isIndexCandidate: isNumeric && rawVal >= 0,
-          });
+            isUninitialized,
+            isMutated,
+          };
+          currentFrameScalars.push(scVar);
+          allScalars.push(scVar);
         }
       }
+    }
+
+    frameGroups.push({
+      frameId,
+      funcName: frameName,
+      frameDepth,
+      isHighlighted: isCurrentFrame,
+      line: frameLine,
+      scalars: currentFrameScalars,
+    });
+  }
+
+  const framesInStackOrder = [...frameGroups].reverse();
+
+  // Evidenced push / pop transition indicator based on runtime semantics and shared-prefix frame continuity
+  let transitionNotice: { type: 'push' | 'pop'; text: string } | null = null;
+  if (previousStackToRender && Array.isArray(previousStackToRender) && stackToRender && Array.isArray(stackToRender)) {
+    const prevCount = previousStackToRender.length;
+    const currCount = stackToRender.length;
+
+    let sharedPrefix = 0;
+    while (
+      sharedPrefix < prevCount &&
+      sharedPrefix < currCount &&
+      previousStackToRender[sharedPrefix]?.frameId &&
+      stackToRender[sharedPrefix]?.frameId &&
+      previousStackToRender[sharedPrefix].frameId === stackToRender[sharedPrefix].frameId
+    ) {
+      sharedPrefix++;
+    }
+
+    const isEvidencedExtension =
+      (event === 'call' && currCount > prevCount) ||
+      (currCount > prevCount && sharedPrefix === prevCount);
+
+    const isEvidencedContraction =
+      (event === 'return' && currCount < prevCount) ||
+      (currCount < prevCount && sharedPrefix === currCount);
+
+    if (isEvidencedExtension) {
+      transitionNotice = {
+        type: 'push',
+        text: `Gọi hàm — thêm khung (+${currCount - prevCount})`,
+      };
+    } else if (isEvidencedContraction) {
+      transitionNotice = {
+        type: 'pop',
+        text: `Trở về hàm gọi — giảm số khung (-${prevCount - currCount})`,
+      };
     }
   }
 
@@ -431,43 +521,157 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
         )}
       </div>
 
-      {/* Scalar Variables Grouped by Stack Frame */}
-      <div className="space-y-3 pt-2">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+      {/* Call Stack & Scalar Variables Section */}
+      <div className="space-y-3 pt-2" data-testid="call-stack-section">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2 flex-wrap gap-2">
           <div className="flex items-center space-x-2">
-            <span className="text-sm font-bold text-slate-200">Biến cục bộ & Chỉ số vòng lặp (Scalar Variables)</span>
-            <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded">
+            <span className="text-sm font-bold text-slate-200">
+              {stackToRender.length > 1
+                ? "Ngăn xếp Gọi hàm (Call Stack — LIFO)"
+                : "Biến cục bộ & Chỉ số vòng lặp (Scalar Variables)"}
+            </span>
+            <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded" data-testid="stack-frame-count">
+              {stackToRender.length} khung lệnh
+            </span>
+            <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">
               {allScalars.length} biến
             </span>
           </div>
+
+          {/* Neutral Push/Pop Transition indicator */}
+          {transitionNotice && (
+            <div className="flex items-center">
+              <span
+                className={`flex items-center space-x-1 text-[11px] px-2.5 py-0.5 rounded-full font-semibold ${
+                  transitionNotice.type === "push"
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                    : "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                }`}
+                data-testid="stack-transition-indicator"
+              >
+                <span>{transitionNotice.type === "push" ? "▲" : "▼"}</span>
+                <span>{transitionNotice.text}</span>
+              </span>
+            </div>
+          )}
         </div>
 
-        {allScalars.length === 0 ? (
+        {/* Frames rendering in LIFO Stack Order (Top/Innermost active frame on top, Bottom/Outermost caller at bottom) */}
+        {framesInStackOrder.length === 0 ? (
           <div className="p-4 rounded-lg border border-dashed border-slate-800/80 bg-slate-900/20 text-center text-xs text-slate-500">
             Không có biến vô hướng nào trong các khung lệnh hiện tại.
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-            {allScalars.map((sc, idx) => (
-              <div
-                key={`${sc.frameId}_${sc.name}_${idx}`}
-                className={`p-2.5 rounded-lg border text-xs flex flex-col justify-between space-y-1 ${
-                  sc.isCurrentFrame
-                    ? 'border-blue-900/80 bg-blue-950/20'
-                    : 'border-slate-800 bg-slate-900/40 text-slate-400'
-                }`}
-                data-testid={`scalar-var-${sc.name}`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-blue-300">{sc.name}</span>
-                  <span className="text-[10px] text-slate-500">({sc.type})</span>
-                </div>
-                <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
-                  <span className="text-sm font-semibold text-slate-100">{sc.value}</span>
-                  <span className="text-[9px] text-slate-500">{sc.frameName}()</span>
-                </div>
-              </div>
-            ))}
+          <div className="space-y-3">
+            {framesInStackOrder.map((group, gIdx) => {
+              const isTop = gIdx === 0 && stackToRender.length > 1;
+              const isBottom = gIdx === framesInStackOrder.length - 1 && stackToRender.length > 1;
+
+              return (
+                <React.Fragment key={`${group.frameId}_${group.frameDepth}`}>
+                  {/* Frame Card */}
+                  <div
+                    className={`rounded-xl border p-3 transition-all ${
+                      group.isHighlighted
+                        ? "border-blue-500/70 bg-gradient-to-br from-blue-950/30 via-slate-900/80 to-slate-950 ring-1 ring-blue-500/30 shadow-md shadow-blue-950/30"
+                        : "border-slate-800/80 bg-slate-900/40 hover:border-slate-700/80"
+                    }`}
+                    data-testid={`call-stack-frame-${group.frameDepth}`}
+                    data-frame-id={group.frameId}
+                  >
+                    {/* Frame Header */}
+                    <div className="flex items-center justify-between border-b border-slate-800/70 pb-2 mb-2 flex-wrap gap-2">
+                      <div className="flex items-center space-x-2">
+                        {group.isHighlighted ? (
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                        ) : (
+                          <span className="w-2 h-2 rounded-full bg-slate-600" />
+                        )}
+                        <span className="font-bold text-sm text-slate-100 font-mono">
+                          {group.funcName}()
+                        </span>
+                        {group.isHighlighted && (
+                          <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
+                            Đang thực thi (Active)
+                          </span>
+                        )}
+                        {isTop && (
+                          <span className="text-[10px] bg-blue-500/20 text-blue-300 border border-blue-500/30 px-1.5 py-0.5 rounded font-bold">
+                            ĐỈNH NGĂN XẾP (TOP)
+                          </span>
+                        )}
+                        {isBottom && (
+                          <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-1.5 py-0.5 rounded font-bold">
+                            ĐÁY NGĂN XẾP (BOTTOM)
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-3 text-xs text-slate-400 font-mono">
+                        {group.line && (
+                          <span className="text-blue-400 text-[11px]">Dòng {group.line}</span>
+                        )}
+                        <span className="text-[10px] bg-slate-800/80 text-slate-400 px-1.5 py-0.5 rounded">
+                          Độ sâu #{group.frameDepth}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          ID: {group.frameId}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Frame Variables Grid */}
+                    {group.scalars.length === 0 ? (
+                      <div className="text-[11px] text-slate-500 italic py-1">
+                        (Khung không có biến cục bộ vô hướng)
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {group.scalars.map((sc) => (
+                          <div
+                            key={`${sc.frameId}_${sc.name}`}
+                            className={`p-2.5 rounded-lg border text-xs flex flex-col justify-between space-y-1 transition-colors ${
+                              sc.isMutated
+                                ? "border-amber-400 bg-amber-500/10 shadow-sm shadow-amber-500/20"
+                                : sc.isCurrentFrame
+                                ? "border-blue-900/80 bg-blue-950/20"
+                                : "border-slate-800 bg-slate-950/60 text-slate-400"
+                            }`}
+                            data-testid={`scalar-var-${sc.name}`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-blue-300 truncate max-w-[90px]">{sc.name}</span>
+                              <span className="text-[10px] text-slate-500">({sc.type})</span>
+                            </div>
+                            <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+                              <div className="flex items-center space-x-1">
+                                <span className={`text-sm font-semibold ${sc.isUninitialized ? "italic text-slate-400" : "text-slate-100"}`}>
+                                  {sc.value}
+                                </span>
+                                {sc.isUninitialized && (
+                                  <span className="text-[9px] text-slate-500">chưa khởi tạo</span>
+                                )}
+                              </div>
+                              <span className="text-[9px] text-slate-500 font-mono">{sc.frameName}()</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Visual LIFO Call Link connector between stacked frames */}
+                  {gIdx < framesInStackOrder.length - 1 && (
+                    <div className="flex items-center justify-center py-0.5 text-slate-600 text-xs select-none">
+                      <span className="flex items-center space-x-1 bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded-full text-[10px] text-slate-400 font-mono shadow-sm">
+                        <span>▲</span>
+                        <span>được gọi bởi (called by)</span>
+                      </span>
+                    </div>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </div>
         )}
       </div>

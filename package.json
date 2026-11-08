@@ -12,7 +12,8 @@
     "build": "npm --prefix server run build && npm --prefix client run build",
     "test": "node tests/runAllTests.js",
     "test:browser": "node tests/browserSmoke.js",
-    "test:browser:array": "node tests/browserSmokeArray.js"
+    "test:browser:array": "node tests/browserSmokeArray.js",
+    "test:browser:recursion": "node tests/browserSmokeRecursion.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

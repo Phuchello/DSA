@@ -135,12 +135,19 @@ jobs:
           }
           & $chromePath --version
           Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$chromePath"
-          $artifactPath = Join-Path $env:RUNNER_TEMP 'flowlab-browser-smoke'
-          New-Item -ItemType Directory -Force -Path $artifactPath | Out-Null
-          Add-Content -Path $env:GITHUB_ENV -Value "FLOWLAB_BROWSER_ARTIFACT_DIR=$artifactPath"
+          $artifactRoot = Join-Path $env:RUNNER_TEMP 'flowlab-browser-smoke'
+          New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'linked-list') | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'arrays') | Out-Null
 
-      - name: Run real Chrome browser smoke against native C++/GDB backend
+      - name: Run linked-list Chrome browser smoke against native C++/GDB backend
+        env:
+          FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/linked-list
         run: npm run test:browser
+
+      - name: Run arrays & variables Chrome browser acceptance against native C++/GDB backend
+        env:
+          FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/arrays
+        run: npm run test:browser:array
 
       - name: Preserve real browser logs and screenshots
         if: always()

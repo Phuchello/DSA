@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Header } from './components/Header';
 import { CodeEditor } from './components/CodeEditor';
 import { LinkedListCanvas } from './components/LinkedListCanvas';
+import { ArrayVariablesCanvas } from './components/ArrayVariablesCanvas';
 import { TimelineControls } from './components/TimelineControls';
 import { EducationalBanner } from './components/EducationalBanner';
 import { MemoryInspector } from './components/MemoryInspector';
@@ -16,6 +17,8 @@ export const App: React.FC = () => {
   const [traceSource, setTraceSource] = useState<{ code: string; stdin: string } | null>(null);
   const [finalStdout, setFinalStdout] = useState<string>('');
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
+  const [activeCanvasTab, setActiveCanvasTab] = useState<'linked-list' | 'arrays-variables'>('linked-list');
+  const userSelectedTabRef = useRef<boolean>(false);
   const [mode, setMode] = useState<'beginner' | 'advanced'>('beginner');
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -56,6 +59,7 @@ export const App: React.FC = () => {
     latestRequestIdRef.current += 1;
     setIsRunning(false);
     setSelectedLessonId(lessonId);
+    userSelectedTabRef.current = false;
     const found = lessons.find((l) => l.id === lessonId);
     if (found) {
       latestCodeRef.current = found.code;
@@ -114,6 +118,14 @@ export const App: React.FC = () => {
         setTraceSource(requestSnapshot);
         setFinalStdout(data.finalStdout || '');
         setCurrentStepIndex(0);
+
+        // Auto-select tab if user has not explicitly clicked a tab
+        if (!userSelectedTabRef.current) {
+          const hasLinkedListNodes = data.trace.some(
+            (step) => step.dsa && Array.isArray(step.dsa.nodes) && step.dsa.nodes.length > 0
+          );
+          setActiveCanvasTab(hasLinkedListNodes ? 'linked-list' : 'arrays-variables');
+        }
       } else {
         setTrace([]);
         setTraceSource(null);
@@ -256,25 +268,75 @@ export const App: React.FC = () => {
 
         {/* Right Panel: Linked List Canvas & Memory Inspector */}
         <div className="w-full md:w-7/12 h-1/2 md:h-full flex flex-col bg-slate-950 overflow-hidden relative">
-          {/* Stale Trace Overlay Banner */}
-          {isTraceStale && (
-            <div
-              data-testid="stale-canvas-banner"
-              className="absolute top-2 right-4 z-20 bg-amber-900/90 border border-amber-600 text-amber-200 px-3 py-1 rounded-md text-xs font-semibold shadow-lg backdrop-blur flex items-center gap-2"
-            >
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              <span>Vết thực thi cũ (Mã nguồn đã đổi)</span>
+          {/* Canvas Tabs Header */}
+          <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-3 py-1.5 shrink-0 z-10">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                data-testid="canvas-tab-linked-list"
+                onClick={() => {
+                  userSelectedTabRef.current = true;
+                  setActiveCanvasTab('linked-list');
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                  activeCanvasTab === 'linked-list'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                }`}
+              >
+                <span>🔗</span>
+                <span>Danh sách liên kết</span>
+              </button>
+              <button
+                type="button"
+                data-testid="canvas-tab-arrays"
+                onClick={() => {
+                  userSelectedTabRef.current = true;
+                  setActiveCanvasTab('arrays-variables');
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                  activeCanvasTab === 'arrays-variables'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                }`}
+              >
+                <span>📊</span>
+                <span>Mảng &amp; Biến</span>
+              </button>
             </div>
-          )}
 
-          {/* Linked List Visualizer */}
-          <div className="flex-1 overflow-hidden">
-            <LinkedListCanvas
-              nodes={currentStep?.dsa.nodes || []}
-              pointers={currentStep?.dsa.pointers || []}
-              listRoots={currentStep?.dsa.listRoots || []}
-              currentLine={currentStep?.line}
-            />
+            {/* Stale Trace Banner */}
+            {isTraceStale && (
+              <div
+                data-testid="stale-canvas-banner"
+                className="bg-amber-900/90 border border-amber-600 text-amber-200 px-2.5 py-0.5 rounded text-xs font-semibold shadow flex items-center gap-1.5"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                <span>Vết thực thi cũ (Mã nguồn đã đổi)</span>
+              </div>
+            )}
+          </div>
+
+          {/* Visualizer Canvas Body */}
+          <div className="flex-1 overflow-hidden relative">
+            {activeCanvasTab === 'linked-list' ? (
+              <LinkedListCanvas
+                nodes={currentStep?.dsa.nodes || []}
+                pointers={currentStep?.dsa.pointers || []}
+                listRoots={currentStep?.dsa.listRoots || []}
+                currentLine={currentStep?.line}
+              />
+            ) : (
+              <ArrayVariablesCanvas
+                stackToRender={currentStep?.stackToRender || []}
+                currentLine={currentStep?.line}
+                codeText={currentStep?.codeText}
+                isTraceStale={isTraceStale}
+                previousStackToRender={
+                  currentStepIndex > 0 ? trace[currentStepIndex - 1]?.stackToRender : undefined
+                }
+              />
+            )}
           </div>
 
           {/* Advanced Mode: Memory Inspector */}

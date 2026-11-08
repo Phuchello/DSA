@@ -8,7 +8,7 @@ const ROOT = path.resolve(__dirname, '..');
 const APP_URL = 'http://127.0.0.1:5173/';
 const ARTIFACT_DIR = path.resolve(
   process.env.FLOWLAB_BROWSER_ARTIFACT_DIR ||
-  path.join('C:', 'Users', 'lyle3', '.gemini', 'antigravity', 'brain', '0a1fbaa2-e10c-43a2-8679-042374881d6e', 'evidence', 'recursion_clarity_m1_2a')
+  path.join(os.tmpdir(), 'dsa-flowlab-browser-recursion')
 );
 fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 
@@ -572,13 +572,23 @@ async function main() {
     const hasPushIndicator = await evaluate("Boolean(document.querySelector('[data-testid=\"stack-transition-indicator\"]'))");
     const pushText = await evaluate("document.querySelector('[data-testid=\"stack-transition-indicator\"]')?.textContent || ''");
     log(`  Push transition indicator observed: ${hasPushIndicator} ("${pushText}")`);
+    assert.ok(hasPushIndicator, 'Push transition indicator must be present upon stack extension');
+    assert.ok(
+      pushText.includes('Gọi hàm — thêm khung (+1)'),
+      `Push transition text must describe frame addition, got: "${pushText}"`
+    );
 
     // Advance to return step (step 8 -> 9: Pop)
     await setStep(8);
     await stepForward();
     const popText = await evaluate("document.querySelector('[data-testid=\"stack-transition-indicator\"]')?.textContent || ''");
-    const hasPopIndicator = popText.includes('giảm số khung') || popText.includes('Trở về');
+    const hasPopIndicator = Boolean(popText && (popText.includes('giảm số khung') || popText.includes('Trở về')));
     log(`  Pop transition indicator observed: ${hasPopIndicator} ("${popText}")`);
+    assert.ok(hasPopIndicator, 'Pop transition indicator must be present upon stack contraction');
+    assert.ok(
+      popText.includes('Trở về hàm gọi — giảm số khung (-1)'),
+      `Pop transition text must describe frame return/contraction, got: "${popText}"`
+    );
 
     const screenshotPop = await saveScreenshot('m1-2a-return-transition-pop.png');
     recordCheck('Fixture E: Push/Pop neutral indicators observed upon frame call and return transitions', {

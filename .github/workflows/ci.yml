@@ -138,6 +138,7 @@ jobs:
           $artifactRoot = Join-Path $env:RUNNER_TEMP 'flowlab-browser-smoke'
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'linked-list') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'arrays') | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'recursion') | Out-Null
 
       - name: Run linked-list Chrome browser smoke against native C++/GDB backend
         env:
@@ -148,6 +149,11 @@ jobs:
         env:
           FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/arrays
         run: npm run test:browser:array
+
+      - name: Run recursion call stack Chrome browser acceptance against native C++/GDB backend
+        env:
+          FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/recursion
+        run: npm run test:browser:recursion
 
       - name: Preserve real browser logs and screenshots
         if: always()

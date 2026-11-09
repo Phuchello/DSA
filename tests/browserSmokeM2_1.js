@@ -377,10 +377,10 @@ int main() {
       if (pushStep === -1 && (badgeText.includes('▲') || observedText.includes('Gọi hàm') || observedText.includes('mở rộng độ sâu'))) {
         pushStep = s;
       }
-      if (baseStep === -1 && (semanticsText.includes('đã được xác nhận') || (semanticsText.includes('Điều kiện dừng') && !semanticsText.includes('tiềm năng')))) {
+      if (baseStep === -1 && (semanticsText.includes('thỏa mãn') && semanticsText.includes('chuẩn bị thực hiện lệnh return'))) {
         baseStep = s;
       }
-      if (potentialBaseStep === -1 && (semanticsText.includes('tiềm năng') || semanticsText.includes('potential'))) {
+      if (potentialBaseStep === -1 && (semanticsText.includes('chưa được đáp ứng') || semanticsText.includes('tiềm năng') || semanticsText.includes('potential'))) {
         potentialBaseStep = s;
       }
       if (popStep === -1 && (badgeText.includes('▼') || observedText.includes('trở về') || observedText.includes('kết thúc') || observedText.includes('thu hồi') || observedText.includes('Pop'))) {
@@ -394,25 +394,24 @@ int main() {
 
     assert.ok(baseStep >= 0, 'Must have a step showing confirmed base case');
     await setStep(baseStep);
-    // FIX 4: Verify base-case step is a confirmed termination (n=1), not a false potential (n=4)
     const baseCaseSemantics = await evaluate("document.querySelector('[data-testid=\"explanation-semantics\"]')?.textContent || ''");
     assert.ok(
-      baseCaseSemantics.includes('đã được xác nhận'),
-      `Base case semantics must confirm termination, got: "${baseCaseSemantics}"`
+      baseCaseSemantics.includes('thỏa mãn') && baseCaseSemantics.includes('chuẩn bị thực hiện lệnh return'),
+      `Base case semantics must confirm verified condition and pending return, got: "${baseCaseSemantics}"`
     );
     await saveScreenshot('m2-1-recursion-base-case-confirmed.png');
     console.log(`  Base case confirmed at step ${baseStep}: "${baseCaseSemantics.substring(0, 60)}..."`);
 
-    // Capture false-base-case step (n=4 at if(n<=1)) — potential, not confirmed
-    assert.ok(potentialBaseStep >= 0, 'Must have a step showing potential base case (n=4)');
+    // Capture false-base-case step (n=4 at if(n<=1)) — condition unmet
+    assert.ok(potentialBaseStep >= 0, 'Must have a step showing unmet/potential base case (n=4)');
     await setStep(potentialBaseStep);
     const potentialCaseSemantics = await evaluate("document.querySelector('[data-testid=\"explanation-semantics\"]')?.textContent || ''");
     assert.ok(
-      potentialCaseSemantics.includes('tiềm năng') || potentialCaseSemantics.includes('potential'),
-      `Potential base case semantics must use neutral wording, got: "${potentialCaseSemantics}"`
+      potentialCaseSemantics.includes('chưa được đáp ứng') || potentialCaseSemantics.includes('tiềm năng'),
+      `Potential base case semantics must report condition unmet/potential, got: "${potentialCaseSemantics}"`
     );
     await saveScreenshot('m2-1-recursion-false-base-case-n4.png');
-    console.log(`  Captured false-base-case (potential) screenshot at step ${potentialBaseStep}`);
+    console.log(`  Captured false-base-case screenshot at step ${potentialBaseStep}`);
 
     assert.ok(popStep >= 0, 'Must have a step showing frame pop');
     await setStep(popStep);
@@ -465,35 +464,60 @@ int main() {
     const stepCount3 = await evaluate("Number(document.querySelector('input[type=\"range\"]')?.max || 0) + 1");
     console.log(`Scenario 3 total steps: ${stepCount3}`);
 
-    // FIX 4: Require actual Branch struct field evidence in observed text; no fallback screenshot.
-    let structStep = -1;
-    for (let s = 0; s < stepCount3; s++) {
-      await setStep(s);
-      const observedText = await evaluate("document.querySelector('[data-testid=\"explanation-observed\"]')?.textContent || ''");
-      const badgeText = await evaluate("document.querySelector('[data-testid=\"diff-badge-container\"]')?.textContent || ''");
-      const combined = observedText + ' ' + badgeText;
-      if (
-        (combined.includes('currentPath') || combined.includes('leftGain') || combined.includes('rightGain') || combined.includes('rootGain') || combined.includes('maxPath')) &&
-        (combined.includes('40') || combined.includes('19') || combined.includes('20') || combined.includes('21'))
-      ) {
-        structStep = s;
-        break;
-      }
-    }
-    assert.ok(structStep >= 0, 'Scenario 3 must have a step with Branch struct computation value (19, 20, 21, or 40) in observed text');
+    // TASK 3: Compare one specifically selected variable in a specific frame and step
+    // against its actual native trace value.
+    // Target: Step 14, variable `currentPath`, frame `maxGain#2` (depth 2), native value `19`.
+    // The test must fail when the displayed value is deliberately incorrect, absent, or in the wrong frame.
+    const TARGET_STEP = 14;
+    const TARGET_VAR = 'currentPath';
+    const TARGET_DISPLAY_NAME = 'currentPath@maxGain#2';
+    const TARGET_VALUE = '19';
+    const TARGET_DEPTH = 2;
 
-    // Verify displayed computation values match native trace (Branch: leftNode=19, rightNode=20, root=1, maxPath=40)
-    await setStep(structStep);
+    await setStep(TARGET_STEP);
     const stepObserved = await evaluate("document.querySelector('[data-testid=\"explanation-observed\"]')?.textContent || ''");
     const stepBadge = await evaluate("document.querySelector('[data-testid=\"diff-badge-container\"]')?.textContent || ''");
-    const combinedEvidence = stepObserved + ' ' + stepBadge;
+
+    // 1. Verify observed text specifically attributes 19 to currentPath@maxGain#2
     assert.ok(
-      combinedEvidence.includes('40') || combinedEvidence.includes('19') ||
-      combinedEvidence.includes('20') || combinedEvidence.includes('21'),
-      `Scenario 3 observed text must contain a real Branch computation value (19, 20, 21, or 40). Got: "${stepObserved.substring(0, 100)}"`
+      stepObserved.includes(TARGET_DISPLAY_NAME) && stepObserved.includes(TARGET_VALUE),
+      `Step ${TARGET_STEP} observed text must specifically report ${TARGET_DISPLAY_NAME} initialized to ${TARGET_VALUE}. Got: "${stepObserved}"`
     );
+
+    // 2. Verify badge container reflects the exact mutation
+    assert.ok(
+      stepBadge.includes(TARGET_DISPLAY_NAME) && stepBadge.includes(TARGET_VALUE),
+      `Step ${TARGET_STEP} badge must report ${TARGET_DISPLAY_NAME} and ${TARGET_VALUE}. Got: "${stepBadge}"`
+    );
+
+    // 3. Strict negative assertion: Must NOT attribute currentPath to wrong frames (frame 0 or frame 1)
+    assert.ok(
+      !stepObserved.includes('currentPath@maxGain#1') && !stepObserved.includes('currentPath@main'),
+      `Step ${TARGET_STEP} must NOT associate currentPath with frame 1 or main`
+    );
+
+    // 4. Strict negative assertion: Must NOT claim values from other steps (40, 20, 21) at step 14
+    assert.ok(
+      !stepObserved.includes('40') && !stepObserved.includes('21'),
+      `Step ${TARGET_STEP} must NOT claim unobserved future values 40 or 21`
+    );
+
+    // 5. Verify the variable in the specific frame in Call Stack DOM
+    const frame2Text = await evaluate(`document.querySelector('[data-testid="call-stack-frame-${TARGET_DEPTH}"]')?.textContent || ''`);
+    assert.ok(
+      frame2Text.includes('maxGain') && frame2Text.includes(TARGET_VAR) && frame2Text.includes(TARGET_VALUE),
+      `Call stack frame ${TARGET_DEPTH} must contain maxGain with ${TARGET_VAR}=${TARGET_VALUE}. Got: "${frame2Text}"`
+    );
+
+    // 6. Strict negative assertion: Frame 0 (main) must NOT contain currentPath
+    const frame0Text = await evaluate("document.querySelector('[data-testid=\"call-stack-frame-0\"]')?.textContent || ''");
+    assert.ok(
+      !frame0Text.includes(TARGET_VAR),
+      `Frame 0 (main) must NOT contain ${TARGET_VAR}`
+    );
+
     await saveScreenshot('m2-1-unfamiliar-struct-branch.png');
-    console.log(`✅ Scenario 3 verified with real Branch evidence at step ${structStep}.`);
+    console.log(`✅ Scenario 3 verified: ${TARGET_DISPLAY_NAME} = ${TARGET_VALUE} at step ${TARGET_STEP} with strict negative frame and value assertions.`);
 
     console.log('\n🎉 ALL M2.1 BROWSER ACCEPTANCE TESTS PASSED!');
   } catch (err) {

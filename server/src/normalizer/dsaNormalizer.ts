@@ -434,7 +434,9 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
           },
         },
       });
-      // Do NOT update prevPoint: an invalid step must not seed the next delta.
+      // FIX 3 & CLOSEOUT: Break delta continuity after an invalid snapshot.
+      // Nonadjacent observations must not form a continuous transition across an invalid gap.
+      prevPoint = null;
       continue;
     }
     const rawEp = parseResult.data;
@@ -929,57 +931,89 @@ export function generateVietnameseExplanation(
   // ---------------------------------------------------------------------------
   // Facet 3: "Ý nghĩa" (semantics) — Algorithmic & pedagogical context
   // ---------------------------------------------------------------------------
-  // FIX 1: Distinguish potential base case from OBSERVED/proven termination.
-  // When encountering a base-case conditional check:
-  // - If runtime evidence proves the condition is true (e.g. n <= 1 or ptr == nullptr),
-  //   report confirmed base-case termination.
-  // - If condition is false (e.g. n = 4) or unknown, report neutral potential base-case check.
-  const isBaseCaseConditional = (
-    (/^if\s*\(/.test(trimmed) || /\belse\s+if\s*\(/.test(trimmed)) &&
-    (/\b(nullptr|NULL|0)\b/.test(trimmed) || /<=?\s*1\b/.test(trimmed))
-  );
-
-  let isBaseCaseConfirmed = false;
-  let isBaseCaseEvaluated = false;
-  if (isBaseCaseConditional) {
-    const activeFrame = stackFrames && stackFrames.length > 0 ? stackFrames[stackFrames.length - 1] : null;
-    const locals = activeFrame?.encodedLocals || {};
-    // Check numeric parameter (e.g. n in factorial or fibonacci)
-    if (locals.n && Array.isArray(locals.n) && typeof locals.n[3] === 'number') {
-      isBaseCaseEvaluated = true;
-      if (locals.n[3] <= 1) {
-        isBaseCaseConfirmed = true;
-      }
-    }
-    // Check pointer parameter (e.g. node, p, root)
-    for (const ptrName of ['node', 'p', 'root', 'curr', 'head']) {
-      if (locals[ptrName] && Array.isArray(locals[ptrName])) {
-        isBaseCaseEvaluated = true;
-        const target = locals[ptrName][3];
-        if (target === '0x0' || target === 'nullptr' || target === null || target === 0) {
-          isBaseCaseConfirmed = true;
+  // Evaluate conditional / branch statements accurately and conservatively
+  const extractIfCondition = (str: string): { condition: string; afterCondition: string } | null => {
+    const prefixMatch = str.match(/^(?:if|else\s+if)\s*\(/);
+    if (!prefixMatch) return null;
+    let parenDepth = 1;
+    const startIdx = prefixMatch[0].length;
+    for (let j = startIdx; j < str.length; j++) {
+      if (str[j] === '(') parenDepth++;
+      else if (str[j] === ')') {
+        parenDepth--;
+        if (parenDepth === 0) {
+          return {
+            condition: str.slice(startIdx, j).trim(),
+            afterCondition: str.slice(j + 1).trim(),
+          };
         }
       }
     }
-    // Check pointers list if not found in locals
-    if (!isBaseCaseEvaluated) {
-      for (const ptrName of ['node', 'p', 'root', 'curr', 'head']) {
-        const foundPtr = pointers.find(p => p.name === ptrName);
-        if (foundPtr) {
-          isBaseCaseEvaluated = true;
-          if (!foundPtr.targetAddress || foundPtr.targetAddress === '0x0' || foundPtr.targetAddress === 'nullptr') {
-            isBaseCaseConfirmed = true;
+    return null;
+  };
+
+  const parsedIf = extractIfCondition(trimmed);
+  let branchEvaluation: 'true_with_return' | 'true_without_return' | 'false' | 'compound' | 'unknown' = 'unknown';
+
+  if (parsedIf) {
+    const { condition, afterCondition } = parsedIf;
+    const hasTerminatingReturn = /\breturn\b/.test(afterCondition);
+    const isCompound = condition.includes('&&') || condition.includes('||');
+
+    if (isCompound) {
+      branchEvaluation = 'compound';
+    } else {
+      const activeFrame = stackFrames && stackFrames.length > 0 ? stackFrames[stackFrames.length - 1] : null;
+      const locals = activeFrame?.encodedLocals || {};
+
+      // Check numeric parameter `n`
+      if (/\bn\b/.test(condition) && locals.n && Array.isArray(locals.n)) {
+        const nVal = locals.n[3];
+        if (typeof nVal === 'number') {
+          let condTrue: boolean | null = null;
+          if (/\bn\s*==\s*0\b/.test(condition) || /\b0\s*==\s*n\b/.test(condition)) {
+            condTrue = (nVal === 0);
+          } else if (/\bn\s*<\s*1\b/.test(condition) || /\b1\s*>\s*n\b/.test(condition)) {
+            condTrue = (nVal < 1);
+          } else if (/\bn\s*<=\s*1\b/.test(condition) || /\b1\s*>=\s*n\b/.test(condition)) {
+            condTrue = (nVal <= 1);
+          } else if (/\bn\s*<=\s*0\b/.test(condition)) {
+            condTrue = (nVal <= 0);
+          } else if (/\bn\s*==\s*1\b/.test(condition) || /\b1\s*==\s*n\b/.test(condition)) {
+            condTrue = (nVal === 1);
+          }
+
+          if (condTrue === true) {
+            branchEvaluation = hasTerminatingReturn ? 'true_with_return' : 'true_without_return';
+          } else if (condTrue === false) {
+            branchEvaluation = 'false';
           }
         }
       }
-    }
-    // If stack has only 1 frame and matches base case conditional pattern with n <= 1 in locals
-    // (fallback for single-frame test fixtures where locals might use different names or depth=1)
-    if (!isBaseCaseEvaluated && stackFrames && stackFrames.length === 1) {
-      for (const val of Object.values<any>(locals)) {
-        if (Array.isArray(val) && typeof val[3] === 'number' && val[3] <= 1) {
-          isBaseCaseConfirmed = true;
-          break;
+
+      // Check pointer nullity
+      if (branchEvaluation === 'unknown' && /\b(node|p|root|curr|head)\b/.test(condition)) {
+        const ptrMatch = condition.match(/\b(node|p|root|curr|head)\b/);
+        const pName = ptrMatch ? ptrMatch[1] : '';
+        const pLocal = locals[pName];
+        let ptrVal = Array.isArray(pLocal) ? pLocal[3] : undefined;
+        if (ptrVal === undefined) {
+          const foundPtr = pointers.find(p => p.name === pName);
+          ptrVal = foundPtr?.targetAddress;
+        }
+
+        const isPointerNullCheck = (
+          new RegExp(`\\b${pName}\\s*==\\s*(nullptr|NULL|0)\\b`).test(condition) ||
+          new RegExp(`!\\s*${pName}\\b`).test(condition)
+        );
+
+        if (isPointerNullCheck && ptrVal !== undefined && ptrVal !== '?') {
+          const isNull = (ptrVal === '0x0' || ptrVal === 'nullptr' || ptrVal === null || ptrVal === 0 || ptrVal === '');
+          if (isNull) {
+            branchEvaluation = hasTerminatingReturn ? 'true_with_return' : 'true_without_return';
+          } else {
+            branchEvaluation = 'false';
+          }
         }
       }
     }
@@ -990,11 +1024,17 @@ export function generateVietnameseExplanation(
     semantics = 'Thu hồi vùng nhớ đã hoàn tất nhiệm vụ nhằm tối ưu tài nguyên và tránh rò rỉ bộ nhớ (memory leak).';
   } else if (trimmed.includes('new NODE') || trimmed.includes('CreateNode') || diff.allocatedNodes.length > 0) {
     semantics = 'Toán tử new cấp phát sizeof(NODE) bytes trên Heap và trả về con trỏ địa chỉ ô nhớ.';
-  } else if (isBaseCaseConditional) {
-    if (isBaseCaseConfirmed) {
-      semantics = 'Điều kiện dừng (base case) đã được xác nhận — chuỗi đệ quy kết thúc và quá trình quay lui (backtracking) bắt đầu.';
+  } else if (parsedIf) {
+    if (branchEvaluation === 'true_with_return') {
+      semantics = 'Điều kiện dừng (base case) thỏa mãn — chuẩn bị thực hiện lệnh return để bắt đầu quá trình quay lui (backtracking).';
+    } else if (branchEvaluation === 'true_without_return') {
+      semantics = 'Điều kiện rẽ nhánh thỏa mãn. Khối lệnh bên trong chuẩn bị được thực thi (chưa kết thúc đệ quy do không chứa lệnh return kết thúc hàm).';
+    } else if (branchEvaluation === 'false') {
+      semantics = 'Điều kiện dừng chưa được đáp ứng (giá trị hiện tại không khớp điều kiện) — chương trình chuẩn bị tiếp tục nhánh đệ quy tiếp theo.';
+    } else if (branchEvaluation === 'compound') {
+      semantics = 'Kiểm tra điều kiện rẽ nhánh phức hợp. Kết quả rẽ nhánh phụ thuộc vào toàn bộ biểu thức điều kiện tại thời điểm thực thi — không suy đoán kết quả khi chưa có bằng chứng quan sát.';
     } else {
-      semantics = 'Kiểm tra điều kiện dừng tiềm năng (potential base case). Kết quả rẽ nhánh thực tế phụ thuộc vào giá trị biến tại thời điểm thực thi — không thể suy luận chỉ từ mã nguồn.';
+      semantics = 'Kiểm tra điều kiện dừng tiềm năng (potential base case). Kết quả rẽ nhánh phụ thuộc vào giá trị biến tại thời điểm thực thi — không thể suy luận chỉ từ mã nguồn.';
     }
   } else if (diff.frameTransition?.type === 'push') {
     semantics = 'Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này.';

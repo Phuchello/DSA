@@ -657,7 +657,7 @@ function runEducationalExplanationsTests() {
       `Fix1-A: Must NOT claim termination when n=4. Got: "${sem}"`
     );
     assert.ok(
-      sem.includes('tiềm năng') || sem.includes('potential') || sem.includes('kiểm tra') || sem.includes('điều kiện'),
+      sem.includes('tiềm năng') || sem.includes('potential') || sem.includes('kiểm tra') || sem.toLowerCase().includes('điều kiện'),
       `Fix1-A: Must use neutral/potential language for n=4. Got: "${sem}"`
     );
   });
@@ -688,7 +688,7 @@ function runEducationalExplanationsTests() {
     // Step 0: before 'if (n<=1)' — only 1 frame, semantics must confirm base case
     const sem0 = trace[0].dsa.explanationDetail.semantics;
     assert.ok(
-      sem0.includes('đã được xác nhận') || sem0.includes('Điều kiện dừng') || sem0.includes('base case'),
+      sem0.includes('thỏa mãn') || sem0.includes('Điều kiện dừng') || sem0.includes('base case'),
       `Fix1-B: Must confirm base case at depth=1 (n=1). Got: "${sem0}"`
     );
     assert.ok(
@@ -727,8 +727,159 @@ function runEducationalExplanationsTests() {
       `Fix1-C: Must NOT confirm base case for unknown n at depth>1. Got: "${sem}"`
     );
     assert.ok(
-      sem.includes('tiềm năng') || sem.includes('potential') || sem.includes('kiểm tra') || sem.includes('điều kiện'),
+      sem.includes('tiềm năng') || sem.includes('potential') || sem.includes('kiểm tra') || sem.toLowerCase().includes('điều kiện'),
       `Fix1-C: Must use neutral language for unknown n. Got: "${sem}"`
+    );
+  });
+
+  test('Fix1-D: if (n == 0) return 1; with n=1 must NOT confirm termination', () => {
+    // Counterexample 1: n = 1, condition is n == 0 => FALSE
+    const raw = [
+      {
+        event: 'stepLine', line: 5, funcName: 'factorial',
+        codeText: 'if (n == 0) return 1;',
+        stackToRender: [
+          { funcName: 'factorial', frameId: 'f1', isHighlighted: true, line: 5,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'int', 1] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[0].dsa.explanationDetail.semantics;
+    assert.ok(
+      !sem.includes('thỏa mãn') && !sem.includes('đã được xác nhận') && !sem.includes('chuỗi đệ quy kết thúc'),
+      `Fix1-D: Must NOT confirm termination for if (n == 0) when n=1. Got: "${sem}"`
+    );
+    assert.ok(
+      sem.includes('chưa được đáp ứng') || sem.includes('tiềm năng') || sem.includes('không khớp'),
+      `Fix1-D: Must report condition as not satisfied. Got: "${sem}"`
+    );
+  });
+
+  test('Fix1-E: if (n < 1) return 1; with n=1 must NOT confirm termination', () => {
+    // Counterexample 2: n = 1, condition is n < 1 => FALSE
+    const raw = [
+      {
+        event: 'stepLine', line: 5, funcName: 'factorial',
+        codeText: 'if (n < 1) return 1;',
+        stackToRender: [
+          { funcName: 'factorial', frameId: 'f1', isHighlighted: true, line: 5,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'int', 1] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[0].dsa.explanationDetail.semantics;
+    assert.ok(
+      !sem.includes('thỏa mãn') && !sem.includes('đã được xác nhận') && !sem.includes('chuỗi đệ quy kết thúc'),
+      `Fix1-E: Must NOT confirm termination for if (n < 1) when n=1. Got: "${sem}"`
+    );
+    assert.ok(
+      sem.includes('chưa được đáp ứng') || sem.includes('tiềm năng') || sem.includes('không khớp'),
+      `Fix1-E: Must report condition as not satisfied. Got: "${sem}"`
+    );
+  });
+
+  test('Fix1-F: if (n <= 1) return 1; with n=1 verifies condition as true but distinguishes pending return', () => {
+    // Counterexample 3: n = 1, condition is n <= 1 => TRUE, has return
+    const raw = [
+      {
+        event: 'stepLine', line: 5, funcName: 'factorial',
+        codeText: 'if (n <= 1) return 1;',
+        stackToRender: [
+          { funcName: 'factorial', frameId: 'f1', isHighlighted: true, line: 5,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'int', 1] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[0].dsa.explanationDetail.semantics;
+    assert.ok(
+      sem.includes('thỏa mãn') || sem.includes('Điều kiện dừng') || sem.includes('base case'),
+      `Fix1-F: Must report verified condition as true. Got: "${sem}"`
+    );
+    // Must distinguish pending return from already completed return
+    assert.ok(
+      sem.includes('chuẩn bị') || sem.includes('return'),
+      `Fix1-F: Must distinguish pending return. Got: "${sem}"`
+    );
+  });
+
+  test('Fix1-G: true condition without terminating return must NOT be labeled as completed recursion', () => {
+    // Counterexample 4: condition is true (n=1 <= 1), but no return
+    const raw = [
+      {
+        event: 'stepLine', line: 5, funcName: 'factorial',
+        codeText: 'if (n <= 1) { count++; }',
+        stackToRender: [
+          { funcName: 'factorial', frameId: 'f1', isHighlighted: true, line: 5,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'int', 1] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[0].dsa.explanationDetail.semantics;
+    assert.ok(
+      !sem.includes('kết thúc đệ quy') || sem.includes('chưa kết thúc đệ quy'),
+      `Fix1-G: Must NOT claim completed recursion without a return. Got: "${sem}"`
+    );
+    assert.ok(
+      sem.includes('chưa kết thúc đệ quy') || !sem.includes('quay lui'),
+      `Fix1-G: Must not claim recursion ended or backtracking begun. Got: "${sem}"`
+    );
+  });
+
+  test('Fix1-H: compound predicate must use neutral explanation', () => {
+    // Counterexample 5: compound predicate if (n <= 1 && flag)
+    const raw = [
+      {
+        event: 'stepLine', line: 5, funcName: 'factorial',
+        codeText: 'if (n <= 1 && flag) return 1;',
+        stackToRender: [
+          { funcName: 'factorial', frameId: 'f1', isHighlighted: true, line: 5,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'int', 1] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[0].dsa.explanationDetail.semantics;
+    assert.ok(
+      !sem.includes('Điều kiện dừng (base case) thỏa mãn'),
+      `Fix1-H: Compound predicate must not be confirmed as base case without evidence. Got: "${sem}"`
+    );
+    assert.ok(
+      sem.includes('phức hợp') || sem.includes('không suy đoán') || sem.includes('tiềm năng'),
+      `Fix1-H: Must use neutral explanation for compound predicate. Got: "${sem}"`
+    );
+  });
+
+  test('Fix1-I: unknown predicate must use neutral explanation', () => {
+    // Counterexample 6: unknown function predicate if (isValid(node))
+    const raw = [
+      {
+        event: 'stepLine', line: 5, funcName: 'traverse',
+        codeText: 'if (isValid(node)) return 0;',
+        stackToRender: [
+          { funcName: 'traverse', frameId: 'f1', isHighlighted: true, line: 5,
+            encodedLocals: {} }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[0].dsa.explanationDetail.semantics;
+    assert.ok(
+      !sem.includes('Điều kiện dừng (base case) thỏa mãn'),
+      `Fix1-I: Unknown predicate must not be confirmed. Got: "${sem}"`
+    );
+    assert.ok(
+      sem.includes('tiềm năng') || sem.includes('không thể suy luận') || sem.includes('potential'),
+      `Fix1-I: Must use neutral explanation for unknown predicate. Got: "${sem}"`
     );
   });
 
@@ -882,10 +1033,9 @@ function runEducationalExplanationsTests() {
       'Fix3-A: schema_error step must have empty scalarUpdates');
   });
 
-  test('Fix3-B: schema error step does not seed delta for the next valid step', () => {
+  test('Fix3-B: invalid trace gap breaks delta continuity (strict negative assertion)', () => {
     // rawTrace: valid(x=5), malformed, valid(x=10)
-    // The x change from 5→10 must NOT appear in step[2] scalarUpdates
-    // because prevPoint was not updated after the malformed step
+    // The final valid snapshot must NOT claim the ordinary adjacent transition x: 5 -> 10
     const raw = [
       {
         event: 'stepLine', line: 5, funcName: 'main',
@@ -907,22 +1057,20 @@ function runEducationalExplanationsTests() {
       }
     ];
     const trace = normalizeTrace(raw);
-    // Step 2 (the second valid step after the malformed one):
-    // prevPoint was NOT updated for the malformed step, so the diff is relative to step 0 (x=5).
-    // The change 5→10 IS valid and should appear — the key constraint is it shouldn't be compared
-    // against anything from the malformed step itself.
     const step2 = trace[2];
     assert.strictEqual(step2.event, 'stepLine', `Fix3-B: Step 2 must be a valid stepLine. Got: "${step2.event}"`);
-    // The scalar update for x should reflect the actual change relative to the last valid point (x=5→10)
-    const xUpdate = step2.dsa.diff.scalarUpdates.find(u => u.name === 'x');
-    if (xUpdate) {
-      // If reported, it must reflect the actual previous valid value (5), not any malformed sentinel value
-      assert.strictEqual(xUpdate.from, 5,
-        `Fix3-B: If x is reported, from must be 5 (last valid step), not a malformed value. Got: ${xUpdate.from}`);
-      assert.strictEqual(xUpdate.to, 10,
-        `Fix3-B: If x is reported, to must be 10. Got: ${xUpdate.to}`);
-    }
-    // The step must NOT carry any reference to the malformed step's codeText or funcName
+    // STRICT NEGATIVE ASSERTION:
+    // Nonadjacent observations must NOT form an ordinary continuous transition across an invalid snapshot.
+    assert.strictEqual(
+      step2.dsa.diff.scalarUpdates.length, 0,
+      `Fix3-B: Step 2 must NOT claim the ordinary adjacent transition x: 5 -> 10 across a schema error gap. Got: ${JSON.stringify(step2.dsa.diff.scalarUpdates)}`
+    );
+    assert.strictEqual(step2.dsa.diff.changedVariables.length, 0,
+      'Fix3-B: Step 2 changedVariables must be empty after invalid trace gap');
+    assert.ok(
+      !step2.dsa.explanationDetail.observed.includes('thay đổi từ 5 thành 10'),
+      `Fix3-B: Observed text must not claim transition from 5 to 10. Got: "${step2.dsa.explanationDetail.observed}"`
+    );
     assert.ok(step2.funcName !== 'unknown', 'Fix3-B: Step 2 must NOT inherit schema_error funcName');
   });
 

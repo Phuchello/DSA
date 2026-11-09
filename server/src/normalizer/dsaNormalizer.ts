@@ -1049,7 +1049,7 @@ export function generateVietnameseExplanation(
     } else if (isPotentialBaseCaseCandidate) {
       semantics = 'Kiểm tra điều kiện dừng tiềm năng (potential base case). Kết quả rẽ nhánh phụ thuộc vào giá trị biến tại thời điểm thực thi — không thể suy luận chỉ từ mã nguồn.';
     } else {
-      semantics = 'Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Không thể suy luận kết quả chỉ từ mã nguồn khi thiếu bằng chứng.';
+      semantics = 'Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Khi thiếu bằng chứng, không thể suy luận kết quả chỉ từ mã nguồn.';
     }
   } else if (diff.frameTransition?.type === 'push') {
     semantics = 'Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này.';

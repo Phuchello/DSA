@@ -883,6 +883,31 @@ function runEducationalExplanationsTests() {
     );
   });
 
+  test('Fix1-J: generic if (currentPath > maxPath) must NOT be described as potential base case', () => {
+    // Concrete counterexample: generic conditional branch in LeetCode 124
+    const raw = [
+      {
+        event: 'stepLine', line: 20, funcName: 'maxGain',
+        codeText: 'if (currentPath > maxPath) {',
+        stackToRender: [
+          { funcName: 'maxGain', frameId: 'f1', isHighlighted: true, line: 20,
+            encodedLocals: { currentPath: ['C_DATA', '0x1000', 'int', 40] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[0].dsa.explanationDetail.semantics;
+    assert.ok(
+      !sem.includes('base case') && !sem.includes('Điều kiện dừng') && !sem.includes('dừng tiềm năng'),
+      `Fix1-J: Generic if must NOT be described as base case. Got: "${sem}"`
+    );
+    assert.ok(
+      sem.includes('rẽ nhánh') || sem.includes('luồng thực thi'),
+      `Fix1-J: Generic if must use neutral conditional wording. Got: "${sem}"`
+    );
+  });
+
   // =========================================================================
   // FIX 2 ADVERSARIAL TESTS: Frame continuity — prefix verification
   // =========================================================================

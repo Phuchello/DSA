@@ -53,6 +53,9 @@ jobs:
       - name: Run DSA Normalizer & Pointer Classification Unit Tests
         run: node tests/normalizerUnitTests.js
 
+      - name: Run M2.1 Educational Explanations Unit Tests
+        run: node tests/educationalExplanationsTests.js
+
       - name: Install native Linux toolchain (g++ and GDB)
         run: sudo apt-get update && sudo apt-get install -y g++ gdb
 
@@ -139,6 +142,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'linked-list') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'arrays') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'recursion') | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-1') | Out-Null
 
       - name: Run linked-list Chrome browser smoke against native C++/GDB backend
         env:
@@ -154,6 +158,11 @@ jobs:
         env:
           FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/recursion
         run: npm run test:browser:recursion
+
+      - name: Run M2.1 educational explanations Chrome browser acceptance against native C++/GDB backend
+        env:
+          FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/m2-1
+        run: npm run test:browser:m2-1
 
       - name: Preserve real browser logs and screenshots
         if: always()

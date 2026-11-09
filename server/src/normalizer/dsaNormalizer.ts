@@ -954,11 +954,18 @@ export function generateVietnameseExplanation(
 
   const parsedIf = extractIfCondition(trimmed);
   let branchEvaluation: 'true_with_return' | 'true_without_return' | 'false' | 'compound' | 'unknown' = 'unknown';
+  let isPotentialBaseCaseCandidate = false;
 
   if (parsedIf) {
     const { condition, afterCondition } = parsedIf;
     const hasTerminatingReturn = /\breturn\b/.test(afterCondition);
     const isCompound = condition.includes('&&') || condition.includes('||');
+
+    isPotentialBaseCaseCandidate = Boolean(
+      hasTerminatingReturn ||
+      /\b(0|1|nullptr|NULL)\b/.test(condition) ||
+      /\bn\b/.test(condition)
+    );
 
     if (isCompound) {
       branchEvaluation = 'compound';
@@ -1033,8 +1040,10 @@ export function generateVietnameseExplanation(
       semantics = 'Điều kiện dừng chưa được đáp ứng (giá trị hiện tại không khớp điều kiện) — chương trình chuẩn bị tiếp tục nhánh đệ quy tiếp theo.';
     } else if (branchEvaluation === 'compound') {
       semantics = 'Kiểm tra điều kiện rẽ nhánh phức hợp. Kết quả rẽ nhánh phụ thuộc vào toàn bộ biểu thức điều kiện tại thời điểm thực thi — không suy đoán kết quả khi chưa có bằng chứng quan sát.';
-    } else {
+    } else if (isPotentialBaseCaseCandidate) {
       semantics = 'Kiểm tra điều kiện dừng tiềm năng (potential base case). Kết quả rẽ nhánh phụ thuộc vào giá trị biến tại thời điểm thực thi — không thể suy luận chỉ từ mã nguồn.';
+    } else {
+      semantics = 'Kiểm tra điều kiện rẽ nhánh (if). Biểu thức điều kiện chuẩn bị được đánh giá để quyết định luồng thực thi tiếp theo.';
     }
   } else if (diff.frameTransition?.type === 'push') {
     semantics = 'Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này.';

@@ -961,10 +961,14 @@ export function generateVietnameseExplanation(
     const hasTerminatingReturn = /\breturn\b/.test(afterCondition);
     const isCompound = condition.includes('&&') || condition.includes('||');
 
+    // A return statement alone is not evidence of recursion. Keep generic
+    // guard clauses neutral, and reserve "potential base case" for familiar
+    // simple termination predicates; never claim an outcome from syntax alone.
     isPotentialBaseCaseCandidate = Boolean(
-      hasTerminatingReturn ||
-      /\b(0|1|nullptr|NULL)\b/.test(condition) ||
-      /\bn\b/.test(condition)
+      hasTerminatingReturn && (
+        (/\bn\b/.test(condition) && /\b(0|1)\b/.test(condition)) ||
+        (/\b(node|p|root|curr|head)\b/.test(condition) && /\b(nullptr|NULL|0)\b/.test(condition))
+      )
     );
 
     if (isCompound) {
@@ -1027,8 +1031,10 @@ export function generateVietnameseExplanation(
   }
 
   let semantics = '';
-  if (diff.freedNodes.length > 0 || trimmed.startsWith('delete ')) {
-    semantics = 'Thu hồi vùng nhớ đã hoàn tất nhiệm vụ nhằm tối ưu tài nguyên và tránh rò rỉ bộ nhớ (memory leak).';
+  if (trimmed.startsWith('delete ')) {
+    semantics = 'Sắp thực hiện lệnh delete để giải phóng vùng nhớ. Ở trạng thái trước câu lệnh này, chưa thể kết luận bộ nhớ đã được giải phóng.';
+  } else if (diff.freedNodes.length > 0) {
+    semantics = 'Đã quan sát thấy vùng nhớ được giải phóng ở chuyển tiếp trước bước hiện tại.';
   } else if (trimmed.includes('new NODE') || trimmed.includes('CreateNode') || diff.allocatedNodes.length > 0) {
     semantics = 'Toán tử new cấp phát sizeof(NODE) bytes trên Heap và trả về con trỏ địa chỉ ô nhớ.';
   } else if (parsedIf) {
@@ -1043,7 +1049,7 @@ export function generateVietnameseExplanation(
     } else if (isPotentialBaseCaseCandidate) {
       semantics = 'Kiểm tra điều kiện dừng tiềm năng (potential base case). Kết quả rẽ nhánh phụ thuộc vào giá trị biến tại thời điểm thực thi — không thể suy luận chỉ từ mã nguồn.';
     } else {
-      semantics = 'Kiểm tra điều kiện rẽ nhánh (if). Biểu thức điều kiện chuẩn bị được đánh giá để quyết định luồng thực thi tiếp theo.';
+      semantics = 'Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Không thể suy luận kết quả chỉ từ mã nguồn khi thiếu bằng chứng.';
     }
   } else if (diff.frameTransition?.type === 'push') {
     semantics = 'Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này.';

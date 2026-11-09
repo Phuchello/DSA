@@ -33,12 +33,51 @@ export interface DsaListRoot {
   nodes: DsaNode[];
 }
 
+export interface ScalarUpdate {
+  name: string;
+  from: any;
+  to: any;
+  frameName: string;
+  frameId: string;
+  frameDepth: number;
+  displayName: string;
+  wasUninitialized?: boolean;
+}
+
+export interface ArrayUpdate {
+  arrayName: string;
+  index: number;
+  from: any;
+  to: any;
+  frameName: string;
+  frameId: string;
+  frameDepth: number;
+  displayName: string;
+}
+
+export interface FrameTransition {
+  type: 'push' | 'pop' | 'none';
+  funcName?: string;
+  depth?: number;
+  callerFunc?: string;
+  calleeFunc?: string;
+}
+
+export interface EducationalExplanationDetail {
+  upcoming: string;
+  observed: string;
+  semantics: string;
+}
+
 export interface DsaDiff {
   changedVariables: string[];
   allocatedNodes: string[];
   freedNodes: string[];
   unlinkedNodes?: string[];
   pointerReroutes: Array<{ pointer: string; from: string | null; to: string | null }>;
+  scalarUpdates?: ScalarUpdate[];
+  arrayUpdates?: ArrayUpdate[];
+  frameTransition?: FrameTransition;
 }
 
 export interface NormalizedExecutionPoint {
@@ -62,6 +101,7 @@ export interface NormalizedExecutionPoint {
     diff: DsaDiff;
     vietnameseExplanation: string;
     advancedNotes: string;
+    explanationDetail?: EducationalExplanationDetail;
   };
 }
 

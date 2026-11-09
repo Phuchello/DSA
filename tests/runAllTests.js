@@ -3,6 +3,7 @@ const path = require('path');
 const { fork } = require('child_process');
 const assert = require('assert');
 const { runNormalizerUnitTests } = require('./normalizerUnitTests.js');
+const { runEducationalExplanationsTests } = require('./educationalExplanationsTests.js');
 const { runMemoryInvariantTests } = require('./test_invariants.js');
 const { runProcessTreeTests } = require('./processTreeTests.js');
 const { runWindowsJobRunnerTests } = require('./windowsJobRunnerTests.js');
@@ -345,6 +346,7 @@ async function runTests() {
   let failed = 0;
   const results = [];
   let normalizerSummary = null;
+  let educationalSummary = null;
   let invariantSummary = null;
   let clientAssertions = 0;
   let suiteFailures = 0;
@@ -582,6 +584,18 @@ int main() {
     }
 
     // -------------------------------------------------------------
+    // PART 2B: M2.1 Evidence-Based Educational Explanations Tests
+    // -------------------------------------------------------------
+    console.log('\n--- PHẦN 2B: KIỂM THỬ ĐƠN VỊ GIẢI THÍCH SƯ PHẠM DỰA TRÊN BẰNG CHỨNG (M2.1) ---');
+    try {
+      educationalSummary = runEducationalExplanationsTests();
+    } catch (err) {
+      educationalSummary = err.summary || { passed: 0, failed: 1, total: 1 };
+      suiteFailures++;
+      console.error(`Educational explanations suite failed: ${err.message}`);
+    }
+
+    // -------------------------------------------------------------
     // PART 3: 21 Memory Invariant & Pointer Topology Tests
     // -------------------------------------------------------------
     console.log('\n--- PHẦN 3: 17 BẤT BIẾN BỘ NHỚ & TOPO CON TRỎ (MEMORY INVARIANTS) ---');
@@ -595,11 +609,11 @@ int main() {
 
     console.log('\n' + '='.repeat(70));
     clientAssertions = invariantSummary?.clientTestExecutions || 0;
-    const backendExecutions = passed + failed + (normalizerSummary?.total || 0) + (invariantSummary?.total || 0);
+    const backendExecutions = passed + failed + (normalizerSummary?.total || 0) + (educationalSummary?.total || 0) + (invariantSummary?.total || 0);
     const executions = backendExecutions + clientAssertions;
     const uniqueAssertions = backendExecutions + clientAssertions;
-    const overallFailed = failed + (normalizerSummary?.failed || 0) + (invariantSummary?.failed || 0);
-    console.log(`🏁 TỔNG KẾT (${overallFailed ? 'FAIL' : 'PASS'}): ${passed}/${passed + failed} baseline; ${normalizerSummary?.passed || 0}/${normalizerSummary?.total || 0} normalizer; ${invariantSummary?.passed || 0}/${invariantSummary?.total || 0} invariants; ${clientAssertions} client assertions via MI-12.`);
+    const overallFailed = failed + (normalizerSummary?.failed || 0) + (educationalSummary?.failed || 0) + (invariantSummary?.failed || 0);
+    console.log(`🏁 TỔNG KẾT (${overallFailed ? 'FAIL' : 'PASS'}): ${passed}/${passed + failed} baseline; ${normalizerSummary?.passed || 0}/${normalizerSummary?.total || 0} normalizer; ${educationalSummary?.passed || 0}/${educationalSummary?.total || 0} educational explanations; ${invariantSummary?.passed || 0}/${invariantSummary?.total || 0} invariants; ${clientAssertions} client assertions via MI-12.`);
     console.log(`Test executions this command: ${executions}; unique assertions: ${uniqueAssertions}. MI-12 ran the ${clientAssertions} client assertions once inside this command.`);
     console.log('='.repeat(70));
   } finally {
@@ -608,7 +622,7 @@ int main() {
     }
   }
 
-  if (failed > 0 || suiteFailures > 0 || (normalizerSummary?.failed || 0) > 0 || (invariantSummary?.failed || 0) > 0) {
+  if (failed > 0 || suiteFailures > 0 || (normalizerSummary?.failed || 0) > 0 || (educationalSummary?.failed || 0) > 0 || (invariantSummary?.failed || 0) > 0) {
     process.exit(1);
   }
 }

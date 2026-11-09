@@ -357,6 +357,7 @@ export const App: React.FC = () => {
             ? '⚠️ Lưu ý: Mã nguồn đã bị thay đổi kể từ lần chạy cuối. Vết thực thi này thuộc về phiên bản mã trước đó. Bấm "Chạy mã C++" để phân tích mã mới.'
             : currentStep?.dsa.vietnameseExplanation || ''
         }
+        explanationDetail={isTraceStale ? undefined : currentStep?.dsa.explanationDetail}
         advancedNotes={currentStep?.dsa.advancedNotes || ''}
         mode={mode}
         diff={currentStep?.dsa.diff}

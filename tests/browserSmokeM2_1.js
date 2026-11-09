@@ -366,6 +366,7 @@ int main() {
     let pushStep = -1;
     let baseStep = -1;
     let popStep = -1;
+    let potentialBaseStep = -1;
 
     for (let s = 0; s < stepCount2; s++) {
       await setStep(s);
@@ -376,8 +377,11 @@ int main() {
       if (pushStep === -1 && (badgeText.includes('▲') || observedText.includes('Gọi hàm') || observedText.includes('mở rộng độ sâu'))) {
         pushStep = s;
       }
-      if (baseStep === -1 && (semanticsText.includes('Điều kiện dừng') || semanticsText.includes('base case'))) {
+      if (baseStep === -1 && (semanticsText.includes('đã được xác nhận') || (semanticsText.includes('Điều kiện dừng') && !semanticsText.includes('tiềm năng')))) {
         baseStep = s;
+      }
+      if (potentialBaseStep === -1 && (semanticsText.includes('tiềm năng') || semanticsText.includes('potential'))) {
+        potentialBaseStep = s;
       }
       if (popStep === -1 && (badgeText.includes('▼') || observedText.includes('trở về') || observedText.includes('kết thúc') || observedText.includes('thu hồi') || observedText.includes('Pop'))) {
         popStep = s;
@@ -388,9 +392,27 @@ int main() {
     await setStep(pushStep);
     await saveScreenshot('m2-1-recursion-push-facet.png');
 
-    assert.ok(baseStep >= 0, 'Must have a step showing base case');
+    assert.ok(baseStep >= 0, 'Must have a step showing confirmed base case');
     await setStep(baseStep);
-    await saveScreenshot('m2-1-recursion-base-case-facet.png');
+    // FIX 4: Verify base-case step is a confirmed termination (n=1), not a false potential (n=4)
+    const baseCaseSemantics = await evaluate("document.querySelector('[data-testid=\"explanation-semantics\"]')?.textContent || ''");
+    assert.ok(
+      baseCaseSemantics.includes('đã được xác nhận'),
+      `Base case semantics must confirm termination, got: "${baseCaseSemantics}"`
+    );
+    await saveScreenshot('m2-1-recursion-base-case-confirmed.png');
+    console.log(`  Base case confirmed at step ${baseStep}: "${baseCaseSemantics.substring(0, 60)}..."`);
+
+    // Capture false-base-case step (n=4 at if(n<=1)) — potential, not confirmed
+    assert.ok(potentialBaseStep >= 0, 'Must have a step showing potential base case (n=4)');
+    await setStep(potentialBaseStep);
+    const potentialCaseSemantics = await evaluate("document.querySelector('[data-testid=\"explanation-semantics\"]')?.textContent || ''");
+    assert.ok(
+      potentialCaseSemantics.includes('tiềm năng') || potentialCaseSemantics.includes('potential'),
+      `Potential base case semantics must use neutral wording, got: "${potentialCaseSemantics}"`
+    );
+    await saveScreenshot('m2-1-recursion-false-base-case-n4.png');
+    console.log(`  Captured false-base-case (potential) screenshot at step ${potentialBaseStep}`);
 
     assert.ok(popStep >= 0, 'Must have a step showing frame pop');
     await setStep(popStep);
@@ -443,24 +465,35 @@ int main() {
     const stepCount3 = await evaluate("Number(document.querySelector('input[type=\"range\"]')?.max || 0) + 1");
     console.log(`Scenario 3 total steps: ${stepCount3}`);
 
-    // Navigate to step where maxPath is updated or rootGain is computed
+    // FIX 4: Require actual Branch struct field evidence in observed text; no fallback screenshot.
     let structStep = -1;
     for (let s = 0; s < stepCount3; s++) {
       await setStep(s);
       const observedText = await evaluate("document.querySelector('[data-testid=\"explanation-observed\"]')?.textContent || ''");
       const badgeText = await evaluate("document.querySelector('[data-testid=\"diff-badge-container\"]')?.textContent || ''");
       const combined = observedText + ' ' + badgeText;
-      if (combined.includes('currentPath') || combined.includes('rootGain') || combined.includes('leftGain') || combined.includes('rightGain')) {
+      if (
+        (combined.includes('currentPath') || combined.includes('leftGain') || combined.includes('rightGain') || combined.includes('rootGain') || combined.includes('maxPath')) &&
+        (combined.includes('40') || combined.includes('19') || combined.includes('20') || combined.includes('21'))
+      ) {
         structStep = s;
-        await saveScreenshot('m2-1-unfamiliar-struct-branch.png');
         break;
       }
     }
-    if (structStep === -1) {
-      await setStep(Math.floor(stepCount3 / 2));
-      await saveScreenshot('m2-1-unfamiliar-struct-branch.png');
-    }
-    console.log('✅ Scenario 3 verified and screenshots captured.');
+    assert.ok(structStep >= 0, 'Scenario 3 must have a step with Branch struct computation value (19, 20, 21, or 40) in observed text');
+
+    // Verify displayed computation values match native trace (Branch: leftNode=19, rightNode=20, root=1, maxPath=40)
+    await setStep(structStep);
+    const stepObserved = await evaluate("document.querySelector('[data-testid=\"explanation-observed\"]')?.textContent || ''");
+    const stepBadge = await evaluate("document.querySelector('[data-testid=\"diff-badge-container\"]')?.textContent || ''");
+    const combinedEvidence = stepObserved + ' ' + stepBadge;
+    assert.ok(
+      combinedEvidence.includes('40') || combinedEvidence.includes('19') ||
+      combinedEvidence.includes('20') || combinedEvidence.includes('21'),
+      `Scenario 3 observed text must contain a real Branch computation value (19, 20, 21, or 40). Got: "${stepObserved.substring(0, 100)}"`
+    );
+    await saveScreenshot('m2-1-unfamiliar-struct-branch.png');
+    console.log(`✅ Scenario 3 verified with real Branch evidence at step ${structStep}.`);
 
     console.log('\n🎉 ALL M2.1 BROWSER ACCEPTANCE TESTS PASSED!');
   } catch (err) {

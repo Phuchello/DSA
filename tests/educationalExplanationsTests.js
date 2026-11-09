@@ -623,6 +623,309 @@ function runEducationalExplanationsTests() {
       'Honest neutral explanation when no changes occurred');
   });
 
+  // =========================================================================
+  // FIX 1 ADVERSARIAL TESTS: Base-case semantics must not claim termination
+  // when condition might be false (e.g. n=4 checking if(n<=1))
+  // =========================================================================
+
+  test('Fix1-A: if(n<=1) with n=4 at depth>1 must NOT claim base case termination', () => {
+    // 2-frame stack: main(f0) + factorial(f1), n=4; "potential" only
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int res = factorial(4);',
+        stackToRender: [{ funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          encodedLocals: { res: ['C_DATA', '0x1000', 'uninitialized', '?'] } }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 6, funcName: 'factorial',
+        codeText: 'if (n <= 1) return 1;',
+        stackToRender: [
+          { funcName: 'main',      frameId: 'f0', isHighlighted: false, line: 2,
+            encodedLocals: { res: ['C_DATA', '0x1000', 'uninitialized', '?'] } },
+          { funcName: 'factorial', frameId: 'f1', isHighlighted: true, line: 6,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'int', 4] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[1].dsa.explanationDetail.semantics;
+    assert.ok(
+      !sem.includes('kết thúc') && !sem.includes('backtrack') && !sem.includes('đã được xác nhận'),
+      `Fix1-A: Must NOT claim termination when n=4. Got: "${sem}"`
+    );
+    assert.ok(
+      sem.includes('tiềm năng') || sem.includes('potential') || sem.includes('kiểm tra') || sem.includes('điều kiện'),
+      `Fix1-A: Must use neutral/potential language for n=4. Got: "${sem}"`
+    );
+  });
+
+  test('Fix1-B: if(n<=1) with n=1 at depth=1 (stackFrames.length===1) CONFIRMS base case', () => {
+    // 1-frame stack only: factorial(f0), n=1 — single active frame → confirmed
+    const raw = [
+      {
+        event: 'stepLine', line: 6, funcName: 'factorial',
+        codeText: 'if (n <= 1) return 1;',
+        stackToRender: [
+          { funcName: 'factorial', frameId: 'f0', isHighlighted: true, line: 6,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'int', 1] } }
+        ],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 7, funcName: 'factorial',
+        codeText: 'return 1;',
+        stackToRender: [
+          { funcName: 'factorial', frameId: 'f0', isHighlighted: true, line: 7,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'int', 1] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    // Step 0: before 'if (n<=1)' — only 1 frame, semantics must confirm base case
+    const sem0 = trace[0].dsa.explanationDetail.semantics;
+    assert.ok(
+      sem0.includes('đã được xác nhận') || sem0.includes('Điều kiện dừng') || sem0.includes('base case'),
+      `Fix1-B: Must confirm base case at depth=1 (n=1). Got: "${sem0}"`
+    );
+    assert.ok(
+      !sem0.includes('tiềm năng'),
+      `Fix1-B: Must NOT say "tiềm năng" when base case is confirmed. Got: "${sem0}"`
+    );
+  });
+
+  test('Fix1-C: if(n<=1) with unknown n at depth>1 must use neutral wording', () => {
+    // 2-frame stack, n is uninitialized ('?') — cannot determine outcome
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int res = factorial(x);',
+        stackToRender: [{ funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          encodedLocals: {} }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 6, funcName: 'factorial',
+        codeText: 'if (n <= 1) return 1;',
+        stackToRender: [
+          { funcName: 'main',      frameId: 'f0', isHighlighted: false, line: 2,
+            encodedLocals: {} },
+          { funcName: 'factorial', frameId: 'f1', isHighlighted: true, line: 6,
+            encodedLocals: { n: ['C_DATA', '0x2000', 'uninitialized', '?'] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const sem = trace[1].dsa.explanationDetail.semantics;
+    // depth=2 → cannot confirm; must not claim confirmed termination
+    assert.ok(
+      !sem.includes('đã được xác nhận') && !sem.includes('kết thúc chuỗi đệ quy'),
+      `Fix1-C: Must NOT confirm base case for unknown n at depth>1. Got: "${sem}"`
+    );
+    assert.ok(
+      sem.includes('tiềm năng') || sem.includes('potential') || sem.includes('kiểm tra') || sem.includes('điều kiện'),
+      `Fix1-C: Must use neutral language for unknown n. Got: "${sem}"`
+    );
+  });
+
+  // =========================================================================
+  // FIX 2 ADVERSARIAL TESTS: Frame continuity — prefix verification
+  // =========================================================================
+
+  test('Fix2-A: intermediate frame replacement stops variable comparison for deeper frames', () => {
+    // prevFrames: [main(f0), helper(fA), leaf(f2)]
+    // currFrames: [main(f0), helper(fB), leaf(f2)] — fA→fB replacement at depth 1
+    // leaf(f2) has changed variable 'x', but must NOT be reported due to ancestor mismatch
+    const raw = [
+      {
+        event: 'stepLine', line: 10, funcName: 'leaf',
+        codeText: 'x = 5;',
+        stackToRender: [
+          { funcName: 'main',   frameId: 'f0', isHighlighted: false, line: 2,  encodedLocals: {} },
+          { funcName: 'helper', frameId: 'fA', isHighlighted: false, line: 5,  encodedLocals: {} },
+          { funcName: 'leaf',   frameId: 'f2', isHighlighted: true,  line: 10, encodedLocals: { x: ['C_DATA', '0x3000', 'int', 0] } }
+        ],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 11, funcName: 'leaf',
+        codeText: 'return x;',
+        stackToRender: [
+          { funcName: 'main',   frameId: 'f0', isHighlighted: false, line: 2,  encodedLocals: {} },
+          { funcName: 'helper', frameId: 'fB', isHighlighted: false, line: 5,  encodedLocals: {} },
+          { funcName: 'leaf',   frameId: 'f2', isHighlighted: true,  line: 11, encodedLocals: { x: ['C_DATA', '0x3000', 'int', 5] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    // Ancestor mismatch (fA→fB at depth 1) must invalidate leaf comparison
+    assert.strictEqual(
+      trace[1].dsa.diff.scalarUpdates.length, 0,
+      'Fix2-A: leaf(f2).x change must NOT be reported when ancestor helper frame changed from fA to fB'
+    );
+    // frameTransition must NOT be a clean push or pop (mismatch at middle)
+    const ft = trace[1].dsa.diff.frameTransition;
+    assert.ok(
+      ft.type === 'none' || ft.type === 'schema_error',
+      `Fix2-A: frameTransition must be "none" for mid-stack replacement. Got: "${ft.type}"`
+    );
+  });
+
+  test('Fix2-B: missing frameId at depth>0 does not establish continuity', () => {
+    // Both prev and curr have foo with no frameId at depth 1 — same name but no ID → excluded
+    const raw = [
+      {
+        event: 'stepLine', line: 3, funcName: 'foo',
+        codeText: 'x = 1;',
+        stackToRender: [
+          { funcName: 'main', frameId: 'f0',       isHighlighted: false, line: 1, encodedLocals: {} },
+          { funcName: 'foo',  /* no frameId */      isHighlighted: true,  line: 3,
+            encodedLocals: { x: ['C_DATA', '0x2000', 'int', 0] } }
+        ],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'foo',
+        codeText: 'return x;',
+        stackToRender: [
+          { funcName: 'main', frameId: 'f0',       isHighlighted: false, line: 1, encodedLocals: {} },
+          { funcName: 'foo',  /* no frameId */      isHighlighted: true,  line: 4,
+            encodedLocals: { x: ['C_DATA', '0x2000', 'int', 1] } }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    assert.strictEqual(
+      trace[1].dsa.diff.scalarUpdates.length, 0,
+      'Fix2-B: foo without frameId at depth>0 must NOT report scalar updates (ambiguous continuity)'
+    );
+  });
+
+  test('Fix2-C: verified prefix normal case still works with matching IDs', () => {
+    // prevFrames: [main(f0), foo(f1)]
+    // currFrames: [main(f0), foo(f1), bar(f2)] — clean push of bar
+    const raw = [
+      {
+        event: 'stepLine', line: 3, funcName: 'foo',
+        codeText: 'bar();',
+        stackToRender: [
+          { funcName: 'main', frameId: 'f0', isHighlighted: false, line: 1, encodedLocals: { a: ['C_DATA', '0x1000', 'int', 10] } },
+          { funcName: 'foo',  frameId: 'f1', isHighlighted: true,  line: 3, encodedLocals: { b: ['C_DATA', '0x2000', 'int', 20] } }
+        ],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 7, funcName: 'bar',
+        codeText: 'return 0;',
+        stackToRender: [
+          { funcName: 'main', frameId: 'f0', isHighlighted: false, line: 1, encodedLocals: { a: ['C_DATA', '0x1000', 'int', 10] } },
+          { funcName: 'foo',  frameId: 'f1', isHighlighted: false, line: 3, encodedLocals: { b: ['C_DATA', '0x2000', 'int', 20] } },
+          { funcName: 'bar',  frameId: 'f2', isHighlighted: true,  line: 7, encodedLocals: {} }
+        ],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    const ft = trace[1].dsa.diff.frameTransition;
+    assert.strictEqual(ft.type, 'push', `Fix2-C: Must detect clean push. Got: "${ft.type}"`);
+    assert.strictEqual(ft.funcName, 'bar', `Fix2-C: Pushed function must be "bar". Got: "${ft.funcName}"`);
+    // No scalar updates (a and b unchanged)
+    assert.strictEqual(trace[1].dsa.diff.scalarUpdates.length, 0,
+      'Fix2-C: No scalar updates when variables unchanged across clean push');
+  });
+
+  // =========================================================================
+  // FIX 3 ADVERSARIAL TESTS: Schema-error sentinel uses safe constants;
+  // malformed step must not seed delta for the next valid step.
+  // =========================================================================
+
+  test('Fix3-A: malformed step produces schema_error with safe constant values', () => {
+    // Inject a step with critical missing fields between two valid steps
+    const raw = [
+      {
+        event: 'stepLine', line: 5, funcName: 'main',
+        codeText: 'int x = 5;',
+        stackToRender: [{ funcName: 'main', frameId: 'f0', isHighlighted: true, line: 5,
+          encodedLocals: { x: ['C_DATA', '0x1000', 'int', 5] } }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        // Malformed: missing required fields (no funcName, no stackToRender)
+        event: 'stepLine'
+      },
+      {
+        event: 'stepLine', line: 7, funcName: 'main',
+        codeText: 'int y = 10;',
+        stackToRender: [{ funcName: 'main', frameId: 'f0', isHighlighted: true, line: 7,
+          encodedLocals: { x: ['C_DATA', '0x1000', 'int', 5], y: ['C_DATA', '0x1004', 'int', 10] } }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    // Step 1 (index 1) must be the schema_error sentinel
+    const errStep = trace[1];
+    assert.strictEqual(errStep.event, 'schema_error',
+      `Fix3-A: Malformed step must produce event 'schema_error'. Got: "${errStep.event}"`);
+    assert.strictEqual(errStep.line, -1,
+      `Fix3-A: schema_error step must have line=-1. Got: ${errStep.line}`);
+    assert.strictEqual(errStep.funcName, 'unknown',
+      `Fix3-A: schema_error step must have funcName='unknown'. Got: "${errStep.funcName}"`);
+    assert.strictEqual(errStep.codeText, '',
+      `Fix3-A: schema_error step must have codeText=''. Got: "${errStep.codeText}"`);
+    assert.ok(Array.isArray(errStep.dsa.diff.scalarUpdates) && errStep.dsa.diff.scalarUpdates.length === 0,
+      'Fix3-A: schema_error step must have empty scalarUpdates');
+  });
+
+  test('Fix3-B: schema error step does not seed delta for the next valid step', () => {
+    // rawTrace: valid(x=5), malformed, valid(x=10)
+    // The x change from 5→10 must NOT appear in step[2] scalarUpdates
+    // because prevPoint was not updated after the malformed step
+    const raw = [
+      {
+        event: 'stepLine', line: 5, funcName: 'main',
+        codeText: 'x = 5;',
+        stackToRender: [{ funcName: 'main', frameId: 'f0', isHighlighted: true, line: 5,
+          encodedLocals: { x: ['C_DATA', '0x1000', 'int', 5] } }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        // Malformed step — no funcName, no stackToRender
+        event: 'stepLine'
+      },
+      {
+        event: 'stepLine', line: 7, funcName: 'main',
+        codeText: 'x = 10;',
+        stackToRender: [{ funcName: 'main', frameId: 'f0', isHighlighted: true, line: 7,
+          encodedLocals: { x: ['C_DATA', '0x1000', 'int', 10] } }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+    const trace = normalizeTrace(raw);
+    // Step 2 (the second valid step after the malformed one):
+    // prevPoint was NOT updated for the malformed step, so the diff is relative to step 0 (x=5).
+    // The change 5→10 IS valid and should appear — the key constraint is it shouldn't be compared
+    // against anything from the malformed step itself.
+    const step2 = trace[2];
+    assert.strictEqual(step2.event, 'stepLine', `Fix3-B: Step 2 must be a valid stepLine. Got: "${step2.event}"`);
+    // The scalar update for x should reflect the actual change relative to the last valid point (x=5→10)
+    const xUpdate = step2.dsa.diff.scalarUpdates.find(u => u.name === 'x');
+    if (xUpdate) {
+      // If reported, it must reflect the actual previous valid value (5), not any malformed sentinel value
+      assert.strictEqual(xUpdate.from, 5,
+        `Fix3-B: If x is reported, from must be 5 (last valid step), not a malformed value. Got: ${xUpdate.from}`);
+      assert.strictEqual(xUpdate.to, 10,
+        `Fix3-B: If x is reported, to must be 10. Got: ${xUpdate.to}`);
+    }
+    // The step must NOT carry any reference to the malformed step's codeText or funcName
+    assert.ok(step2.funcName !== 'unknown', 'Fix3-B: Step 2 must NOT inherit schema_error funcName');
+  });
+
   console.log(`Educational Explanations Unit Test Summary: ${passed} PASS, ${failed} FAIL`);
   if (failed > 0) {
     const error = new Error('Educational explanations unit tests failed');

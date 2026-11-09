@@ -38,6 +38,15 @@ export const EducationalBanner: React.FC<EducationalBannerProps> = ({
     return addr;
   };
 
+  // FIX 5: Strip raw hex addresses from observed/upcoming text in Beginner mode.
+  // Raw addresses (0x...) and GDB frame IDs must not appear in Beginner mode narration.
+  // Preservation of exact addresses in Advanced mode and in internal trace structures is maintained.
+  const sanitizeForBeginner = (text: string): string => {
+    if (mode !== 'beginner') return text;
+    // Replace standalone hex addresses (e.g. 0x7fffd34c) with neutral placeholder
+    return text.replace(/\b0x[0-9a-fA-F]{4,}\b/g, '[ô nhớ]');
+  };
+
   return (
     <div
       data-testid="educational-banner"
@@ -78,7 +87,7 @@ export const EducationalBanner: React.FC<EducationalBannerProps> = ({
                     Sắp thực hiện:
                   </span>
                   <span className="text-slate-100 font-medium leading-relaxed">
-                    {explanationDetail.upcoming}
+                    {sanitizeForBeginner(explanationDetail.upcoming)}
                   </span>
                 </div>
 
@@ -88,7 +97,7 @@ export const EducationalBanner: React.FC<EducationalBannerProps> = ({
                     Quan sát:
                   </span>
                   <span className="text-slate-200 leading-relaxed">
-                    {explanationDetail.observed}
+                    {sanitizeForBeginner(explanationDetail.observed)}
                   </span>
                 </div>
 

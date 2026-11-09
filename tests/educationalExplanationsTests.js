@@ -908,6 +908,41 @@ function runEducationalExplanationsTests() {
     );
   });
 
+  test('PR-review: generic inline guard return is not a recursion base case', () => {
+    const raw = [{
+      event: 'stepLine', line: 6, funcName: 'maxGain',
+      codeText: 'if (currentPath > maxPath) return;',
+      stackToRender: [{
+        funcName: 'maxGain', frameId: 'f0', isHighlighted: true, line: 6,
+        encodedLocals: {
+          currentPath: ['C_DATA', '0x1000', 'int', 19],
+          maxPath: ['C_DATA', '0x1004', 'int', 40]
+        }
+      }],
+      heap: {}, deletedAddresses: []
+    }];
+    const sem = normalizeTrace(raw)[0].dsa.explanationDetail.semantics;
+    assert.ok(!/base case|điều kiện dừng|dừng tiềm năng/i.test(sem),
+      `Generic guard must not be described as a recursion base case: ${sem}`);
+    assert.ok(sem.includes('rẽ nhánh'), `Expected neutral conditional explanation: ${sem}`);
+  });
+
+  test('PR-review: delete is pending in before-statement semantics, not completed', () => {
+    const raw = [{
+      event: 'stepLine', line: 7, funcName: 'main',
+      codeText: 'delete p;',
+      stackToRender: [{
+        funcName: 'main', frameId: 'f0', isHighlighted: true, line: 7,
+        encodedLocals: { p: ['C_DATA', '0x1000', 'pointer', '0x5000'] }
+      }],
+      heap: {}, deletedAddresses: []
+    }];
+    const sem = normalizeTrace(raw)[0].dsa.explanationDetail.semantics;
+    assert.ok(sem.includes('Sắp thực hiện') && sem.includes('chưa thể kết luận'),
+      `Delete must be prospective until observed: ${sem}`);
+    assert.ok(!sem.includes('đã hoàn tất'), `Delete must not claim completion: ${sem}`);
+  });
+
   // =========================================================================
   // FIX 2 ADVERSARIAL TESTS: Frame continuity — prefix verification
   // =========================================================================

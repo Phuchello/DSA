@@ -35,12 +35,51 @@ export interface DsaListRoot {
   nodes: DsaNode[];
 }
 
+export interface ScalarUpdate {
+  name: string;
+  from: any;
+  to: any;
+  frameName: string;
+  frameId: string;
+  frameDepth: number;
+  displayName: string;
+  wasUninitialized?: boolean;
+}
+
+export interface ArrayUpdate {
+  arrayName: string;
+  index: number;
+  from: any;
+  to: any;
+  frameName: string;
+  frameId: string;
+  frameDepth: number;
+  displayName: string;
+}
+
+export interface FrameTransition {
+  type: 'push' | 'pop' | 'none';
+  funcName?: string;
+  depth?: number;
+  callerFunc?: string;
+  calleeFunc?: string;
+}
+
+export interface EducationalExplanationDetail {
+  upcoming: string;
+  observed: string;
+  semantics: string;
+}
+
 export interface DsaDiff {
   changedVariables: string[];
   allocatedNodes: string[];
   freedNodes: string[];
   unlinkedNodes: string[];
   pointerReroutes: Array<{ pointer: string; from: string | null; to: string | null }>;
+  scalarUpdates: ScalarUpdate[];
+  arrayUpdates: ArrayUpdate[];
+  frameTransition: FrameTransition;
 }
 
 export interface NormalizedExecutionPoint {
@@ -64,6 +103,7 @@ export interface NormalizedExecutionPoint {
     diff: DsaDiff;
     vietnameseExplanation: string;
     advancedNotes: string;
+    explanationDetail?: EducationalExplanationDetail;
   };
 }
 
@@ -79,29 +119,31 @@ const POINTER_COLORS: Record<string, string> = {
   current: '#10B981',
 };
 
-export function extractInfo(cStruct: any): number | string | null {
-  if (!Array.isArray(cStruct) || cStruct[0] !== 'C_STRUCT') return null;
-  for (let i = 3; i < cStruct.length; i++) {
-    const field = cStruct[i];
-    if (field && field[0] === 'info') {
-      const cData = field[1];
-      if (cData && Array.isArray(cData) && cData[0] === 'C_DATA') {
-        return cData[3];
+function extractInfo(rawNode: any): number | string | null {
+  if (!Array.isArray(rawNode) || rawNode[0] !== 'C_STRUCT') return null;
+  for (let i = 3; i < rawNode.length; i++) {
+    const field = rawNode[i];
+    if (field && (field[0] === 'info' || field[0] === 'data' || field[0] === 'val' || field[0] === 'value')) {
+      const data = field[1];
+      if (Array.isArray(data) && data[0] === 'C_DATA') {
+        return data[3] !== undefined ? data[3] : null;
       }
     }
   }
   return null;
 }
 
-export function extractNextAddress(cStruct: any): string | null {
-  if (!Array.isArray(cStruct) || cStruct[0] !== 'C_STRUCT') return null;
-  for (let i = 3; i < cStruct.length; i++) {
-    const field = cStruct[i];
+function extractNextAddress(rawNode: any): string | null {
+  if (!Array.isArray(rawNode) || rawNode[0] !== 'C_STRUCT') return null;
+  for (let i = 3; i < rawNode.length; i++) {
+    const field = rawNode[i];
     if (field && (field[0] === 'pNext' || field[0] === 'next')) {
-      const cData = field[1];
-      if (cData && Array.isArray(cData) && cData[0] === 'C_DATA') {
-        const addr = cData[3];
-        return addr && addr !== '0x0' ? addr : null;
+      const data = field[1];
+      if (Array.isArray(data) && data[0] === 'C_DATA') {
+        const addr = data[3];
+        if (addr && addr !== '0x0') {
+          return String(addr);
+        }
       }
     }
   }
@@ -109,47 +151,279 @@ export function extractNextAddress(cStruct: any): string | null {
 }
 
 /**
- * Normalizes raw GDB trace points into pedagogical learning snapshots.
- * Enforces explicit before-statement snapshot convention, root-reachability graph traversal,
- * precise pointer classifications, and stable object identities across address reuse.
+ * Task B: Calculates trustworthy variable, array, and call stack deltas between
+ * consecutive execution snapshots under the before-statement convention.
  */
+function calculateVariableDiff(
+  prevFrames: any[] | undefined,
+  currFrames: any[] | undefined
+): {
+  scalarUpdates: ScalarUpdate[];
+  arrayUpdates: ArrayUpdate[];
+  frameTransition: FrameTransition;
+} {
+  const scalarUpdates: ScalarUpdate[] = [];
+  const arrayUpdates: ArrayUpdate[] = [];
+  let frameTransition: FrameTransition = { type: 'none' };
+
+  if (!prevFrames || !currFrames) {
+    return { scalarUpdates, arrayUpdates, frameTransition };
+  }
+
+  // 1. Frame transition detection via conservative common prefix matching
+  const commonLen = Math.min(prevFrames.length, currFrames.length);
+  let prefixMatch = true;
+  for (let i = 0; i < commonLen; i++) {
+    const pf = prevFrames[i];
+    const cf = currFrames[i];
+    if (pf.funcName !== cf.funcName) {
+      prefixMatch = false;
+      break;
+    }
+    if (pf.frameId && cf.frameId && pf.frameId !== cf.frameId) {
+      prefixMatch = false;
+      break;
+    }
+  }
+
+  if (prefixMatch) {
+    if (currFrames.length > prevFrames.length) {
+      const pushedFrame = currFrames[currFrames.length - 1];
+      const callerFrame = prevFrames[prevFrames.length - 1];
+      frameTransition = {
+        type: 'push',
+        funcName: pushedFrame?.funcName || 'anonymous',
+        depth: currFrames.length - 1,
+        callerFunc: callerFrame?.funcName,
+        calleeFunc: pushedFrame?.funcName,
+      };
+    } else if (currFrames.length < prevFrames.length) {
+      const poppedFrame = prevFrames[prevFrames.length - 1];
+      const returnFrame = currFrames[currFrames.length - 1];
+      frameTransition = {
+        type: 'pop',
+        funcName: poppedFrame?.funcName || 'anonymous',
+        depth: prevFrames.length - 1,
+        callerFunc: returnFrame?.funcName,
+        calleeFunc: poppedFrame?.funcName,
+      };
+    }
+  }
+
+  // 2. Count function names for display disambiguation across frames
+  const funcCounts = new Map<string, number>();
+  for (const f of currFrames) {
+    const fn = f.funcName || 'frame';
+    funcCounts.set(fn, (funcCounts.get(fn) || 0) + 1);
+  }
+
+  // 3. Compare variables strictly across matching live frames in the common prefix
+  for (let i = 0; i < commonLen; i++) {
+    const pf = prevFrames[i];
+    const cf = currFrames[i];
+
+    // Conservative frame identity: NEVER compare variables across mismatched or replaced frames
+    if (pf.funcName !== cf.funcName) continue;
+    if (pf.frameId && cf.frameId && pf.frameId !== cf.frameId) continue;
+
+    const frameName = cf.funcName || 'frame';
+    const frameId = String(cf.frameId ?? i);
+    const frameDepth = typeof cf.frameDepth === 'number' ? cf.frameDepth : i;
+    const isMultiFrame = (funcCounts.get(frameName) || 0) > 1;
+
+    const pLocals = pf.encodedLocals || {};
+    const cLocals = cf.encodedLocals || {};
+
+    for (const [varName, val] of Object.entries<any>(cLocals)) {
+      if (!Array.isArray(val)) continue;
+
+      const displayName = isMultiFrame ? `${varName}@${frameName}#${frameDepth}` : varName;
+
+      // Case A: Primitives / scalars
+      if (val[0] === 'C_DATA') {
+        const valType = String(val[2] || '');
+        // Rule 7: Strictly avoid misclassifying pointers, references, or raw structs as numeric scalars
+        if (
+          valType === 'pointer' ||
+          valType === 'ref' ||
+          valType.endsWith('*') ||
+          valType.endsWith('&') ||
+          valType === 'NODE*'
+        ) {
+          continue;
+        }
+
+        const isUninit = valType === 'uninitialized' || val[3] === '?' || val[3] === null || val[3] === undefined;
+        const currVal = val[3];
+
+        if (varName in pLocals) {
+          const prevVal = pLocals[varName];
+          if (Array.isArray(prevVal) && prevVal[0] === 'C_DATA') {
+            const prevType = String(prevVal[2] || '');
+            if (
+              prevType === 'pointer' ||
+              prevType === 'ref' ||
+              prevType.endsWith('*') ||
+              prevType.endsWith('&')
+            ) {
+              continue;
+            }
+
+            const wasUninit = prevType === 'uninitialized' || prevVal[3] === '?' || prevVal[3] === null || prevVal[3] === undefined;
+
+            if (wasUninit && !isUninit) {
+              scalarUpdates.push({
+                name: varName,
+                from: '?',
+                to: currVal,
+                frameName,
+                frameId,
+                frameDepth,
+                displayName,
+                wasUninitialized: true,
+              });
+            } else if (!wasUninit && !isUninit && prevVal[3] !== currVal) {
+              scalarUpdates.push({
+                name: varName,
+                from: prevVal[3],
+                to: currVal,
+                frameName,
+                frameId,
+                frameDepth,
+                displayName,
+                wasUninitialized: false,
+              });
+            }
+          }
+        }
+      }
+
+      // Case B: Static arrays
+      else if (val[0] === 'C_ARRAY') {
+        if (varName in pLocals) {
+          const prevVal = pLocals[varName];
+          if (Array.isArray(prevVal) && prevVal[0] === 'C_ARRAY') {
+            const pElems = prevVal.slice(2);
+            const cElems = val.slice(2);
+            const count = Math.min(pElems.length, cElems.length);
+
+            for (let idx = 0; idx < count; idx++) {
+              const pe = pElems[idx];
+              const ce = cElems[idx];
+              if (Array.isArray(pe) && Array.isArray(ce) && pe[0] === 'C_DATA' && ce[0] === 'C_DATA') {
+                const pVal = pe[3];
+                const cVal = ce[3];
+                if (pVal !== cVal) {
+                  arrayUpdates.push({
+                    arrayName: varName,
+                    index: idx,
+                    from: pVal,
+                    to: cVal,
+                    frameName,
+                    frameId,
+                    frameDepth,
+                    displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Case C: Struct primitive fields (e.g. Branch.weight)
+      else if (val[0] === 'C_STRUCT') {
+        if (varName in pLocals) {
+          const prevVal = pLocals[varName];
+          if (Array.isArray(prevVal) && prevVal[0] === 'C_STRUCT') {
+            for (let fIdx = 3; fIdx < val.length; fIdx++) {
+              const field = val[fIdx];
+              if (!field || !field[0] || !Array.isArray(field[1])) continue;
+              const fName = field[0];
+              const fData = field[1];
+
+              if (fData[0] === 'C_DATA') {
+                const fType = String(fData[2] || '');
+                if (fType === 'pointer' || fType === 'ref' || fType.endsWith('*') || fType.endsWith('&')) continue;
+
+                const pField = prevVal.slice(3).find((pf: any) => pf && pf[0] === fName);
+                if (pField && Array.isArray(pField[1]) && pField[1][0] === 'C_DATA') {
+                  const pfData = pField[1];
+                  const pVal = pfData[3];
+                  const cVal = fData[3];
+                  if (pVal !== cVal && cVal !== undefined && cVal !== null && cVal !== '?') {
+                    const fieldVarName = `${varName}.${fName}`;
+                    scalarUpdates.push({
+                      name: fieldVarName,
+                      from: pVal,
+                      to: cVal,
+                      frameName,
+                      frameId,
+                      frameDepth,
+                      displayName: isMultiFrame ? `${fieldVarName}@${frameName}#${frameDepth}` : fieldVarName,
+                      wasUninitialized: pfData[2] === 'uninitialized' || pVal === '?',
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { scalarUpdates, arrayUpdates, frameTransition };
+}
+
 export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
   const normalized: NormalizedExecutionPoint[] = [];
 
-  // Track allocation generations for stable object identity across address reuse
-  const addressGenerations = new Map<string, number>();
   const activeFreedAddresses = new Set<string>();
+  const addressGenerations = new Map<string, number>();
 
   let prevPoint: NormalizedExecutionPoint | null = null;
 
   for (let i = 0; i < rawTrace.length; i++) {
-    // Validate schema — malformed steps must NOT silently fall back to unvalidated data.
-    // If a step fails validation, emit a controlled error sentinel instead.
-    const parseResult = RawExecutionPointSchema.safeParse(rawTrace[i]);
+    const raw = rawTrace[i];
+
+    const parseResult = RawExecutionPointSchema.safeParse(raw);
     if (!parseResult.success) {
-      // Emit a controlled error step rather than silently discarding or using raw data
       normalized.push({
         step: i,
-        line: 0,
-        funcName: '__schema_error__',
-        codeText: '',
-        stdout: '',
+        line: raw?.line ?? -1,
+        funcName: raw?.funcName ?? 'unknown',
+        codeText: raw?.codeText ?? '',
+        stdout: raw?.stdout ?? '',
         event: 'schema_error',
-        snapshotConvention: 'before-statement',
+        snapshotConvention: raw?.snapshotConvention ?? 'before-statement',
         stackToRender: [],
         heap: {},
         dsa: {
           nodes: [],
           mainChain: [],
-          listRoots: [],
           detachedNodes: [],
           unreachableNodes: [],
           freedNodes: [],
           pointers: [],
-          diff: { changedVariables: [], allocatedNodes: [], freedNodes: [], unlinkedNodes: [], pointerReroutes: [] },
-          vietnameseExplanation: `Lỗi xác thực dữ liệu vết thực thi tại bước ${i}: ${parseResult.error.message}`,
-          advancedNotes: `Schema validation error at step ${i}: ${JSON.stringify(parseResult.error.issues)}`
-        }
+          diff: {
+            changedVariables: [],
+            allocatedNodes: [],
+            freedNodes: [],
+            unlinkedNodes: [],
+            pointerReroutes: [],
+            scalarUpdates: [],
+            arrayUpdates: [],
+            frameTransition: { type: 'none' },
+          },
+          vietnameseExplanation: `Lỗi xác thực dữ liệu vết thực thi (Schema validation error) tại bước ${i}`,
+          advancedNotes: `Schema validation error at step ${i}: ${JSON.stringify(parseResult.error.issues)}`,
+          explanationDetail: {
+            upcoming: 'Lỗi xác thực dữ liệu vết thực thi.',
+            observed: 'Dữ liệu không khớp định dạng chuẩn.',
+            semantics: 'Cần kiểm tra lại dữ liệu đầu ra từ trình gỡ lỗi GDB.',
+          },
+        },
       });
       continue;
     }
@@ -165,8 +439,6 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
     }
 
     // Detect address reuse before classifying pointers:
-    // If an address was marked freed, but now heap contains an active (non-freed) node struct,
-    // and in previous step it was freed: it has been re-allocated by operator new (Address Reuse!)
     for (const [addr, rawNode] of Object.entries(heap)) {
       const rawType = Array.isArray(rawNode) && rawNode[2] ? String(rawNode[2]) : '';
       const isRawFreed = rawType.includes('(freed)');
@@ -176,8 +448,7 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
     }
 
-    // 1. Discover pointer instances per frame. The source variable name alone
-    // is not an identity: recursive calls and callers can all have a local "p".
+    // 1. Discover pointer instances per frame.
     const pointers: DsaPointer[] = [];
     const stackFrames = rawEp.stackToRender || [];
 
@@ -217,7 +488,6 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
           } else if (heap[target] || stackNodes[target]) {
             state = 'valid';
           } else {
-            // A readable address without allocation or stack-object evidence is unknown.
             state = 'unknown';
           }
 
@@ -261,11 +531,9 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       const rawType = Array.isArray(rawNode) && rawNode[2] ? String(rawNode[2]) : '';
       const isRawFreed = rawType.includes('(freed)');
 
-      // Handle generation for address reuse
       if (!addressGenerations.has(addr)) {
         addressGenerations.set(addr, 1);
       } else if (isFreed && !isRawFreed && prevPoint && prevPoint.dsa.freedNodes.some(n => n.address === addr)) {
-        // Address was freed previously but is now allocated again (Address Reuse!)
         addressGenerations.set(addr, (addressGenerations.get(addr) || 1) + 1);
         activeFreedAddresses.delete(addr);
         isFreed = false;
@@ -282,12 +550,10 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         info: info,
         nextAddress: nextAddr,
         status: isFreed ? 'freed' : 'allocated',
-        location: 'heap'
+        location: 'heap',
       });
     }
 
-    // Stack objects and readable-but-unproven NODE addresses remain distinct
-    // from confirmed heap allocations while still participating in topology.
     for (const [addr, rawNode] of Object.entries(stackNodes)) {
       if (nodeMap.has(addr)) continue;
       const gen = addressGenerations.get(addr) || 1;
@@ -298,9 +564,10 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         info: extractInfo(rawNode),
         nextAddress: extractNextAddress(rawNode),
         status: 'allocated',
-        location: 'stack'
+        location: 'stack',
       });
     }
+
     for (const [addr, rawNode] of Object.entries(unknownNodes)) {
       if (nodeMap.has(addr)) continue;
       nodeMap.set(addr, {
@@ -310,11 +577,10 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         info: extractInfo(rawNode),
         nextAddress: extractNextAddress(rawNode),
         status: 'unknown',
-        location: 'unknown'
+        location: 'unknown',
       });
     }
 
-    // Include any deleted addresses not present in raw heap object
     for (const d_addr of activeFreedAddresses) {
       if (!nodeMap.has(d_addr)) {
         const gen = addressGenerations.get(d_addr) || 1;
@@ -325,13 +591,12 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
           info: null,
           nextAddress: null,
           status: 'freed',
-          location: 'heap'
+          location: 'heap',
         });
       }
     }
 
-    // 3. Multi-Root Reachability Analysis. LIST field pointers retain the
-    // source variable and frame in their identities (for example first.pHead).
+    // 3. Multi-Root Reachability Analysis.
     const headPointers = pointers.filter(pointer => /(?:^|\.)(?:pHead|head)$/.test(pointer.name));
     const rootGroups = new Map<string, { head: DsaPointer; tail: DsaPointer | null; name: string }>();
     for (const head of headPointers) {
@@ -373,16 +638,13 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         frameDepth: head.frameDepth,
         headAddress: head.targetAddress,
         tailAddress: tail?.targetAddress || null,
-        nodes: chainFrom(head.targetAddress)
+        nodes: chainFrom(head.targetAddress),
       };
     });
 
-    // Preserve the original single-list API: mainChain remains the first root.
     const mainChain = listRoots[0]?.nodes || [];
-    const mainChainAddresses = new Set(mainChain.map(node => node.address));
     const listReachableAddresses = new Set(listRoots.flatMap(root => root.nodes.map(node => node.address)));
 
-    // Other roots: any stack pointer not represented by a LIST head.
     const otherReachableAddresses = new Set<string>();
     for (const ptr of pointers) {
       if (!headPointers.includes(ptr) && ptr.targetAddress && ptr.state === 'valid' && nodeMap.has(ptr.targetAddress)) {
@@ -396,8 +658,6 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
     }
 
-    // Classify node status without treating stack objects or unproven memory as
-    // heap allocations or leaks.
     const detachedNodes: DsaNode[] = [];
     const unreachableNodes: DsaNode[] = [];
     const freedNodes: DsaNode[] = [];
@@ -427,7 +687,7 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       ...detachedNodes,
       ...unreachableNodes,
       ...freedNodes,
-      ...additionalNodes
+      ...additionalNodes,
     ];
 
     // 4. Calculate diff from previous step
@@ -436,7 +696,10 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       allocatedNodes: [],
       freedNodes: [],
       unlinkedNodes: [],
-      pointerReroutes: []
+      pointerReroutes: [],
+      scalarUpdates: [],
+      arrayUpdates: [],
+      frameTransition: { type: 'none' },
     };
 
     if (prevPoint) {
@@ -460,26 +723,45 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
       // Check pointer movements
       for (const ptr of pointers) {
-        const prevPtr = prevPoint.dsa.pointers.find(p => p.name === ptr.name && p.frameId === ptr.frameId && p.frameDepth === ptr.frameDepth && p.frameDepth === ptr.frameDepth);
+        const prevPtr = prevPoint.dsa.pointers.find(p => p.name === ptr.name && p.frameId === ptr.frameId && p.frameDepth === ptr.frameDepth);
         if (prevPtr && prevPtr.targetAddress !== ptr.targetAddress) {
           diff.pointerReroutes.push({
             pointer: ptr.displayName || ptr.name,
             from: prevPtr.targetAddress,
-            to: ptr.targetAddress
+            to: ptr.targetAddress,
           });
           diff.changedVariables.push(ptr.displayName || ptr.name);
         }
       }
+
+      // Task B: Variable and Frame Deltas
+      const varDiff = calculateVariableDiff(prevPoint.stackToRender, stackFrames);
+      diff.scalarUpdates = varDiff.scalarUpdates;
+      diff.arrayUpdates = varDiff.arrayUpdates;
+      diff.frameTransition = varDiff.frameTransition;
+
+      for (const u of varDiff.scalarUpdates) {
+        if (!diff.changedVariables.includes(u.displayName)) {
+          diff.changedVariables.push(u.displayName);
+        }
+      }
+      for (const a of varDiff.arrayUpdates) {
+        if (!diff.changedVariables.includes(a.displayName)) {
+          diff.changedVariables.push(a.displayName);
+        }
+      }
     }
 
-    // 5. Synthesize Vietnamese pedagogical explanation
-    const { explanation, advanced } = generateVietnameseExplanation(
+    // 5. Synthesize Vietnamese pedagogical explanation (Task C)
+    const { explanation, advanced, detail } = generateVietnameseExplanation(
       rawEp.codeText || '',
       rawEp.line,
       rawEp.funcName,
       pointers,
       allOrderedNodes,
-      diff
+      diff,
+      stackFrames,
+      i
     );
 
     const normalizedPoint: NormalizedExecutionPoint = {
@@ -502,8 +784,9 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
         pointers,
         diff,
         vietnameseExplanation: explanation,
-        advancedNotes: advanced
-      }
+        advancedNotes: advanced,
+        explanationDetail: detail,
+      },
     };
 
     normalized.push(normalizedPoint);
@@ -513,56 +796,40 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
   return normalized;
 }
 
+/**
+ * Task C: Generates a 3-facet educational explanation:
+ * 1. "Sắp thực hiện" (upcoming): What statement N will attempt prospectively.
+ * 2. "Thay đổi đã quan sát" (observed): What changed between snapshot N-1 and N.
+ * 3. "Ý nghĩa" (semantics): Algorithmic role and pedagogical context.
+ *
+ * Strictly adheres to the before-statement execution convention.
+ */
 export function generateVietnameseExplanation(
   codeText: string,
   line: number,
   funcName: string,
   pointers: DsaPointer[],
   nodes: DsaNode[],
-  diff: DsaDiff
-): { explanation: string; advanced: string } {
-  let explanation = '';
-  let advanced = '';
-
+  diff: DsaDiff,
+  stackFrames?: any[],
+  stepIndex?: number
+): { explanation: string; advanced: string; detail: EducationalExplanationDetail } {
   const trimmed = codeText.trim();
 
-  // Explain deallocation (freedNodes)
-  if (diff.freedNodes.length > 0) {
-    const freedAddr = diff.freedNodes[0];
-    explanation = `Đã thực thi giải phóng bộ nhớ (deallocation): Vùng nhớ Heap tại địa chỉ ${freedAddr} đã được trả lại cho hệ điều hành.`;
-    advanced = `Hàm delete hoàn tất thu hồi khối nhớ. Nếu các con trỏ trỏ tới ${freedAddr} chưa được gán nullptr, chúng đã trở thành con trỏ lơ lửng (dangling pointer).`;
-    return { explanation, advanced };
-  }
-
-  // Pre-delete line
+  // ---------------------------------------------------------------------------
+  // Facet 1: "Sắp thực hiện" (upcoming) — Prospective intent of current line
+  // ---------------------------------------------------------------------------
+  let upcoming = '';
   if (trimmed.startsWith('delete ')) {
     const varName = trimmed.replace('delete ', '').replace(';', '').trim();
     const ptr = [...pointers].reverse().find(p => p.name === varName);
-    explanation = `Chuẩn bị giải phóng bộ nhớ qua lệnh: ${trimmed}. Con trỏ ${varName} đang giữ địa chỉ ${ptr?.targetAddress || '???'}.`;
-    advanced = `Ngữ nghĩa trước câu lệnh: Bộ nhớ tại địa chỉ trên vẫn hợp lệ và có thể truy xuất cho đến khi lệnh delete được hoàn tất ở bước kế tiếp.`;
-    return { explanation, advanced };
-  }
-
-  // Pointer unlinking
-  if (trimmed.includes('->pNext =') || trimmed.includes('.pHead =') || trimmed.includes('.pTail =')) {
-    explanation = `Cập nhật liên kết con trỏ: ${trimmed}. Cấu trúc liên kết giữa các nút danh sách đang được thiết lập lại.`;
-    advanced = `Thay đổi liên kết pNext làm thay đổi topo của đồ thị. Kiểm tra xem các nút bị tách rời có còn được giữ bởi con trỏ tạm nào không để tránh rò rỉ bộ nhớ.`;
-    return { explanation, advanced };
-  }
-
-  // CreateNode / new NODE
-  if (trimmed.includes('new NODE') || trimmed.includes('CreateNode')) {
-    explanation = `Cấp phát nút mới trên Heap: ${trimmed}. Một ô nhớ mới được tạo để chứa dữ liệu nút.`;
-    advanced = `Toán tử new cấp phát sizeof(NODE) bytes trên Heap và trả về con trỏ địa chỉ ô nhớ.`;
-    return { explanation, advanced };
-  }
-
-  // Loop traversal
-  if (trimmed.startsWith('while') || trimmed.startsWith('for')) {
+    upcoming = `Chuẩn bị giải phóng bộ nhớ qua lệnh: ${trimmed}. Con trỏ ${varName} đang giữ địa chỉ ${ptr?.targetAddress || '???'}.`;
+  } else if (trimmed.includes('new NODE') || trimmed.includes('CreateNode')) {
+    upcoming = `Chuẩn bị cấp phát nút mới trên Heap: ${trimmed}. Một ô nhớ mới sẽ được tạo để chứa dữ liệu nút.`;
+  } else if (trimmed.includes('->pNext =') || trimmed.includes('.pHead =') || trimmed.includes('.pTail =')) {
+    upcoming = `Chuẩn bị cập nhật liên kết con trỏ: ${trimmed}. Cấu trúc liên kết giữa các nút danh sách đang được thiết lập lại.`;
+  } else if (trimmed.startsWith('while') || trimmed.startsWith('for')) {
     const pPtr = [...pointers].reverse().find(p => p.name === 'p');
-    // Only attribute loop to pointer traversal if the loop syntax actually references pointer p
-    // and evaluates its traversal/termination condition (e.g. while (p != nullptr), while (p), for (...p...))
-    // FIX-03 & F5: Exclude equality-to-null check (e.g. while (p == nullptr) loops while null, not traversing nodes)
     const isEqualityToNull = /\bp\s*==\s*(nullptr|NULL|0)\b/.test(trimmed) || /!\s*p\b/.test(trimmed);
     const isPointerTraversalLoop = Boolean(
       pPtr &&
@@ -576,35 +843,213 @@ export function generateVietnameseExplanation(
        /while\s*\(\s*p\s*!=/.test(trimmed) ||
        (trimmed.includes('!=') && (trimmed.includes('nullptr') || trimmed.includes('NULL'))))
     );
-    // NOTE: while(p == nullptr) is NOT a traversal — p IS null, loop exits immediately
+
+    if (isPointerTraversalLoop && pPtr) {
+      upcoming = `Kiểm tra điều kiện lặp: ${trimmed}. Con trỏ duyệt p đang ở địa chỉ ${pPtr.targetAddress || 'nullptr'}.`;
+    } else {
+      upcoming = `Chuẩn bị đánh giá điều kiện lặp: ${trimmed}.`;
+    }
+  } else if (/^if\s*\(/.test(trimmed) || /^else\s+if\s*\(/.test(trimmed)) {
+    upcoming = `Chuẩn bị kiểm tra điều kiện rẽ nhánh: ${trimmed}.`;
+  } else if (/^return\b/.test(trimmed)) {
+    upcoming = `Chuẩn bị kết thúc hàm và trả về giá trị: ${trimmed}.`;
+  } else if (/\b(int|char|short|long|float|double|bool|auto|Branch|NODE|LIST)\s+(?:const\s+)?(?:\*+\s*)?[a-zA-Z_]\w*\s*(?:[;=\[\{]|$)/.test(trimmed)) {
+    upcoming = `Chuẩn bị khai báo và khởi tạo: ${trimmed}.`;
+  } else if (/^[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*|\[[^\]]+\])?\s*=(?!=)/.test(trimmed)) {
+    upcoming = `Chuẩn bị tính toán và cập nhật giá trị: ${trimmed}.`;
+  } else if (/^[a-zA-Z_]\w*\s*\(/.test(trimmed)) {
+    if (trimmed.includes('TimKiemVaXoa')) {
+      upcoming = `Bắt đầu thực thi thuật toán Tìm Kiếm Và Xóa (TimKiemVaXoa) trên Danh Sách Liên Kết.`;
+    } else if (trimmed.includes('PrintList')) {
+      upcoming = `Gọi hàm in các phần tử trong danh sách liên kết ra console.`;
+    } else {
+      upcoming = `Chuẩn bị gọi thực thi hàm: ${trimmed}.`;
+    }
+  } else if (trimmed) {
+    upcoming = `Chuẩn bị thực thi câu lệnh: "${trimmed}".`;
+  } else {
+    upcoming = 'Chuẩn bị chuyển sang bước tiếp theo.';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Facet 2: "Thay đổi đã quan sát" (observed) — State delta from previous step
+  // ---------------------------------------------------------------------------
+  const observedChanges: string[] = [];
+
+  if (diff.freedNodes.length > 0) {
+    observedChanges.push(`Đã giải phóng khối nhớ Heap tại ${diff.freedNodes.join(', ')}.`);
+  }
+  if (diff.allocatedNodes.length > 0) {
+    observedChanges.push(`Đã cấp phát khối nhớ mới trên Heap tại ${diff.allocatedNodes.join(', ')}.`);
+  }
+  if (diff.frameTransition?.type === 'push') {
+    observedChanges.push(`Đã tạo khung ngăn xếp mới cho hàm ${diff.frameTransition.funcName}() ở độ sâu ${diff.frameTransition.depth}.`);
+  } else if (diff.frameTransition?.type === 'pop') {
+    observedChanges.push(`Khung ngăn xếp của hàm ${diff.frameTransition.funcName}() đã hoàn thành và được thu hồi (Pop).`);
+  }
+  if (diff.pointerReroutes.length > 0) {
+    for (const r of diff.pointerReroutes) {
+      observedChanges.push(`Con trỏ ${r.pointer} đổi hướng sang ${r.to || 'null'}.`);
+    }
+  }
+  if (diff.arrayUpdates && diff.arrayUpdates.length > 0) {
+    for (const u of diff.arrayUpdates) {
+      observedChanges.push(`Phần tử mảng ${u.displayName} thay đổi từ ${u.from ?? '?'} thành ${u.to}.`);
+    }
+  }
+  if (diff.scalarUpdates && diff.scalarUpdates.length > 0) {
+    for (const u of diff.scalarUpdates) {
+      if (u.wasUninitialized) {
+        observedChanges.push(`Biến ${u.displayName} được khởi tạo giá trị ${u.to}.`);
+      } else {
+        observedChanges.push(`Biến ${u.displayName} thay đổi từ ${u.from} thành ${u.to}.`);
+      }
+    }
+  }
+
+  let observed = '';
+  if (observedChanges.length > 0) {
+    observed = observedChanges.join(' ');
+  } else if (stepIndex === 0) {
+    observed = 'Bắt đầu chương trình — trạng thái bộ nhớ ban đầu trước khi thực thi.';
+  } else {
+    observed = 'Không có thay đổi biến nào trong bộ nhớ ở bước trước.';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Facet 3: "Ý nghĩa" (semantics) — Algorithmic & pedagogical context
+  // ---------------------------------------------------------------------------
+  let semantics = '';
+  if (diff.freedNodes.length > 0 || trimmed.startsWith('delete ')) {
+    semantics = 'Thu hồi vùng nhớ đã hoàn tất nhiệm vụ nhằm tối ưu tài nguyên và tránh rò rỉ bộ nhớ (memory leak).';
+  } else if (trimmed.includes('new NODE') || trimmed.includes('CreateNode') || diff.allocatedNodes.length > 0) {
+    semantics = 'Toán tử new cấp phát sizeof(NODE) bytes trên Heap và trả về con trỏ địa chỉ ô nhớ.';
+  } else if (/^if\s*\(/.test(trimmed) && (/\b(nullptr|NULL|0)\b/.test(trimmed) || /<=?\s*1\b/.test(trimmed))) {
+    semantics = 'Điều kiện dừng (base case) kết thúc chuỗi đệ quy và bắt đầu quá trình quay lui (backtracking).';
+  } else if (diff.frameTransition?.type === 'push') {
+    semantics = 'Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này.';
+  } else if (diff.frameTransition?.type === 'pop') {
+    semantics = 'Hàm con hoàn thành tính toán, truyền giá trị trả về cho hàm gọi và giải phóng khung stack.';
+  } else if (trimmed.includes('->pNext =') || trimmed.includes('.pHead =') || trimmed.includes('.pTail =')) {
+    semantics = 'Thay đổi liên kết pNext làm thay đổi topo của đồ thị. Kiểm tra xem các nút bị tách rời có còn được giữ bởi con trỏ tạm nào không để tránh rò rỉ bộ nhớ.';
+  } else if (trimmed.includes('TimKiemVaXoa')) {
+    semantics = 'Hàm nhận tham chiếu danh sách LIST &L để có thể trực tiếp sửa đổi pHead và pTail khi xóa nút đầu hoặc cuối.';
+  } else if (trimmed.includes('PrintList')) {
+    semantics = 'Duyệt tuần tự từ pHead tới khi gặp nullptr. Độ phức tạp thời gian O(n).';
+  } else if (trimmed.startsWith('while') || trimmed.startsWith('for')) {
+    const pPtr = [...pointers].reverse().find(p => p.name === 'p');
+    const isEqualityToNull = /\bp\s*==\s*(nullptr|NULL|0)\b/.test(trimmed) || /!\s*p\b/.test(trimmed);
+    const isPointerTraversalLoop = Boolean(
+      pPtr &&
+      nodes.length > 0 &&
+      /\bp\b/.test(trimmed) &&
+      !/for\s*\(\s*(int|size_t|long|char|auto)\s+p\b/.test(trimmed) &&
+      !isEqualityToNull &&
+      (trimmed.includes('pNext') ||
+       trimmed.includes('->') ||
+       /while\s*\(\s*p\s*\)/.test(trimmed) ||
+       /while\s*\(\s*p\s*!=/.test(trimmed) ||
+       (trimmed.includes('!=') && (trimmed.includes('nullptr') || trimmed.includes('NULL'))))
+    );
+    if (isPointerTraversalLoop && pPtr) {
+      semantics = 'Vong lap ket thuc khi p la nullptr, dia chi khong con trong nodeMap, hoac phat hien chu ky. Viec duyet an toan phu thuoc vao nhieu dieu kien, khong chi rieng p != nullptr.';
+    } else {
+      semantics = 'Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này.';
+    }
+  } else if (/\b(if|else\s+if)\b/.test(trimmed) && (/\b(nullptr|NULL|0)\b/.test(trimmed) || /<=?\s*1\b/.test(trimmed))) {
+    semantics = 'Điều kiện dừng (base case) kết thúc chuỗi đệ quy và bắt đầu quá trình quay lui (backtracking).';
+  } else if (/^return\b/.test(trimmed)) {
+    semantics = 'Trả về giá trị tính toán và hoàn tất chu kỳ sống của khung hàm hiện tại.';
+  } else if (diff.arrayUpdates && diff.arrayUpdates.length > 0) {
+    semantics = 'Cập nhật trực tiếp dữ liệu trên các ô nhớ liên tiếp của mảng.';
+  } else if (diff.scalarUpdates && diff.scalarUpdates.length > 0) {
+    semantics = 'Lưu trữ giá trị tính toán trung gian phục vụ cho các bước xử lý tiếp theo.';
+  } else {
+    semantics = 'Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm.';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Backward-compatible primary explanation and advanced notes
+  // ---------------------------------------------------------------------------
+  let explanation = '';
+  let advanced = '';
+
+  // 1. Linked-list deallocation
+  if (diff.freedNodes.length > 0) {
+    const freedAddr = diff.freedNodes[0];
+    explanation = `Đã thực thi giải phóng bộ nhớ (deallocation): Vùng nhớ Heap tại địa chỉ ${freedAddr} đã được trả lại cho hệ điều hành.`;
+    advanced = `Hàm delete hoàn tất thu hồi khối nhớ. Nếu các con trỏ trỏ tới ${freedAddr} chưa được gán nullptr, chúng đã trở thành con trỏ lơ lửng (dangling pointer).`;
+  }
+  // 2. Pre-delete line
+  else if (trimmed.startsWith('delete ')) {
+    const varName = trimmed.replace('delete ', '').replace(';', '').trim();
+    const ptr = [...pointers].reverse().find(p => p.name === varName);
+    explanation = `Chuẩn bị giải phóng bộ nhớ qua lệnh: ${trimmed}. Con trỏ ${varName} đang giữ địa chỉ ${ptr?.targetAddress || '???'}.`;
+    advanced = `Ngữ nghĩa trước câu lệnh: Bộ nhớ tại địa chỉ trên vẫn hợp lệ và có thể truy xuất cho đến khi lệnh delete được hoàn tất ở bước kế tiếp.`;
+  }
+  // 3. Pointer unlinking
+  else if (trimmed.includes('->pNext =') || trimmed.includes('.pHead =') || trimmed.includes('.pTail =')) {
+    explanation = `Cập nhật liên kết con trỏ: ${trimmed}. Cấu trúc liên kết giữa các nút danh sách đang được thiết lập lại.`;
+    advanced = `Thay đổi liên kết pNext làm thay đổi topo của đồ thị. Kiểm tra xem các nút bị tách rời có còn được giữ bởi con trỏ tạm nào không để tránh rò rỉ bộ nhớ.`;
+  }
+  // 4. CreateNode / new NODE
+  else if (trimmed.includes('new NODE') || trimmed.includes('CreateNode')) {
+    explanation = `Cấp phát nút mới trên Heap: ${trimmed}. Một ô nhớ mới được tạo để chứa dữ liệu nút.`;
+    advanced = `Toán tử new cấp phát sizeof(NODE) bytes trên Heap và trả về con trỏ địa chỉ ô nhớ.`;
+  }
+  // 5. Loop traversal & neutral loops
+  else if (trimmed.startsWith('while') || trimmed.startsWith('for')) {
+    const pPtr = [...pointers].reverse().find(p => p.name === 'p');
+    const isEqualityToNull = /\bp\s*==\s*(nullptr|NULL|0)\b/.test(trimmed) || /!\s*p\b/.test(trimmed);
+    const isPointerTraversalLoop = Boolean(
+      pPtr &&
+      nodes.length > 0 &&
+      /\bp\b/.test(trimmed) &&
+      !/for\s*\(\s*(int|size_t|long|char|auto)\s+p\b/.test(trimmed) &&
+      !isEqualityToNull &&
+      (trimmed.includes('pNext') ||
+       trimmed.includes('->') ||
+       /while\s*\(\s*p\s*\)/.test(trimmed) ||
+       /while\s*\(\s*p\s*!=/.test(trimmed) ||
+       (trimmed.includes('!=') && (trimmed.includes('nullptr') || trimmed.includes('NULL'))))
+    );
 
     if (isPointerTraversalLoop && pPtr) {
       explanation = `Kiểm tra điều kiện lặp: ${trimmed}. Con trỏ duyệt p đang ở địa chỉ ${pPtr.targetAddress || 'nullptr'}.`;
       advanced = `Vong lap ket thuc khi p la nullptr, dia chi khong con trong nodeMap, hoac phat hien chu ky. Viec duyet an toan phu thuoc vao nhieu dieu kien, khong chi rieng p != nullptr.`;
-      return { explanation, advanced };
+    } else {
+      explanation = `Chuẩn bị đánh giá điều kiện lặp: ${trimmed}.`;
+      advanced = `Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này.`;
     }
-    // Neutral loop explanation for general loops (arrays, indices, or loops not traversing via pointer p)
-    explanation = `Chuẩn bị đánh giá điều kiện lặp: ${trimmed}.`;
-    advanced = `Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này.`;
-    return { explanation, advanced };
   }
-
-  // Function calls
-  if (trimmed.includes('TimKiemVaXoa')) {
+  // 6. Hardcoded lessons
+  else if (trimmed.includes('TimKiemVaXoa')) {
     explanation = `Bắt đầu thực thi thuật toán Tìm Kiếm Và Xóa (TimKiemVaXoa) trên Danh Sách Liên Kết.`;
     advanced = `Hàm nhận tham chiếu danh sách LIST &L để có thể trực tiếp sửa đổi pHead và pTail khi xóa nút đầu hoặc cuối.`;
-    return { explanation, advanced };
-  }
-
-  if (trimmed.includes('PrintList')) {
+  } else if (trimmed.includes('PrintList')) {
     explanation = `Gọi hàm in các phần tử trong danh sách liên kết ra console.`;
     advanced = `Duyệt tuần tự từ pHead tới khi gặp nullptr. Độ phức tạp thời gian O(n).`;
-    return { explanation, advanced };
+  }
+  // 7. Evidence-based explanation for general C++ statements
+  else {
+    const hasMeaningfulObserved = observed &&
+      observed !== 'Không có thay đổi biến nào trong bộ nhớ ở bước trước.' &&
+      observed !== 'Bắt đầu chương trình — trạng thái bộ nhớ ban đầu trước khi thực thi.';
+
+    if (hasMeaningfulObserved) {
+      explanation = `${upcoming} Đã ghi nhận: ${observed}`;
+    } else {
+      explanation = `${upcoming} ${semantics}`;
+    }
+
+    advanced = `Hàm: ${funcName}, Dòng: ${line}. Số biến thay đổi: ${diff.changedVariables.length}. Số khung stack: ${stackFrames?.length || 1}.`;
   }
 
-  // General statement
-  explanation = `Đang thực thi dòng ${line}: "${trimmed || '(chuyển bước)'}".`;
-  advanced = `Số lượng nút còn hoạt động: ${nodes.filter(n => n.status !== 'freed').length}. Số con trỏ đang theo dõi: ${pointers.length}.`;
+  const detail: EducationalExplanationDetail = {
+    upcoming,
+    observed,
+    semantics,
+  };
 
-  return { explanation, advanced };
+  return { explanation, advanced, detail };
 }

@@ -94,6 +94,51 @@ describe('M2.2 Beginner Learning Experience Tests', () => {
       expect(structVar.textContent).toContain('weight: 1');
       expect(structVar.textContent).toContain('large: nullptr');
     });
+
+    it('F06: correctly identifies differently named structs (CustomRecord) and avoids false positives for primitive pointers', () => {
+      // 1. Differently named struct
+      const customStructStack = [
+        {
+          funcName: 'process',
+          frameId: 'f0',
+          frameDepth: 0,
+          isHighlighted: true,
+          encodedLocals: {
+            item: [
+              'C_STRUCT',
+              '0x2000',
+              'CustomRecord',
+              ['id', ['C_DATA', '0x2000', 'int', 42]],
+              ['score', ['C_DATA', '0x2004', 'double', 9.5]],
+            ],
+          },
+        },
+      ];
+
+      const { unmount } = render(<ArrayVariablesCanvas stackToRender={customStructStack} currentLine={5} />);
+      expect(screen.getByTestId('unknown-struct-notice')).toBeDefined();
+      expect(screen.getByTestId('scalar-var-item').textContent).toContain('struct CustomRecord');
+      expect(screen.getByTestId('scalar-var-item').textContent).toContain('id: 42');
+      unmount();
+
+      // 2. Primitive pointers (int*, void*, char*) must NOT trigger unknown-struct notice
+      const primitivePointerStack = [
+        {
+          funcName: 'main',
+          frameId: 'f0',
+          frameDepth: 0,
+          isHighlighted: true,
+          encodedLocals: {
+            x: ['C_DATA', '0x3000', 'int', 10],
+            ptr: ['C_DATA', '0x3004', 'pointer', '0x3000'],
+            vptr: ['C_DATA', '0x3008', 'pointer', '0x0'],
+          },
+        },
+      ];
+
+      render(<ArrayVariablesCanvas stackToRender={primitivePointerStack} currentLine={5} />);
+      expect(screen.queryByTestId('unknown-struct-notice')).toBeNull();
+    });
   });
 
   // 2. Active-frame emphasis

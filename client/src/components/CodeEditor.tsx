@@ -94,12 +94,17 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const [consoleState, setConsoleState] = useState<'compact' | 'expanded' | 'collapsed'>('compact');
   const editorRef = useRef<ReactCodeMirrorRef>(null);
 
-  // If build error occurs, make sure console is visible
+  // If build error occurs, make sure console is visible.
+  // F11 fix: Also uncollapse when isExecuting transitions false→true→false with
+  // the same buildOutput string (repeated compilation of identical error).
+  const prevExecutingRef = useRef(false);
   useEffect(() => {
-    if (buildOutput) {
+    if (buildOutput && !isExecuting && prevExecutingRef.current) {
+      // Execution just finished with build output — always uncollapse
       setConsoleState((s) => (s === 'collapsed' ? 'compact' : s));
     }
-  }, [buildOutput]);
+    prevExecutingRef.current = isExecuting;
+  }, [buildOutput, isExecuting]);
 
   // Auto scroll to active executing line in CodeMirror
   useEffect(() => {

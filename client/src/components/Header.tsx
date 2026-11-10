@@ -85,9 +85,6 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Layers className="w-3 h-3 flex-shrink-0" />
           <span className="whitespace-nowrap">{mode === 'beginner' ? 'Chế độ dễ hiểu' : 'Chế độ nâng cao'}</span>
-          <span className="text-[10px] opacity-80 whitespace-nowrap">
-            {mode === 'beginner' ? '(Chế độ: Tập sự)' : '(Chế độ: Chuyên sâu)'}
-          </span>
         </button>
 
         {/* Reset Button */}

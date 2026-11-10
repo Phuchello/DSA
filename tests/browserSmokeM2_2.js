@@ -393,11 +393,21 @@ int main() {
     let pushObserved = false;
     let baseCaseObserved = false;
     let popObserved = false;
+    let maxDepthStep = -1;
+    let maxDepthCount = 0;
 
     for (let s = 0; s < totalSteps3; s++) {
       await setStep(s);
       const transitionText = await evaluate("document.querySelector('[data-testid=\"stack-transition-indicator\"]')?.textContent || ''");
       const semanticsText = await evaluate("document.querySelector('[data-testid=\"explanation-semantics\"]')?.textContent || ''");
+      const frameCountText = await evaluate("document.querySelector('[data-testid=\"stack-frame-count\"]')?.textContent || ''");
+      const frameCountMatch = frameCountText.match(/(\d+)/);
+      const currentDepth = frameCountMatch ? Number(frameCountMatch[1]) : 0;
+
+      if (currentDepth > maxDepthCount) {
+        maxDepthCount = currentDepth;
+        maxDepthStep = s;
+      }
 
       if (transitionText.includes('Gọi hàm — thêm khung') || transitionText.includes('Gọi thêm hàm')) {
         pushObserved = true;
@@ -413,6 +423,21 @@ int main() {
     assert.ok(pushObserved, 'Must observe push transition indicator');
     assert.ok(baseCaseObserved, 'Must observe verified base-case semantics');
     assert.ok(popObserved, 'Must observe pop transition indicator');
+
+    // F04 fix: Assert actual depth of 5 (main + factorial(4..1)) was reached
+    assert.strictEqual(maxDepthCount, 5, 'factorial(4) must reach depth 5 (main + 4 recursive frames)');
+    assert.ok(maxDepthStep > 0, 'Max depth step must be identified');
+
+    // Navigate to max depth and verify all 5 frames are present in the DOM
+    await setStep(maxDepthStep);
+    const allFrameElements = await evaluate("document.querySelectorAll('[data-testid^=\"call-stack-frame-\"]').length");
+    assert.strictEqual(allFrameElements, 5, 'All 5 call stack frame elements must be present in DOM at max depth');
+
+    // Verify each frame exists
+    for (let d = 0; d < 5; d++) {
+      const frameExists = await evaluate(`Boolean(document.querySelector('[data-testid="call-stack-frame-${d}"]'))`);
+      assert.ok(frameExists, `call-stack-frame-${d} must exist at max depth`);
+    }
 
     // Pure recursion should hide empty static arrays section
     const hasArraySectionInRecursion = await evaluate("Boolean(document.querySelector('[data-testid=\"capture-limit-note\"]') || document.querySelector('[data-testid^=\"array-container-\"]'))");
@@ -513,10 +538,6 @@ int main() {
     await clickRun();
     await waitForExecution('Maximum path sum = 40');
 
-    // Verify honest unknown-struct notice appears
-    const hasStructNotice = await evaluate("Boolean(document.querySelector('[data-testid=\"unknown-struct-notice\"]'))");
-    assert.ok(hasStructNotice, 'Must display honest unknown struct notice');
-
     // Step to when currentPath = 19 is observed
     const totalSteps5 = await evaluate("Number(document.querySelector('input[type=\"range\"]')?.max || 0) + 1");
     let branchStep = -1;
@@ -530,6 +551,10 @@ int main() {
     }
     assert.ok(branchStep > 0, 'Must find step where currentPath = 19 is in frame 2');
     await setStep(branchStep);
+
+    // Verify honest unknown-struct notice appears when user struct is in memory
+    const hasStructNotice = await evaluate("Boolean(document.querySelector('[data-testid=\"unknown-struct-notice\"]'))");
+    assert.ok(hasStructNotice, 'Must display honest unknown struct notice');
 
     await saveScreenshot('m2-2-05-branch-struct-1440x900.png');
     console.log('✅ Scenario 5 (Unfamiliar Branch struct) PASS');
@@ -670,7 +695,27 @@ int main() {
     await saveScreenshot('m2-2-responsive-mobile-390x844.png');
     const mobileCanvasExists = await evaluate("Boolean(document.querySelector('[data-testid=\"array-variables-canvas\"]'))");
     assert.ok(mobileCanvasExists, 'Visualizer canvas must remain rendered on mobile');
-    console.log('✅ 390×844 (Mobile) verified');
+
+    // F05 fix: Verify no unintentional horizontal overflow on mobile
+    const mobileOverflow = await evaluate("document.documentElement.scrollWidth > window.innerWidth");
+    assert.strictEqual(mobileOverflow, false, 'No horizontal page overflow at 390x844 mobile');
+
+    // Verify timeline controls are reachable and functional on mobile
+    const mobileTimelineExists = await evaluate("Boolean(document.querySelector('input[type=\"range\"]'))");
+    assert.ok(mobileTimelineExists, 'Timeline slider must exist on mobile');
+    const mobileRunBtnExists = await evaluate("Boolean(Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Chạy chương trình')))");
+    assert.ok(mobileRunBtnExists, 'Run button must be present on mobile');
+
+    // Verify canvas has non-zero bounding rect (is visible, not just in DOM)
+    const canvasRect = await evaluate(`(() => {
+      const el = document.querySelector('[data-testid="array-variables-canvas"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { width: r.width, height: r.height, top: r.top };
+    })()`);
+    assert.ok(canvasRect && canvasRect.width > 0 && canvasRect.height > 0, 'Canvas must have visible bounding rect on mobile');
+
+    console.log('✅ 390×844 (Mobile) verified with overflow, controls and visibility checks');
 
     // 4. Mode comparison: Beginner vs Advanced
     await setViewport(1440, 900);

@@ -285,10 +285,23 @@ export const App: React.FC = () => {
 
           {/* Canvas Tabs Header */}
           <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-3 py-1.5 shrink-0 z-10">
-            <div className="flex items-center gap-1.5" role="tablist" aria-label="Lựa chọn khung trực quan hóa">
+            <div
+              className="flex items-center gap-1.5"
+              role="tablist"
+              aria-label="Lựa chọn khung trực quan hóa"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                  e.preventDefault();
+                  userSelectedTabRef.current = true;
+                  setActiveCanvasTab((prev) => (prev === 'linked-list' ? 'arrays-variables' : 'linked-list'));
+                }
+              }}
+            >
               <button
                 type="button"
                 role="tab"
+                id="canvas-tab-btn-linked-list"
+                aria-controls="canvas-tabpanel-linked-list"
                 aria-selected={activeCanvasTab === 'linked-list'}
                 data-testid="canvas-tab-linked-list"
                 onClick={() => {
@@ -307,6 +320,8 @@ export const App: React.FC = () => {
               <button
                 type="button"
                 role="tab"
+                id="canvas-tab-btn-arrays"
+                aria-controls="canvas-tabpanel-arrays"
                 aria-selected={activeCanvasTab === 'arrays-variables'}
                 data-testid="canvas-tab-arrays"
                 onClick={() => {
@@ -339,23 +354,37 @@ export const App: React.FC = () => {
           {/* Visualizer Canvas Body */}
           <div className="flex-1 overflow-hidden relative min-h-0">
             {activeCanvasTab === 'linked-list' ? (
-              <LinkedListCanvas
-                nodes={currentStep?.dsa.nodes || []}
-                pointers={currentStep?.dsa.pointers || []}
-                listRoots={currentStep?.dsa.listRoots || []}
-                currentLine={currentStep?.line}
-              />
+              <div
+                id="canvas-tabpanel-linked-list"
+                role="tabpanel"
+                aria-labelledby="canvas-tab-btn-linked-list"
+                className="h-full w-full"
+              >
+                <LinkedListCanvas
+                  nodes={currentStep?.dsa.nodes || []}
+                  pointers={currentStep?.dsa.pointers || []}
+                  listRoots={currentStep?.dsa.listRoots || []}
+                  currentLine={currentStep?.line}
+                />
+              </div>
             ) : (
-              <ArrayVariablesCanvas
-                stackToRender={currentStep?.stackToRender || []}
-                currentLine={currentStep?.line}
-                codeText={currentStep?.codeText}
-                isTraceStale={isTraceStale}
-                previousStackToRender={
-                  currentStepIndex > 0 ? trace[currentStepIndex - 1]?.stackToRender : undefined
-                }
-                event={currentStep?.event}
-              />
+              <div
+                id="canvas-tabpanel-arrays"
+                role="tabpanel"
+                aria-labelledby="canvas-tab-btn-arrays"
+                className="h-full w-full"
+              >
+                <ArrayVariablesCanvas
+                  stackToRender={currentStep?.stackToRender || []}
+                  currentLine={currentStep?.line}
+                  codeText={currentStep?.codeText}
+                  isTraceStale={isTraceStale}
+                  previousStackToRender={
+                    currentStepIndex > 0 ? trace[currentStepIndex - 1]?.stackToRender : undefined
+                  }
+                  event={currentStep?.event}
+                />
+              </div>
             )}
           </div>
 

@@ -158,9 +158,9 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
   }
 
   const frameGroups: FrameGroup[] = [];
-  let containsUserStructs = Boolean(
-    codeText && (/\bstruct\s+[A-Za-z_]\w*/.test(codeText) || /\bBranch\b/.test(codeText))
-  );
+  // F06 fix: Only set containsUserStructs when actual C_STRUCT data is observed
+  // in the trace, not from code text heuristics or pointer type guessing.
+  let containsUserStructs = false;
 
   // Traverse stack frames
   for (let fIdx = 0; fIdx < stackToRender.length; fIdx++) {
@@ -268,9 +268,9 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
         const valType = val[2] || 'unknown';
         const rawVal = val[3];
 
-        if (typeof valType === 'string' && (valType.includes('Branch') || (valType.endsWith('*') && !['int*', 'char*', 'double*', 'float*', 'bool*', 'void*', 'NODE*'].includes(valType)))) {
-          containsUserStructs = true;
-        }
+        // F06 fix: removed false-positive heuristic that inferred user structs
+        // from pointer type names. containsUserStructs is now set only when
+        // actual C_STRUCT data is encountered in the trace (line 235 above).
 
         if (valType === 'pointer' || valType === 'NODE*') {
           allPointers.push({

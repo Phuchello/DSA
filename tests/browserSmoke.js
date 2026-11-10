@@ -327,7 +327,7 @@ async function runBrowserSmoke() {
 
     await waitFor(async () => evaluate("Boolean(document.querySelector('.cm-content')?.innerText.includes('TimKiemVaXoa'))"), 'the loaded C++ lesson in CodeMirror');
     assert.ok(await evaluate("document.body.innerText.includes('Mã nguồn C++') && document.body.innerText.includes('Chạy chương trình')"), 'Vietnamese editor and run controls must render.');
-    assert.ok(await evaluate("document.body.innerText.includes('Chế độ: Tập sự')"), 'Beginner mode must render in Vietnamese.');
+    assert.ok(await evaluate("document.body.innerText.includes('Chế độ dễ hiểu')"), 'Beginner mode must render in Vietnamese.');
     recordCheck('Vietnamese default UI and Beginner mode render');
 
     const lesson = await evaluate("fetch('/api/lessons').then(response => response.json()).then(data => data.lessons.find(item => item.id === 'it003-golden'))");
@@ -467,7 +467,7 @@ async function runBrowserSmoke() {
     recordCheck('Matching current code/stdin rerun replaces the stale trace', { stdin: thirdStdin, stdout: '8', screenshot: path.basename(currentTraceScreenshot) });
 
     await click('button[title^="Chuyển đổi giữa chế độ"]');
-    await waitFor(async () => evaluate("document.body.innerText.includes('Chế độ: Tập sự')"), 'returning to Beginner mode');
+    await waitFor(async () => evaluate("document.body.innerText.includes('Chế độ dễ hiểu')"), 'returning to Beginner mode');
     recordCheck('Switched back to Vietnamese Beginner mode');
 
     assert.deepStrictEqual(evidence.consoleErrors, [], 'The real browser must not report uncaught exceptions or console errors.');

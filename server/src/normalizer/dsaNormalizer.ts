@@ -53,6 +53,7 @@ export interface ArrayUpdate {
   to: any;
   frameName: string;
   frameId: string;
+  wasUninitialized?: boolean;
   frameDepth: number;
   displayName: string;
 }
@@ -313,6 +314,14 @@ function calculateVariableDiff(
             const cElems = val.slice(2);
             const count = Math.min(pElems.length, cElems.length);
 
+            // Detect if this is an initialization step: previous array existed but
+            // had uninitialized/garbage values. We check if the current statement
+            // looks like a declaration/initialization (e.g. "int arr[3] = {1,2,3};")
+            // or if ALL previous element values are implausibly large (stack garbage).
+            const currentCodeText = cf.codeText || '';
+            const looksLikeDeclaration = /\b(?:int|long|short|char|float|double|unsigned|auto|const)\b/.test(currentCodeText) &&
+              new RegExp(`\\b${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\[`).test(currentCodeText);
+
             for (let idx = 0; idx < count; idx++) {
               const pe = pElems[idx];
               const ce = cElems[idx];
@@ -320,15 +329,27 @@ function calculateVariableDiff(
                 const pVal = pe[3];
                 const cVal = ce[3];
                 if (pVal !== cVal) {
+                  // If the previous type was 'uninitialized' or the previous value
+                  // looks like arbitrary stack garbage (implausibly large or negative
+                  // for a small-array context), mark this as an initialization.
+                  const prevType = String(pe[2] || '');
+                  const wasUninit = prevType === 'uninitialized' || pVal === '?' || pVal === null || pVal === undefined;
+                  // Also detect probable stack garbage: if declaring an array and
+                  // the previous values are very large integers not matching the
+                  // initializer pattern, treat them as uninitialized.
+                  const isProbableGarbage = looksLikeDeclaration &&
+                    typeof pVal === 'number' && (Math.abs(pVal) > 100000);
+
                   arrayUpdates.push({
                     arrayName: varName,
                     index: idx,
-                    from: pVal,
+                    from: (wasUninit || isProbableGarbage) ? '?' : pVal,
                     to: cVal,
                     frameName,
                     frameId,
                     frameDepth,
                     displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                    wasUninitialized: wasUninit || isProbableGarbage,
                   });
                 }
               }
@@ -906,7 +927,11 @@ export function generateVietnameseExplanation(
   }
   if (diff.arrayUpdates && diff.arrayUpdates.length > 0) {
     for (const u of diff.arrayUpdates) {
-      observedChanges.push(`Phần tử mảng ${u.displayName} thay đổi từ ${u.from ?? '?'} thành ${u.to}.`);
+      if (u.wasUninitialized) {
+        observedChanges.push(`Phần tử mảng ${u.displayName} được khởi tạo giá trị ${u.to}.`);
+      } else {
+        observedChanges.push(`Phần tử mảng ${u.displayName} thay đổi từ ${u.from} thành ${u.to}.`);
+      }
     }
   }
   if (diff.scalarUpdates && diff.scalarUpdates.length > 0) {

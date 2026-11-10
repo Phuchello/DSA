@@ -330,7 +330,7 @@ async function runBrowserArrayAcceptance() {
 
     // Step 1: Wait for CodeMirror and verify Vietnamese Beginner Mode UI
     await waitFor(async () => evaluate("Boolean(document.querySelector('.cm-content'))"), 'CodeMirror editor mount');
-    assert.ok(await evaluate("document.body.innerText.includes('Chế độ: Tập sự')"), 'Beginner mode must be default.');
+    assert.ok(await evaluate("document.body.innerText.includes('Chế độ dễ hiểu')"), 'Beginner mode must be default.');
     recordCheck('Default Beginner mode verified');
 
     // Step 2: Paste the M1.1 static array program

@@ -1134,6 +1134,235 @@ function runEducationalExplanationsTests() {
     assert.ok(step2.funcName !== 'unknown', 'Fix3-B: Step 2 must NOT inherit schema_error funcName');
   });
 
+  // =========================================================================
+  // R01: State Provenance for Array Initializations & Stack Garbage Prevention
+  // =========================================================================
+  test('R01-A: int arr[3]={1,2,3} with pre-init garbage (0, 763385576, 32758) must report initialized, never thay đổi từ', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int arr[3] = {1, 2, 3};',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['arr'],
+          encodedLocals: {
+            arr: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 0],
+              ['C_DATA', '0x7fff0004', 'int', 763385576],
+              ['C_DATA', '0x7fff0008', 'int', 32758]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'arr[1] = 99;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['arr'],
+          encodedLocals: {
+            arr: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 1],
+              ['C_DATA', '0x7fff0004', 'int', 2],
+              ['C_DATA', '0x7fff0008', 'int', 3]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 4,
+          orderedVarNames: ['arr'],
+          encodedLocals: {
+            arr: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 1],
+              ['C_DATA', '0x7fff0004', 'int', 99],
+              ['C_DATA', '0x7fff0008', 'int', 3]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+
+    // Step 1: After declaration int arr[3]={1,2,3} executed
+    const s1 = trace[1];
+    assert.strictEqual(s1.dsa.diff.arrayUpdates.length, 3, 'All 3 elements must be recognized as initialized');
+    for (const u of s1.dsa.diff.arrayUpdates) {
+      assert.strictEqual(u.wasUninitialized, true, `Element ${u.displayName} must have wasUninitialized: true`);
+      assert.strictEqual(u.from, '?', `Element ${u.displayName} prior value must be '?', not garbage`);
+    }
+    assert.strictEqual(s1.dsa.diff.arrayUpdates[0].to, 1);
+    assert.strictEqual(s1.dsa.diff.arrayUpdates[1].to, 2);
+    assert.strictEqual(s1.dsa.diff.arrayUpdates[2].to, 3);
+
+    const observed1 = s1.dsa.explanationDetail.observed;
+    assert.ok(!observed1.includes('thay đổi từ'), `Observed text must NOT say 'thay đổi từ': ${observed1}`);
+    assert.ok(!observed1.includes('763385576'), `Observed text must NOT leak garbage value 763385576: ${observed1}`);
+    assert.ok(!observed1.includes('32758'), `Observed text must NOT leak garbage value 32758: ${observed1}`);
+    assert.ok(observed1.includes('Phần tử mảng arr[0] được khởi tạo giá trị 1'), `Observed must explain arr[0] init: ${observed1}`);
+    assert.ok(observed1.includes('Phần tử mảng arr[1] được khởi tạo giá trị 2'), `Observed must explain arr[1] init: ${observed1}`);
+    assert.ok(observed1.includes('Phần tử mảng arr[2] được khởi tạo giá trị 3'), `Observed must explain arr[2] init: ${observed1}`);
+
+    // Step 2: Post-initialization mutation arr[1] = 99
+    const s2 = trace[2];
+    assert.strictEqual(s2.dsa.diff.arrayUpdates.length, 1);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].index, 1);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].from, 2);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].to, 99);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].wasUninitialized, false);
+    assert.ok(s2.dsa.explanationDetail.observed.includes('Phần tử mảng arr[1] thay đổi từ 2 thành 99'),
+      `Observed must report real mutation 2->99: ${s2.dsa.explanationDetail.observed}`);
+  });
+
+  test('R01-B: int arr[3]={1,2,3} with small pre-init garbage (0, 1, -5) must not use magnitude heuristics', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int arr[3] = {1, 2, 3};',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['arr'],
+          encodedLocals: {
+            arr: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 0],
+              ['C_DATA', '0x7fff0004', 'int', 1],
+              ['C_DATA', '0x7fff0008', 'int', -5]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['arr'],
+          encodedLocals: {
+            arr: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 1],
+              ['C_DATA', '0x7fff0004', 'int', 2],
+              ['C_DATA', '0x7fff0008', 'int', 3]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+    const s1 = trace[1];
+    for (const u of s1.dsa.diff.arrayUpdates) {
+      assert.strictEqual(u.wasUninitialized, true);
+      assert.strictEqual(u.from, '?');
+    }
+    const observed = s1.dsa.explanationDetail.observed;
+    assert.ok(!observed.includes('thay đổi từ'), `Observed must NOT say 'thay đổi từ' even for small prior values: ${observed}`);
+    assert.ok(!observed.includes('-5'), `Observed must not contain small junk -5: ${observed}`);
+  });
+
+  test('R01-C: declaration without initializer (int a[3];) followed by late assignment a[1]=42', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int a[3];',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 200],
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'a[1] = 42;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 200],
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'main',
+        codeText: 'a[1] = 99;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 4,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 42],
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 5, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 5,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 99],
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+
+    // Step 1: int a[3]; executed. No initializer, so no arrayUpdates
+    const s1 = trace[1];
+    assert.strictEqual(s1.dsa.diff.arrayUpdates.length, 0);
+
+    // Step 2: a[1] = 42 executed. Element a[1] was uninitialized, now initialized
+    const s2 = trace[2];
+    assert.strictEqual(s2.dsa.diff.arrayUpdates.length, 1);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].index, 1);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].from, '?');
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].to, 42);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].wasUninitialized, true);
+    assert.ok(s2.dsa.explanationDetail.observed.includes('Phần tử mảng a[1] được khởi tạo giá trị 42'),
+      `Late assignment must report initialization: ${s2.dsa.explanationDetail.observed}`);
+
+    // Step 3: a[1] = 99 executed. Post-init mutation 42 -> 99
+    const s3 = trace[3];
+    assert.strictEqual(s3.dsa.diff.arrayUpdates.length, 1);
+    assert.strictEqual(s3.dsa.diff.arrayUpdates[0].index, 1);
+    assert.strictEqual(s3.dsa.diff.arrayUpdates[0].from, 42);
+    assert.strictEqual(s3.dsa.diff.arrayUpdates[0].to, 99);
+    assert.strictEqual(s3.dsa.diff.arrayUpdates[0].wasUninitialized, false);
+    assert.ok(s3.dsa.explanationDetail.observed.includes('Phần tử mảng a[1] thay đổi từ 42 thành 99'),
+      `Post-init mutation must report 42->99: ${s3.dsa.explanationDetail.observed}`);
+  });
+
   console.log(`Educational Explanations Unit Test Summary: ${passed} PASS, ${failed} FAIL`);
   if (failed > 0) {
     const error = new Error('Educational explanations unit tests failed');

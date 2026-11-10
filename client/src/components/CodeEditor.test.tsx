@@ -171,4 +171,67 @@ describe('CodeEditor Component', () => {
     expect(screen.getByTestId('console-stdout').textContent).toBe('partial output');
   });
 
+  // R05: Console auto-reopen for repeated identical error sequence
+  it('R05: uncollapses console drawer when repeated identical compilation error occurs', () => {
+    const errorMsg = "error: 'undeclared_var' was not declared in this scope";
+    const { rerender } = render(
+      <CodeEditor
+        code="int main() { undeclared_var = 1; }"
+        onChangeCode={vi.fn()}
+        stdin=""
+        onChangeStdin={vi.fn()}
+        currentLine={null}
+        stdout=""
+        buildOutput={errorMsg}
+        isExecuting={false}
+      />
+    );
+
+    const drawer = screen.getByTestId('console-drawer');
+    const toggleBtn = screen.getByTestId('console-toggle-size');
+
+    // 1. Initially compact (h-36)
+    expect(drawer.className).toContain('h-36');
+
+    // 2. User collapses console: click twice (compact -> expanded -> collapsed)
+    fireEvent.click(toggleBtn); // now expanded
+    expect(drawer.className).toContain('h-64');
+    fireEvent.click(toggleBtn); // now collapsed
+    expect(drawer.className).toContain('h-8 overflow-hidden');
+
+    // 3. User re-runs the code with identical error: isExecuting becomes true
+    rerender(
+      <CodeEditor
+        code="int main() { undeclared_var = 1; }"
+        onChangeCode={vi.fn()}
+        stdin=""
+        onChangeStdin={vi.fn()}
+        currentLine={null}
+        stdout=""
+        buildOutput={errorMsg}
+        isExecuting={true}
+      />
+    );
+    // While running, still collapsed
+    expect(drawer.className).toContain('h-8 overflow-hidden');
+
+    // 4. Server returns identical compile error: isExecuting transitions true -> false with same buildOutput
+    rerender(
+      <CodeEditor
+        code="int main() { undeclared_var = 1; }"
+        onChangeCode={vi.fn()}
+        stdin=""
+        onChangeStdin={vi.fn()}
+        currentLine={null}
+        stdout=""
+        buildOutput={errorMsg}
+        isExecuting={false}
+      />
+    );
+
+    // Console MUST auto-reopen/uncollapse back to compact (h-36), NOT remain hidden/collapsed
+    expect(drawer.className).toContain('h-36');
+    expect(drawer.className).not.toContain('h-8 overflow-hidden');
+    expect(screen.getByTestId('console-build-error').textContent).toContain(errorMsg);
+  });
 });

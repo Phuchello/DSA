@@ -359,6 +359,15 @@ int main() {
       }
     }
     assert.ok(arrayStep > 0, 'Must find step where arr[1] becomes 99');
+
+    // R01: Verify step 1 (after int arr[3]={1,2,3}; declaration executed)
+    await setStep(1);
+    const step1Observed = await evaluate("document.querySelector('[data-testid=\"explanation-observed\"]')?.textContent || ''");
+    assert.ok(!step1Observed.includes('thay đổi từ'), `R01: Step 1 must NOT claim 'thay đổi từ': "${step1Observed}"`);
+    assert.ok(!step1Observed.includes('763385576'), `R01: Step 1 must NOT leak stack garbage 763385576: "${step1Observed}"`);
+    assert.ok(step1Observed.includes('được khởi tạo giá trị') || step1Observed.includes('khởi tạo giá trị'),
+      `R01: Step 1 must state elements initialized: "${step1Observed}"`);
+
     await setStep(arrayStep);
 
     // Verify array section exists and displays cells
@@ -433,11 +442,23 @@ int main() {
     const allFrameElements = await evaluate("document.querySelectorAll('[data-testid^=\"call-stack-frame-\"]').length");
     assert.strictEqual(allFrameElements, 5, 'All 5 call stack frame elements must be present in DOM at max depth');
 
-    // Verify each frame exists
+    // Verify each frame exists and is scroll-reachable (R02)
     for (let d = 0; d < 5; d++) {
       const frameExists = await evaluate(`Boolean(document.querySelector('[data-testid="call-stack-frame-${d}"]'))`);
       assert.ok(frameExists, `call-stack-frame-${d} must exist at max depth`);
+
+      const isReachable = await evaluate(`(() => {
+        const frame = document.querySelector('[data-testid="call-stack-frame-${d}"]');
+        if (!frame) return false;
+        frame.scrollIntoView();
+        const r = frame.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      })()`);
+      assert.ok(isReachable, `R02: call-stack-frame-${d} must be scroll-reachable at max depth`);
     }
+
+    // Scroll back to top so topmost stack frame is in view
+    await evaluate("document.querySelector('[data-testid=\"call-stack-frame-0\"]')?.scrollIntoView()");
 
     // Pure recursion should hide empty static arrays section
     const hasArraySectionInRecursion = await evaluate("Boolean(document.querySelector('[data-testid=\"capture-limit-note\"]') || document.querySelector('[data-testid^=\"array-container-\"]'))");
@@ -580,6 +601,32 @@ int main() {
     const editorStillVisible = await evaluate("Boolean(document.querySelector('.cm-content'))");
     assert.ok(editorStillVisible, 'Code editor must remain visible when compilation error occurs');
 
+    // R05: Verify console auto-reopen on repeated identical compile error in browser
+    const initialDrawerClass = await evaluate("document.querySelector('[data-testid=\"console-drawer\"]')?.className || ''");
+    assert.ok(initialDrawerClass.includes('h-36'), 'Console drawer should initially be compact (h-36)');
+
+    // Collapse console drawer: toggle twice (compact -> expanded -> collapsed)
+    await click('[data-testid="console-toggle-size"]');
+    await delay(200);
+    await click('[data-testid="console-toggle-size"]');
+    await delay(200);
+    const collapsedClass = await evaluate("document.querySelector('[data-testid=\"console-drawer\"]')?.className || ''");
+    assert.ok(collapsedClass.includes('h-8 overflow-hidden'), 'Console drawer must be collapsed (h-8 overflow-hidden)');
+
+    // Re-run identical invalid code
+    await clickRun();
+    await delay(400);
+
+    // Console drawer must auto-uncollapse back to compact
+    await waitFor(async () => {
+      const cls = await evaluate("document.querySelector('[data-testid=\"console-drawer\"]')?.className || ''");
+      return cls.includes('h-36') && !cls.includes('h-8 overflow-hidden');
+    }, 'console drawer auto-uncollapses on repeated compile error');
+
+    const reopenedErr = await evaluate("document.querySelector('[data-testid=\"console-build-error\"]')?.textContent || ''");
+    assert.ok(reopenedErr.includes('syntax_error_undefined_identifier') || reopenedErr.includes('error:'),
+      'Compile error must be visible in reopened console');
+
     await saveScreenshot('m2-2-07-compilation-error-1440x900.png');
     console.log('✅ Scenario 7 (Compilation error) PASS');
 
@@ -690,32 +737,48 @@ int main() {
     assert.strictEqual(overflow1280, false, 'No horizontal page overflow at 1280x720');
     console.log('✅ 1280×720 (Compact Desktop) verified without horizontal overflow');
 
-    // 3. Mobile Viewport: 390 × 844
+    // 3. Mobile Viewport: 390 × 844 (R01 + R03)
     await setViewport(390, 844, true);
-    await saveScreenshot('m2-2-responsive-mobile-390x844.png');
-    const mobileCanvasExists = await evaluate("Boolean(document.querySelector('[data-testid=\"array-variables-canvas\"]'))");
-    assert.ok(mobileCanvasExists, 'Visualizer canvas must remain rendered on mobile');
 
-    // F05 fix: Verify no unintentional horizontal overflow on mobile
+    // F05: Verify no unintentional horizontal page overflow on mobile
     const mobileOverflow = await evaluate("document.documentElement.scrollWidth > window.innerWidth");
     assert.strictEqual(mobileOverflow, false, 'No horizontal page overflow at 390x844 mobile');
 
-    // Verify timeline controls are reachable and functional on mobile
+    // R03: Verify timeline controls are present and functional on mobile
     const mobileTimelineExists = await evaluate("Boolean(document.querySelector('input[type=\"range\"]'))");
     assert.ok(mobileTimelineExists, 'Timeline slider must exist on mobile');
     const mobileRunBtnExists = await evaluate("Boolean(Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Chạy chương trình')))");
     assert.ok(mobileRunBtnExists, 'Run button must be present on mobile');
 
-    // Verify canvas has non-zero bounding rect (is visible, not just in DOM)
-    const canvasRect = await evaluate(`(() => {
-      const el = document.querySelector('[data-testid="array-variables-canvas"]');
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { width: r.width, height: r.height, top: r.top };
-    })()`);
-    assert.ok(canvasRect && canvasRect.width > 0 && canvasRect.height > 0, 'Canvas must have visible bounding rect on mobile');
+    // R03: Interact with timeline slider on mobile
+    await setStep(2);
+    const mobileStep2Val = await evaluate("document.querySelector('input[type=\"range\"]')?.value");
+    assert.strictEqual(mobileStep2Val, '2', 'Mobile timeline slider must be interactable and update to step 2');
 
-    console.log('✅ 390×844 (Mobile) verified with overflow, controls and visibility checks');
+    // Return to step 1 to inspect array initialization explanation (R01)
+    await setStep(1);
+    const mobileObserved = await evaluate("document.querySelector('[data-testid=\"explanation-observed\"]')?.textContent || ''");
+    assert.ok(!mobileObserved.includes('thay đổi từ'), `R01: Mobile step 1 must NOT claim 'thay đổi từ': "${mobileObserved}"`);
+    assert.ok(!mobileObserved.includes('763385576'), `R01: Mobile step 1 must NOT leak stack garbage: "${mobileObserved}"`);
+    assert.ok(mobileObserved.includes('được khởi tạo giá trị') || mobileObserved.includes('khởi tạo giá trị'),
+      `R01: Mobile step 1 must state elements initialized: "${mobileObserved}"`);
+
+    // R03: Programmatically scroll canvas into viewport and assert reachability
+    const mobileCanvasExists = await evaluate("Boolean(document.querySelector('[data-testid=\"array-variables-canvas\"]'))");
+    assert.ok(mobileCanvasExists, 'Visualizer canvas must remain rendered on mobile');
+
+    const canvasScrolledIntoView = await evaluate(`(() => {
+      const el = document.querySelector('[data-testid="array-variables-canvas"]');
+      if (!el) return false;
+      el.scrollIntoView({ behavior: 'instant', block: 'center' });
+      const r = el.getBoundingClientRect();
+      return r.top >= 0 && r.height > 0 && r.width > 0;
+    })()`);
+    assert.ok(canvasScrolledIntoView, 'Canvas must be scroll-reachable and visible in viewport on mobile');
+
+    // Capture mobile screenshot after scrolling to canvas
+    await saveScreenshot('m2-2-responsive-mobile-390x844.png');
+    console.log('✅ 390×844 (Mobile) verified: no overflow, timeline interactable, R01 clean, canvas scroll-reached and captured');
 
     // 4. Mode comparison: Beginner vs Advanced
     await setViewport(1440, 900);

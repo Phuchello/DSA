@@ -322,4 +322,101 @@ describe('M2.2 Beginner Learning Experience Tests', () => {
       expect(screen.getByText('Ghi chú kỹ thuật nâng cao: con trỏ hợp lệ.')).toBeDefined();
     });
   });
+
+  // 5. WAI-ARIA and APG Tabs Accessibility (R04)
+  describe('WAI-ARIA APG Tabs Pattern & Keyboard Accessibility (R04)', () => {
+    // Reusable APG TabList Test Harness modeling App.tsx tab structure
+    const AccessibleTabsHarness = () => {
+      const [activeTab, setActiveTab] = React.useState<'linked-list' | 'arrays'>('linked-list');
+      return (
+        <div>
+          <div
+            role="tablist"
+            aria-label="Lựa chọn khung trực quan hóa"
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const nextTab = activeTab === 'linked-list' ? 'arrays' : 'linked-list';
+                setActiveTab(nextTab);
+                const nextId = nextTab === 'linked-list' ? 'tab-btn-ll' : 'tab-btn-arr';
+                document.getElementById(nextId)?.focus();
+              }
+            }}
+          >
+            <button
+              type="button"
+              role="tab"
+              id="tab-btn-ll"
+              aria-controls="panel-ll"
+              aria-selected={activeTab === 'linked-list'}
+              tabIndex={activeTab === 'linked-list' ? 0 : -1}
+              onClick={() => setActiveTab('linked-list')}
+            >
+              Danh sách liên kết
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="tab-btn-arr"
+              aria-controls="panel-arr"
+              aria-selected={activeTab === 'arrays'}
+              tabIndex={activeTab === 'arrays' ? 0 : -1}
+              onClick={() => setActiveTab('arrays')}
+            >
+              Mảng &amp; Biến
+            </button>
+          </div>
+          <div>
+            <div id="panel-ll" role="tabpanel" aria-labelledby="tab-btn-ll" hidden={activeTab !== 'linked-list'}>
+              {activeTab === 'linked-list' && <div data-testid="content-ll">Nội dung danh sách liên kết</div>}
+            </div>
+            <div id="panel-arr" role="tabpanel" aria-labelledby="tab-btn-arr" hidden={activeTab !== 'arrays'}>
+              {activeTab === 'arrays' && <div data-testid="content-arr">Nội dung mảng biến</div>}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    it('R04: maintains stable tabpanel DOM existence, valid aria-controls, and roving tabIndex', () => {
+      render(<AccessibleTabsHarness />);
+
+      const tabList = screen.getByRole('tablist');
+      const llTab = screen.getByRole('tab', { name: /Danh sách liên kết/i });
+      const arrTab = screen.getByRole('tab', { name: /Mảng/i });
+
+      // Both tabpanel elements MUST exist in DOM so aria-controls is always valid
+      const panelLl = document.getElementById('panel-ll');
+      const panelArr = document.getElementById('panel-arr');
+      expect(panelLl).not.toBeNull();
+      expect(panelArr).not.toBeNull();
+
+      expect(llTab.getAttribute('aria-controls')).toBe('panel-ll');
+      expect(arrTab.getAttribute('aria-controls')).toBe('panel-arr');
+
+      // Roving tabindex: active has 0, inactive has -1
+      expect(llTab.getAttribute('aria-selected')).toBe('true');
+      expect(llTab.getAttribute('tabindex')).toBe('0');
+      expect(arrTab.getAttribute('aria-selected')).toBe('false');
+      expect(arrTab.getAttribute('tabindex')).toBe('-1');
+
+      // Inactive panel has HTML hidden attribute
+      expect(panelLl?.hasAttribute('hidden')).toBe(false);
+      expect(panelArr?.hasAttribute('hidden')).toBe(true);
+
+      // Keyboard arrow navigation
+      llTab.focus();
+      fireEvent.keyDown(tabList, { key: 'ArrowRight' });
+
+      // Selection moves to arrays tab
+      expect(arrTab.getAttribute('aria-selected')).toBe('true');
+      expect(arrTab.getAttribute('tabindex')).toBe('0');
+      expect(llTab.getAttribute('aria-selected')).toBe('false');
+      expect(llTab.getAttribute('tabindex')).toBe('-1');
+
+      // Panels update hidden attributes
+      expect(panelArr?.hasAttribute('hidden')).toBe(false);
+      expect(panelLl?.hasAttribute('hidden')).toBe(true);
+    });
+  });
 });

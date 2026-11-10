@@ -152,12 +152,39 @@ function extractNextAddress(rawNode: any): string | null {
 }
 
 /**
+ * Identifies whether codeText contains an array declaration for varName.
+ * E.g. 'int arr[3]', 'const int a[5]', 'double val[]', 'auto buf[10]'.
+ */
+export function isArrayDeclaration(codeText: string | undefined | null, varName: string): boolean {
+  if (!codeText) return false;
+  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const declRegex = new RegExp(
+    `\\b(?:const\\s+)?(?:int|char|short|long|float|double|bool|auto|unsigned|signed|size_t|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t)\\s+(?:const\\s+)?(?:\\*+\\s*)?\\b${escaped}\\s*\\[`,
+    'i'
+  );
+  return declRegex.test(codeText);
+}
+
+/**
+ * Identifies whether codeText contains an array declaration WITH an initializer list for varName.
+ * E.g. 'int arr[3] = {1, 2, 3};', 'int a[] = {5, 2, 8, 1, 9};', 'int a[5] = {0};'.
+ */
+export function isArrayDeclarationWithInitializer(codeText: string | undefined | null, varName: string): boolean {
+  if (!codeText || !isArrayDeclaration(codeText, varName)) return false;
+  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const initRegex = new RegExp(`\\b${escaped}\\s*\\[[^\\]]*\\]\\s*=\\s*`, 'i');
+  return initRegex.test(codeText);
+}
+
+/**
  * Task B: Calculates trustworthy variable, array, and call stack deltas between
  * consecutive execution snapshots under the before-statement convention.
  */
 function calculateVariableDiff(
   prevFrames: any[] | undefined,
-  currFrames: any[] | undefined
+  currFrames: any[] | undefined,
+  prevCodeText?: string,
+  initializedArrayMap?: Map<string, Set<number>>
 ): {
   scalarUpdates: ScalarUpdate[];
   arrayUpdates: ArrayUpdate[];
@@ -213,6 +240,18 @@ function calculateVariableDiff(
         callerFunc: returnFrame?.funcName,
         calleeFunc: poppedFrame?.funcName,
       };
+
+      if (initializedArrayMap) {
+        for (let pIdx = currFrames.length; pIdx < prevFrames.length; pIdx++) {
+          const pf = prevFrames[pIdx];
+          const pfId = String(pf.frameId ?? pIdx);
+          for (const key of Array.from(initializedArrayMap.keys())) {
+            if (key.startsWith(`${pfId}::`)) {
+              initializedArrayMap.delete(key);
+            }
+          }
+        }
+      }
     }
   }
 
@@ -307,6 +346,15 @@ function calculateVariableDiff(
 
       // Case B: Static arrays
       else if (val[0] === 'C_ARRAY') {
+        const arrayKey = `${frameId}::${varName}`;
+        let initSet = initializedArrayMap?.get(arrayKey);
+        if (!initSet) {
+          initSet = new Set<number>();
+          initializedArrayMap?.set(arrayKey, initSet);
+        }
+
+        const justDeclaredWithInit = isArrayDeclarationWithInitializer(prevCodeText, varName);
+
         if (varName in pLocals) {
           const prevVal = pLocals[varName];
           if (Array.isArray(prevVal) && prevVal[0] === 'C_ARRAY') {
@@ -314,44 +362,87 @@ function calculateVariableDiff(
             const cElems = val.slice(2);
             const count = Math.min(pElems.length, cElems.length);
 
-            // Detect if this is an initialization step: previous array existed but
-            // had uninitialized/garbage values. We check if the current statement
-            // looks like a declaration/initialization (e.g. "int arr[3] = {1,2,3};")
-            // or if ALL previous element values are implausibly large (stack garbage).
-            const currentCodeText = cf.codeText || '';
-            const looksLikeDeclaration = /\b(?:int|long|short|char|float|double|unsigned|auto|const)\b/.test(currentCodeText) &&
-              new RegExp(`\\b${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\[`).test(currentCodeText);
-
             for (let idx = 0; idx < count; idx++) {
               const pe = pElems[idx];
               const ce = cElems[idx];
               if (Array.isArray(pe) && Array.isArray(ce) && pe[0] === 'C_DATA' && ce[0] === 'C_DATA') {
                 const pVal = pe[3];
                 const cVal = ce[3];
-                if (pVal !== cVal) {
-                  // If the previous type was 'uninitialized' or the previous value
-                  // looks like arbitrary stack garbage (implausibly large or negative
-                  // for a small-array context), mark this as an initialization.
-                  const prevType = String(pe[2] || '');
-                  const wasUninit = prevType === 'uninitialized' || pVal === '?' || pVal === null || pVal === undefined;
-                  // Also detect probable stack garbage: if declaring an array and
-                  // the previous values are very large integers not matching the
-                  // initializer pattern, treat them as uninitialized.
-                  const isProbableGarbage = looksLikeDeclaration &&
-                    typeof pVal === 'number' && (Math.abs(pVal) > 100000);
+                const prevType = String(pe[2] || '');
 
-                  arrayUpdates.push({
-                    arrayName: varName,
-                    index: idx,
-                    from: (wasUninit || isProbableGarbage) ? '?' : pVal,
-                    to: cVal,
-                    frameName,
-                    frameId,
-                    frameDepth,
-                    displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
-                    wasUninitialized: wasUninit || isProbableGarbage,
-                  });
+                if (justDeclaredWithInit) {
+                  // Between prev and curr, declaration with initializer executed.
+                  // All elements are initialized. Previous stack memory was uninitialized garbage.
+                  initSet.add(idx);
+                  if (pVal !== cVal) {
+                    arrayUpdates.push({
+                      arrayName: varName,
+                      index: idx,
+                      from: '?',
+                      to: cVal,
+                      frameName,
+                      frameId,
+                      frameDepth,
+                      displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                      wasUninitialized: true,
+                    });
+                  }
+                } else if (pVal !== cVal) {
+                  const wasKnownInit = initSet.has(idx) &&
+                    prevType !== 'uninitialized' &&
+                    pVal !== '?' && pVal !== null && pVal !== undefined;
+
+                  if (wasKnownInit) {
+                    // Genuine post-initialization mutation
+                    arrayUpdates.push({
+                      arrayName: varName,
+                      index: idx,
+                      from: pVal,
+                      to: cVal,
+                      frameName,
+                      frameId,
+                      frameDepth,
+                      displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                      wasUninitialized: false,
+                    });
+                  } else {
+                    // Element was not previously initialized; this assignment initializes it.
+                    initSet.add(idx);
+                    arrayUpdates.push({
+                      arrayName: varName,
+                      index: idx,
+                      from: '?',
+                      to: cVal,
+                      frameName,
+                      frameId,
+                      frameDepth,
+                      displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                      wasUninitialized: true,
+                    });
+                  }
                 }
+              }
+            }
+          }
+        } else {
+          // Array was not present in previous locals (e.g. newly entered block or declaration)
+          if (justDeclaredWithInit) {
+            const cElems = val.slice(2);
+            for (let idx = 0; idx < cElems.length; idx++) {
+              initSet.add(idx);
+              const ce = cElems[idx];
+              if (Array.isArray(ce) && ce[0] === 'C_DATA') {
+                arrayUpdates.push({
+                  arrayName: varName,
+                  index: idx,
+                  from: '?',
+                  to: ce[3],
+                  frameName,
+                  frameId,
+                  frameDepth,
+                  displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                  wasUninitialized: true,
+                });
               }
             }
           }
@@ -408,6 +499,7 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
 
   const activeFreedAddresses = new Set<string>();
   const addressGenerations = new Map<string, number>();
+  const initializedArrayIndices = new Map<string, Set<number>>();
 
   let prevPoint: NormalizedExecutionPoint | null = null;
 
@@ -768,7 +860,12 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
       }
 
       // Task B: Variable and Frame Deltas
-      const varDiff = calculateVariableDiff(prevPoint.stackToRender, stackFrames);
+      const varDiff = calculateVariableDiff(
+        prevPoint.stackToRender,
+        stackFrames,
+        prevPoint.codeText,
+        initializedArrayIndices
+      );
       diff.scalarUpdates = varDiff.scalarUpdates;
       diff.arrayUpdates = varDiff.arrayUpdates;
       diff.frameTransition = varDiff.frameTransition;

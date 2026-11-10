@@ -293,7 +293,12 @@ export const App: React.FC = () => {
                 if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
                   e.preventDefault();
                   userSelectedTabRef.current = true;
-                  setActiveCanvasTab((prev) => (prev === 'linked-list' ? 'arrays-variables' : 'linked-list'));
+                  const nextTab = activeCanvasTab === 'linked-list' ? 'arrays-variables' : 'linked-list';
+                  setActiveCanvasTab(nextTab);
+                  const nextBtnId = nextTab === 'linked-list' ? 'canvas-tab-btn-linked-list' : 'canvas-tab-btn-arrays';
+                  setTimeout(() => {
+                    document.getElementById(nextBtnId)?.focus();
+                  }, 0);
                 }
               }}
             >
@@ -303,6 +308,7 @@ export const App: React.FC = () => {
                 id="canvas-tab-btn-linked-list"
                 aria-controls="canvas-tabpanel-linked-list"
                 aria-selected={activeCanvasTab === 'linked-list'}
+                tabIndex={activeCanvasTab === 'linked-list' ? 0 : -1}
                 data-testid="canvas-tab-linked-list"
                 onClick={() => {
                   userSelectedTabRef.current = true;
@@ -323,6 +329,7 @@ export const App: React.FC = () => {
                 id="canvas-tab-btn-arrays"
                 aria-controls="canvas-tabpanel-arrays"
                 aria-selected={activeCanvasTab === 'arrays-variables'}
+                tabIndex={activeCanvasTab === 'arrays-variables' ? 0 : -1}
                 data-testid="canvas-tab-arrays"
                 onClick={() => {
                   userSelectedTabRef.current = true;
@@ -353,27 +360,30 @@ export const App: React.FC = () => {
 
           {/* Visualizer Canvas Body */}
           <div className="flex-1 overflow-hidden relative min-h-0">
-            {activeCanvasTab === 'linked-list' ? (
-              <div
-                id="canvas-tabpanel-linked-list"
-                role="tabpanel"
-                aria-labelledby="canvas-tab-btn-linked-list"
-                className="h-full w-full"
-              >
+            <div
+              id="canvas-tabpanel-linked-list"
+              role="tabpanel"
+              aria-labelledby="canvas-tab-btn-linked-list"
+              hidden={activeCanvasTab !== 'linked-list'}
+              className={`h-full w-full ${activeCanvasTab === 'linked-list' ? '' : 'hidden'}`}
+            >
+              {activeCanvasTab === 'linked-list' && (
                 <LinkedListCanvas
                   nodes={currentStep?.dsa.nodes || []}
                   pointers={currentStep?.dsa.pointers || []}
                   listRoots={currentStep?.dsa.listRoots || []}
                   currentLine={currentStep?.line}
                 />
-              </div>
-            ) : (
-              <div
-                id="canvas-tabpanel-arrays"
-                role="tabpanel"
-                aria-labelledby="canvas-tab-btn-arrays"
-                className="h-full w-full"
-              >
+              )}
+            </div>
+            <div
+              id="canvas-tabpanel-arrays"
+              role="tabpanel"
+              aria-labelledby="canvas-tab-btn-arrays"
+              hidden={activeCanvasTab !== 'arrays-variables'}
+              className={`h-full w-full ${activeCanvasTab === 'arrays-variables' ? '' : 'hidden'}`}
+            >
+              {activeCanvasTab === 'arrays-variables' && (
                 <ArrayVariablesCanvas
                   stackToRender={currentStep?.stackToRender || []}
                   currentLine={currentStep?.line}
@@ -384,8 +394,8 @@ export const App: React.FC = () => {
                   }
                   event={currentStep?.event}
                 />
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Advanced Mode: Memory Inspector */}

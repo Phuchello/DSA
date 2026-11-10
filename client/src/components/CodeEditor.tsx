@@ -256,6 +256,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
       {/* Console Output Drawer */}
       <div
+        data-testid="console-drawer"
         className={`border-t border-slate-800 bg-slate-950 flex flex-col transition-all duration-200 shrink-0 ${
           consoleState === 'collapsed'
             ? 'h-8 overflow-hidden'
@@ -277,6 +278,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             )}
             <button
               type="button"
+              data-testid="console-toggle-size"
               onClick={() =>
                 setConsoleState((s) => (s === 'compact' ? 'expanded' : s === 'expanded' ? 'collapsed' : 'compact'))
               }

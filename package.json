@@ -14,7 +14,8 @@
     "test:browser": "node tests/browserSmoke.js",
     "test:browser:array": "node tests/browserSmokeArray.js",
     "test:browser:recursion": "node tests/browserSmokeRecursion.js",
-    "test:browser:m2-1": "node tests/browserSmokeM2_1.js"
+    "test:browser:m2-1": "node tests/browserSmokeM2_1.js",
+    "test:browser:m2-2": "node tests/browserSmokeM2_2.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -247,9 +247,9 @@ export const App: React.FC = () => {
       />
 
       {/* Main Workspace (Split Screen) */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+      <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative min-h-0">
         {/* Left Panel: C++ Editor, Stdin & Terminal Drawer */}
-        <div className="w-full md:w-5/12 h-1/2 md:h-full flex flex-col">
+        <div className="w-full md:w-5/12 h-1/2 md:h-full flex flex-col border-b md:border-b-0 md:border-r border-slate-800 shrink-0 min-h-0">
           <CodeEditor
             code={code}
             onChangeCode={handleCodeChange}
@@ -266,13 +266,30 @@ export const App: React.FC = () => {
           />
         </div>
 
-        {/* Right Panel: Linked List Canvas & Memory Inspector */}
-        <div className="w-full md:w-7/12 h-1/2 md:h-full flex flex-col bg-slate-950 overflow-hidden relative">
+        {/* Right Panel: Educational Explanation, Visualizer Canvas & Memory Inspector */}
+        <div className="w-full md:w-7/12 h-1/2 md:h-full flex flex-col bg-slate-950 overflow-hidden relative min-h-0">
+          {/* Educational Tutor Banner / Learning Explanation — Prominently placed at the top of the right panel */}
+          <EducationalBanner
+            explanation={
+              isTraceStale
+                ? '⚠️ Lưu ý: Mã nguồn đã bị thay đổi kể từ lần chạy cuối. Vết thực thi này thuộc về phiên bản mã trước đó. Bấm "Chạy chương trình" để phân tích mã mới.'
+                : currentStep?.dsa.vietnameseExplanation || ''
+            }
+            explanationDetail={isTraceStale ? undefined : currentStep?.dsa.explanationDetail}
+            advancedNotes={currentStep?.dsa.advancedNotes || ''}
+            mode={mode}
+            diff={currentStep?.dsa.diff}
+            codeText={currentStep?.codeText}
+            line={currentStep?.line}
+          />
+
           {/* Canvas Tabs Header */}
           <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-3 py-1.5 shrink-0 z-10">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5" role="tablist" aria-label="Lựa chọn khung trực quan hóa">
               <button
                 type="button"
+                role="tab"
+                aria-selected={activeCanvasTab === 'linked-list'}
                 data-testid="canvas-tab-linked-list"
                 onClick={() => {
                   userSelectedTabRef.current = true;
@@ -289,6 +306,8 @@ export const App: React.FC = () => {
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={activeCanvasTab === 'arrays-variables'}
                 data-testid="canvas-tab-arrays"
                 onClick={() => {
                   userSelectedTabRef.current = true;
@@ -318,7 +337,7 @@ export const App: React.FC = () => {
           </div>
 
           {/* Visualizer Canvas Body */}
-          <div className="flex-1 overflow-hidden relative">
+          <div className="flex-1 overflow-hidden relative min-h-0">
             {activeCanvasTab === 'linked-list' ? (
               <LinkedListCanvas
                 nodes={currentStep?.dsa.nodes || []}
@@ -349,21 +368,6 @@ export const App: React.FC = () => {
           )}
         </div>
       </div>
-
-      {/* Educational Tutor Banner */}
-      <EducationalBanner
-        explanation={
-          isTraceStale
-            ? '⚠️ Lưu ý: Mã nguồn đã bị thay đổi kể từ lần chạy cuối. Vết thực thi này thuộc về phiên bản mã trước đó. Bấm "Chạy mã C++" để phân tích mã mới.'
-            : currentStep?.dsa.vietnameseExplanation || ''
-        }
-        explanationDetail={isTraceStale ? undefined : currentStep?.dsa.explanationDetail}
-        advancedNotes={currentStep?.dsa.advancedNotes || ''}
-        mode={mode}
-        diff={currentStep?.dsa.diff}
-        codeText={currentStep?.codeText}
-        line={currentStep?.line}
-      />
 
       {/* Timeline Controls Bottom Bar */}
       <TimelineControls

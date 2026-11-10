@@ -3,7 +3,7 @@ import CodeMirror, { ReactCodeMirrorRef, Extension } from '@uiw/react-codemirror
 import { cpp } from '@codemirror/lang-cpp';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, Decoration } from '@codemirror/view';
-import { Terminal, Code, FileText, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Terminal, Code, FileText, AlertTriangle, AlertCircle, ChevronUp, ChevronDown } from 'lucide-react';
 import type { TerminationStatus } from '../types';
 
 interface CodeEditorProps {
@@ -91,7 +91,15 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   terminationReason = '',
 }) => {
   const [activeTab, setActiveTab] = useState<'code' | 'stdin'>('code');
+  const [consoleState, setConsoleState] = useState<'compact' | 'expanded' | 'collapsed'>('compact');
   const editorRef = useRef<ReactCodeMirrorRef>(null);
+
+  // If build error occurs, make sure console is visible
+  useEffect(() => {
+    if (buildOutput) {
+      setConsoleState((s) => (s === 'collapsed' ? 'compact' : s));
+    }
+  }, [buildOutput]);
 
   // Auto scroll to active executing line in CodeMirror
   useEffect(() => {
@@ -242,17 +250,48 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       </div>
 
       {/* Console Output Drawer */}
-      <div className="h-44 border-t border-slate-800 bg-slate-950 flex flex-col">
-        <div className="px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between">
+      <div
+        className={`border-t border-slate-800 bg-slate-950 flex flex-col transition-all duration-200 shrink-0 ${
+          consoleState === 'collapsed'
+            ? 'h-8 overflow-hidden'
+            : consoleState === 'expanded'
+            ? 'h-64'
+            : 'h-36'
+        }`}
+      >
+        <div className="px-3 py-1.5 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-2 text-xs text-slate-400">
             <Terminal className="w-3.5 h-3.5 text-blue-400" />
             <span className="font-semibold text-slate-300">Console Đầu ra (stdout / Trình biên dịch)</span>
           </div>
-          {buildOutput && (
-            <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" /> Lỗi biên dịch
-            </span>
-          )}
+          <div className="flex items-center space-x-2">
+            {buildOutput && (
+              <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" /> Lỗi biên dịch
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() =>
+                setConsoleState((s) => (s === 'compact' ? 'expanded' : s === 'expanded' ? 'collapsed' : 'compact'))
+              }
+              className="text-slate-400 hover:text-slate-200 p-0.5 rounded hover:bg-slate-800 transition-colors"
+              title={
+                consoleState === 'compact'
+                  ? 'Mở rộng Console'
+                  : consoleState === 'expanded'
+                  ? 'Thu gọn Console'
+                  : 'Khôi phục Console'
+              }
+              aria-label="Thay đổi kích thước Console"
+            >
+              {consoleState === 'expanded' ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronUp className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 p-3 overflow-auto font-mono text-xs">

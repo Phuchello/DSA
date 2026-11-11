@@ -58,9 +58,8 @@ jobs:
 
       - name: Install native Linux toolchain (g++ and GDB)
         run: |
-          for i in 1 2 3; do
-            sudo apt-get update && sudo apt-get install -y g++ gdb && break || sleep 5
-          done
+          echo "nameserver 8.8.8.8" | sudo tee -a /etc/resolv.conf
+          sudo apt-get update && sudo apt-get install -y g++ gdb
 
       - name: Run full native C++/GDB and process-tree regression suite (Linux/POSIX)
         run: npm test

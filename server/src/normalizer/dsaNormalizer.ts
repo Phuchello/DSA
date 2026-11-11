@@ -177,14 +177,147 @@ export function isArrayDeclarationWithInitializer(codeText: string | undefined |
 }
 
 /**
+ * Strips comments from C++ code for accurate syntax inspection.
+ */
+function stripComments(code: string): string {
+  return code
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/.*$/gm, ' ');
+}
+
+export interface ArrayAssignmentTargetInfo {
+  hasAssignmentEvidence: boolean;
+  knownIndices?: Set<number>;
+  hasDynamicOrUnknownIndex?: boolean;
+}
+
+/**
+ * Analyzes codeText to determine whether there is trustworthy evidence of
+ * assignment/update to varName or specific elements of varName in this statement.
+ *
+ * Supported mutation forms:
+ *   - Direct & compound assignment: a[1] = 0;, a[1] += 5;, etc.
+ *   - Increment / decrement: a[1]++; ++a[1]; a[1]--; --a[1];
+ *   - Stream extraction: cin >> a[1];, cin >> a[0] >> a[1];
+ *   - Scanf: scanf("%d", &a[1]);
+ *   - Swap: swap(a[0], a[1]);, std::swap(a[1], temp);
+ *
+ * Excludes reads (cout << a[1];), comparisons (if (a[1] == 0)),
+ * or statements where a appears only on the RHS (int b = a[1];).
+ */
+export function getArrayAssignmentEvidence(
+  codeText: string | undefined | null,
+  varName: string,
+  locals?: Record<string, any>
+): ArrayAssignmentTargetInfo {
+  if (!codeText) return { hasAssignmentEvidence: false };
+  const clean = stripComments(codeText).trim();
+  if (!clean) return { hasAssignmentEvidence: false };
+
+  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`\\b${escaped}\\b`).test(clean)) {
+    return { hasAssignmentEvidence: false };
+  }
+
+  const knownIndices = new Set<number>();
+  let hasDynamicOrUnknownIndex = false;
+  let hasAnyEvidence = false;
+
+  const tryResolveIndex = (expr: string) => {
+    const trimmed = expr.trim();
+    if (/^-?\d+$/.test(trimmed)) {
+      const parsed = parseInt(trimmed, 10);
+      if (!isNaN(parsed) && parsed >= 0) {
+        knownIndices.add(parsed);
+        return;
+      }
+    }
+    if (locals && /^[a-zA-Z_]\w*$/.test(trimmed)) {
+      const localVal = locals[trimmed];
+      if (Array.isArray(localVal) && localVal[0] === 'C_DATA') {
+        const num = localVal[3];
+        if (typeof num === 'number' && Number.isInteger(num) && num >= 0) {
+          knownIndices.add(num);
+          return;
+        }
+      }
+    }
+    hasDynamicOrUnknownIndex = true;
+  };
+
+  // 1. Direct and compound assignment: a[expr] = ..., a[expr] += ..., etc.
+  const assignRegex = new RegExp(
+    `\\b${escaped}\\s*\\[([^\\]]+)\\]\\s*(?:(?<![<>=!])=(?![=])|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|<<=|>>=)`,
+    'g'
+  );
+  let match: RegExpExecArray | null;
+  while ((match = assignRegex.exec(clean)) !== null) {
+    hasAnyEvidence = true;
+    tryResolveIndex(match[1]);
+  }
+
+  // 2. Increment / decrement: a[expr]++, ++a[expr], a[expr]--, --a[expr]
+  const postIncDecRegex = new RegExp(`\\b${escaped}\\s*\\[([^\\]]+)\\]\\s*(?:\\+\\+|--)`, 'g');
+  while ((match = postIncDecRegex.exec(clean)) !== null) {
+    hasAnyEvidence = true;
+    tryResolveIndex(match[1]);
+  }
+  const preIncDecRegex = new RegExp(`(?:\\+\\+|--)\\s*\\b${escaped}\\s*\\[([^\\]]+)\\]`, 'g');
+  while ((match = preIncDecRegex.exec(clean)) !== null) {
+    hasAnyEvidence = true;
+    tryResolveIndex(match[1]);
+  }
+
+  // 3. Stream input: cin >> ... >> a[expr]
+  const cinRegex = /\b(?:std\s*::\s*)?cin\s*>>([^;]+)/g;
+  while ((match = cinRegex.exec(clean)) !== null) {
+    const streamRest = match[1];
+    const elemRegex = new RegExp(`\\b${escaped}\\s*\\[([^\\]]+)\\]`, 'g');
+    let em: RegExpExecArray | null;
+    while ((em = elemRegex.exec(streamRest)) !== null) {
+      hasAnyEvidence = true;
+      tryResolveIndex(em[1]);
+    }
+  }
+
+  // 4. scanf: scanf(..., &a[expr])
+  const scanfRegex = /\bscanf(?:_s)?\s*\(([^;]+)\)/g;
+  while ((match = scanfRegex.exec(clean)) !== null) {
+    const args = match[1];
+    const elemRegex = new RegExp(`&\\s*\\b${escaped}\\s*\\[([^\\]]+)\\]`, 'g');
+    let em: RegExpExecArray | null;
+    while ((em = elemRegex.exec(args)) !== null) {
+      hasAnyEvidence = true;
+      tryResolveIndex(em[1]);
+    }
+  }
+
+  // 5. swap: swap(..., a[expr], ...)
+  const swapRegex = /\b(?:std\s*::\s*)?swap\s*\(([^;)]+)\)/g;
+  while ((match = swapRegex.exec(clean)) !== null) {
+    const args = match[1];
+    const elemRegex = new RegExp(`\\b${escaped}\\s*\\[([^\\]]+)\\]`, 'g');
+    let em: RegExpExecArray | null;
+    while ((em = elemRegex.exec(args)) !== null) {
+      hasAnyEvidence = true;
+      tryResolveIndex(em[1]);
+    }
+  }
+
+  return {
+    hasAssignmentEvidence: hasAnyEvidence,
+    knownIndices: knownIndices.size > 0 ? knownIndices : undefined,
+    hasDynamicOrUnknownIndex,
+  };
+}
+
+/**
  * Checks whether codeText provides trustworthy evidence of assignment/update to varName.
  * E.g. 'a[1] = 42;', 'cin >> a[i];', 'scanf("%d", &a[i]);', 'swap(a[i], a[j]);', 'a[i]++'.
- * Rejects codeText that does not mention varName (e.g. unrelated statements 'int b = 5;').
+ * Rejects reads (cout << a[1];) or statements that merely mention varName.
  */
 export function hasAssignmentEvidence(codeText: string | undefined | null, varName: string): boolean {
-  if (!codeText) return false;
-  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`\\b${escaped}\\b`).test(codeText);
+  return getArrayAssignmentEvidence(codeText, varName).hasAssignmentEvidence;
 }
 
 /**
@@ -365,6 +498,7 @@ function calculateVariableDiff(
         }
 
         const justDeclaredWithInit = isArrayDeclarationWithInitializer(prevCodeText, varName);
+        const assignEvidence = getArrayAssignmentEvidence(prevCodeText, varName, pLocals);
 
         if (varName in pLocals) {
           const prevVal = pLocals[varName];
@@ -396,38 +530,55 @@ function calculateVariableDiff(
                     displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
                     wasUninitialized: true,
                   });
-                } else if (pVal !== cVal) {
+                } else {
                   const wasKnownInit = initSet.has(idx) &&
                     prevType !== 'uninitialized' &&
                     pVal !== '?' && pVal !== null && pVal !== undefined;
 
                   if (wasKnownInit) {
-                    // Genuine post-initialization mutation
-                    arrayUpdates.push({
-                      arrayName: varName,
-                      index: idx,
-                      from: pVal,
-                      to: cVal,
-                      frameName,
-                      frameId,
-                      frameDepth,
-                      displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
-                      wasUninitialized: false,
-                    });
-                  } else if (hasAssignmentEvidence(prevCodeText, varName)) {
-                    // Element was not previously initialized; this assignment initializes it.
-                    initSet.add(idx);
-                    arrayUpdates.push({
-                      arrayName: varName,
-                      index: idx,
-                      from: '?',
-                      to: cVal,
-                      frameName,
-                      frameId,
-                      frameDepth,
-                      displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
-                      wasUninitialized: true,
-                    });
+                    if (pVal !== cVal) {
+                      // Genuine post-initialization mutation
+                      arrayUpdates.push({
+                        arrayName: varName,
+                        index: idx,
+                        from: pVal,
+                        to: cVal,
+                        frameName,
+                        frameId,
+                        frameDepth,
+                        displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                        wasUninitialized: false,
+                      });
+                    }
+                    // Case C: if pVal === cVal, already initialized and unchanged.
+                    // Do not fabricate a value-change event, preserve initialized status.
+                  } else {
+                    // Element was not previously initialized.
+                    // Check if this statement specifically assigned/initialized element idx.
+                    const isTargetIndex = Boolean(assignEvidence.knownIndices?.has(idx));
+                    const isFallbackMatch = Boolean(
+                      (!assignEvidence.knownIndices?.has(idx)) &&
+                      assignEvidence.hasDynamicOrUnknownIndex &&
+                      pVal !== cVal
+                    );
+
+                    if (isTargetIndex || isFallbackMatch) {
+                      // Case A: Confirmed assignment evidence initializes this element (even if pVal === cVal).
+                      initSet.add(idx);
+                      arrayUpdates.push({
+                        arrayName: varName,
+                        index: idx,
+                        from: '?',
+                        to: cVal,
+                        frameName,
+                        frameId,
+                        frameDepth,
+                        displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                        wasUninitialized: true,
+                      });
+                    }
+                    // Case D / Non-target / Unrelated:
+                    // If no assignment evidence for this element, do not claim initialization.
                   }
                 }
               }

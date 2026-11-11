@@ -203,13 +203,25 @@ export const App: React.FC = () => {
   // Keyboard navigation shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in textarea or code editor
-      if (
-        document.activeElement?.tagName === 'TEXTAREA' ||
-        document.activeElement?.tagName === 'INPUT' ||
-        document.activeElement?.classList.contains('cm-content')
-      ) {
+      // Ignore if event was already handled or prevented (e.g. by tab navigation)
+      if (e.defaultPrevented) {
         return;
+      }
+
+      // Ignore if user is interacting with form controls, code editor, or tabs
+      const rawTarget = e.target instanceof Element ? e.target : document.activeElement;
+      if (rawTarget instanceof Element) {
+        if (
+          rawTarget.tagName === 'TEXTAREA' ||
+          rawTarget.tagName === 'INPUT' ||
+          rawTarget.tagName === 'SELECT' ||
+          rawTarget.getAttribute('role') === 'tab' ||
+          Boolean(rawTarget.closest('[role="tablist"]')) ||
+          Boolean(rawTarget.closest('[role="tab"]')) ||
+          rawTarget.classList.contains('cm-content')
+        ) {
+          return;
+        }
       }
 
       if (e.code === 'Space') {
@@ -292,6 +304,8 @@ export const App: React.FC = () => {
               onKeyDown={(e) => {
                 if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
                   e.preventDefault();
+                  e.stopPropagation();
+                  e.nativeEvent?.stopImmediatePropagation?.();
                   userSelectedTabRef.current = true;
                   const nextTab = activeCanvasTab === 'linked-list' ? 'arrays-variables' : 'linked-list';
                   setActiveCanvasTab(nextTab);

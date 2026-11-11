@@ -714,8 +714,37 @@ int main() {
     const onArrayTab = await evaluate("Boolean(document.querySelector('[data-testid=\"array-variables-canvas\"]'))");
     assert.ok(onArrayTab, 'Must switch back to Arrays canvas');
 
+    // Verify keyboard arrow tab navigation does not modify timeline step (Fix 2)
+    await evaluate(`(() => {
+      const btn = document.querySelector('[data-testid="canvas-tab-arrays"]');
+      if (btn) btn.focus();
+      const tablist = document.querySelector('[role="tablist"]');
+      if (tablist) {
+        tablist.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', code: 'ArrowLeft', bubbles: true }));
+      }
+    })()`);
+    await delay(150);
+
+    const onListTabByArrow = await evaluate("Boolean(document.querySelector('[data-testid=\"linked-list-canvas\"]'))");
+    const stepAfterArrowLeft = await evaluate("document.querySelector('input[type=\"range\"]')?.value");
+    assert.ok(onListTabByArrow, 'ArrowLeft on tablist must switch active tab to Linked List canvas');
+    assert.strictEqual(stepAfterArrowLeft, '2', 'ArrowLeft tab navigation must NOT modify timeline step');
+
+    await evaluate(`(() => {
+      const tablist = document.querySelector('[role="tablist"]');
+      if (tablist) {
+        tablist.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true }));
+      }
+    })()`);
+    await delay(150);
+
+    const onArrayTabByArrow = await evaluate("Boolean(document.querySelector('[data-testid=\"array-variables-canvas\"]'))");
+    const stepAfterArrowRight = await evaluate("document.querySelector('input[type=\"range\"]')?.value");
+    assert.ok(onArrayTabByArrow, 'ArrowRight on tablist must switch active tab back to Arrays canvas');
+    assert.strictEqual(stepAfterArrowRight, '2', 'ArrowRight tab navigation must NOT modify timeline step');
+
     await saveScreenshot('m2-2-10-manual-tab-selection-1440x900.png');
-    console.log('✅ Scenario 10 (Manual tab selection preservation) PASS');
+    console.log('✅ Scenario 10 (Manual tab selection & keyboard isolation) PASS');
 
     // =========================================================================
     // SCENARIO 11: Zero-Initialized Array Provenance & Metadata Visibility

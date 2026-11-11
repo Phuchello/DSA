@@ -1590,6 +1590,437 @@ function runEducationalExplanationsTests() {
     assert.strictEqual(s2.dsa.diff.scalarUpdates[0].name, 'unrelated');
   });
 
+  test('R01-H (positive): Case A - int a[3]; a[1]=0; a[1]=99; with pre-init byte 0 at a[1]', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int a[3];',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 0],   // raw memory already contains 0
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'a[1] = 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 0],   // assigned 0, equals raw memory byte 0
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'main',
+        codeText: 'a[1] = 99;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 4,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 0],   // after a[1]=0, before a[1]=99 executes
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 5, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 5,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 99],
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+
+    // Step 1: int a[3]; executed -> no initializer, 0 updates
+    assert.strictEqual(trace[1].dsa.diff.arrayUpdates.length, 0);
+
+    // Step 2: a[1] = 0; executed -> must record initialization ? -> 0 even though pVal === cVal === 0
+    const s2 = trace[2];
+    assert.strictEqual(s2.dsa.diff.arrayUpdates.length, 1, 'Must initialize a[1] to 0 despite pVal === cVal');
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].index, 1);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].from, '?');
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].to, 0);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].wasUninitialized, true);
+    assert.ok(s2.dsa.explanationDetail.observed.includes('Phần tử mảng a[1] được khởi tạo giá trị 0'));
+
+    // Step 3: a[1] = 99; executed -> must record mutation 0 -> 99 because initialized status was retained
+    const s3 = trace[3];
+    assert.strictEqual(s3.dsa.diff.arrayUpdates.length, 1);
+    assert.strictEqual(s3.dsa.diff.arrayUpdates[0].index, 1);
+    assert.strictEqual(s3.dsa.diff.arrayUpdates[0].from, 0);
+    assert.strictEqual(s3.dsa.diff.arrayUpdates[0].to, 99);
+    assert.strictEqual(s3.dsa.diff.arrayUpdates[0].wasUninitialized, false);
+    assert.ok(s3.dsa.explanationDetail.observed.includes('Phần tử mảng a[1] thay đổi từ 0 thành 99'));
+  });
+
+  test('R01-I (negative): Case D - cout << a[1]; must NOT be interpreted as assignment evidence', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int a[3];',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'cout << a[1];',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 4,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 100],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 300]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+    const s2 = trace[2];
+    assert.strictEqual(s2.dsa.diff.arrayUpdates.length, 0, 'cout << a[1] must produce 0 arrayUpdates');
+  });
+
+  test('R01-J (negative): RHS read int b = a[1]; must NOT be interpreted as assignment to a', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int a[3];',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 20],
+              ['C_DATA', '0x7fff0008', 'int', 30]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'int b = a[1];',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['a', 'b'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 20],
+              ['C_DATA', '0x7fff0008', 'int', 30]
+            ],
+            b: ['C_DATA', '0x7fff0020', 'uninitialized', '?']
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 4,
+          orderedVarNames: ['a', 'b'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 20],
+              ['C_DATA', '0x7fff0008', 'int', 30]
+            ],
+            b: ['C_DATA', '0x7fff0020', 'int', 20]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+    const s2 = trace[2];
+    assert.strictEqual(s2.dsa.diff.arrayUpdates.length, 0, 'int b = a[1] must produce 0 array updates for a');
+    assert.strictEqual(s2.dsa.diff.scalarUpdates.length, 1);
+    assert.strictEqual(s2.dsa.diff.scalarUpdates[0].name, 'b');
+  });
+
+  test('R01-K (negative): comparison if (a[1] == 0) must NOT be interpreted as assignment', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int a[3];',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 0],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 0]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'if (a[1] == 0) return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 0],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 0]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 4,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 0],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 0]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+    const s2 = trace[2];
+    assert.strictEqual(s2.dsa.diff.arrayUpdates.length, 0, 'Comparison if (a[1] == 0) must produce 0 array updates');
+  });
+
+  test('R01-L (positive): dynamic index a[i] = 0 with i=2 in locals and pre-init byte 0', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int a[3]; int i = 2;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['a', 'i'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 20],
+              ['C_DATA', '0x7fff0008', 'int', 0]  // pre-init byte is 0
+            ],
+            i: ['C_DATA', '0x7fff0020', 'int', 2]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'a[i] = 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['a', 'i'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 20],
+              ['C_DATA', '0x7fff0008', 'int', 0]
+            ],
+            i: ['C_DATA', '0x7fff0020', 'int', 2]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 4,
+          orderedVarNames: ['a', 'i'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 20],
+              ['C_DATA', '0x7fff0008', 'int', 0]
+            ],
+            i: ['C_DATA', '0x7fff0020', 'int', 2]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+    const s2 = trace[2];
+    assert.strictEqual(s2.dsa.diff.arrayUpdates.length, 1);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].index, 2);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].from, '?');
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].to, 0);
+    assert.strictEqual(s2.dsa.diff.arrayUpdates[0].wasUninitialized, true);
+  });
+
+  test('R01-M: Case C - initialized a[1]=0 then a[1]=0 must NOT fabricate value change and preserve initialized status', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 2, funcName: 'main',
+        codeText: 'int a[3];',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 2,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 30]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 3, funcName: 'main',
+        codeText: 'a[1] = 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 3,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 30]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 4, funcName: 'main',
+        codeText: 'a[1] = 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 4,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 30]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 5, funcName: 'main',
+        codeText: 'a[1] = 5;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 5,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 0],
+              ['C_DATA', '0x7fff0008', 'int', 30]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      },
+      {
+        event: 'stepLine', line: 6, funcName: 'main',
+        codeText: 'return 0;',
+        stackToRender: [{
+          funcName: 'main', frameId: 'f0', isHighlighted: true, line: 6,
+          orderedVarNames: ['a'],
+          encodedLocals: {
+            a: ['C_ARRAY', '0x7fff0000',
+              ['C_DATA', '0x7fff0000', 'int', 10],
+              ['C_DATA', '0x7fff0004', 'int', 5],
+              ['C_DATA', '0x7fff0008', 'int', 30]
+            ]
+          }
+        }],
+        heap: {}, deletedAddresses: []
+      }
+    ];
+
+    const trace = normalizeTrace(raw);
+    // Step 2: a[1] = 0; initializes a[1]
+    assert.strictEqual(trace[2].dsa.diff.arrayUpdates.length, 1);
+    assert.strictEqual(trace[2].dsa.diff.arrayUpdates[0].from, '?');
+    assert.strictEqual(trace[2].dsa.diff.arrayUpdates[0].to, 0);
+
+    // Step 3: second a[1] = 0; executed -> must NOT fabricate value change
+    assert.strictEqual(trace[3].dsa.diff.arrayUpdates.length, 0, 'Must not fabricate value change when already initialized to same value');
+
+    // Step 4: a[1] = 5; executed -> mutation from 0 to 5 (not from '?')
+    assert.strictEqual(trace[4].dsa.diff.arrayUpdates.length, 1);
+    assert.strictEqual(trace[4].dsa.diff.arrayUpdates[0].from, 0);
+    assert.strictEqual(trace[4].dsa.diff.arrayUpdates[0].to, 5);
+    assert.strictEqual(trace[4].dsa.diff.arrayUpdates[0].wasUninitialized, false);
+  });
+
   console.log(`Educational Explanations Unit Test Summary: ${passed} PASS, ${failed} FAIL`);
   if (failed > 0) {
     const error = new Error('Educational explanations unit tests failed');

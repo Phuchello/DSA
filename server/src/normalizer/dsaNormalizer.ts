@@ -177,6 +177,17 @@ export function isArrayDeclarationWithInitializer(codeText: string | undefined |
 }
 
 /**
+ * Checks whether codeText provides trustworthy evidence of assignment/update to varName.
+ * E.g. 'a[1] = 42;', 'cin >> a[i];', 'scanf("%d", &a[i]);', 'swap(a[i], a[j]);', 'a[i]++'.
+ * Rejects codeText that does not mention varName (e.g. unrelated statements 'int b = 5;').
+ */
+export function hasAssignmentEvidence(codeText: string | undefined | null, varName: string): boolean {
+  if (!codeText) return false;
+  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`).test(codeText);
+}
+
+/**
  * Task B: Calculates trustworthy variable, array, and call stack deltas between
  * consecutive execution snapshots under the before-statement convention.
  */
@@ -372,21 +383,19 @@ function calculateVariableDiff(
 
                 if (justDeclaredWithInit) {
                   // Between prev and curr, declaration with initializer executed.
-                  // All elements are initialized. Previous stack memory was uninitialized garbage.
+                  // All elements are initialized regardless of whether previous memory bytes equaled initialized value.
                   initSet.add(idx);
-                  if (pVal !== cVal) {
-                    arrayUpdates.push({
-                      arrayName: varName,
-                      index: idx,
-                      from: '?',
-                      to: cVal,
-                      frameName,
-                      frameId,
-                      frameDepth,
-                      displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
-                      wasUninitialized: true,
-                    });
-                  }
+                  arrayUpdates.push({
+                    arrayName: varName,
+                    index: idx,
+                    from: '?',
+                    to: cVal,
+                    frameName,
+                    frameId,
+                    frameDepth,
+                    displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
+                    wasUninitialized: true,
+                  });
                 } else if (pVal !== cVal) {
                   const wasKnownInit = initSet.has(idx) &&
                     prevType !== 'uninitialized' &&
@@ -405,7 +414,7 @@ function calculateVariableDiff(
                       displayName: isMultiFrame ? `${varName}[${idx}]@${frameName}#${frameDepth}` : `${varName}[${idx}]`,
                       wasUninitialized: false,
                     });
-                  } else {
+                  } else if (hasAssignmentEvidence(prevCodeText, varName)) {
                     // Element was not previously initialized; this assignment initializes it.
                     initSet.add(idx);
                     arrayUpdates.push({

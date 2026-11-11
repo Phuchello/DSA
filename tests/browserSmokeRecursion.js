@@ -437,14 +437,14 @@ async function main() {
     // Verify LIFO order: Top frame (depth 4) is factorial with n = 1
     const topFrameText = await evaluate("document.querySelector('[data-testid=\"call-stack-frame-4\"]')?.textContent || ''");
     assert.ok(topFrameText.includes('factorial()'), 'Top frame must be factorial()');
-    assert.ok(topFrameText.includes('ĐỈNH NGĂN XẾP (TOP)'), 'Top frame must have TOP badge');
-    assert.ok(topFrameText.includes('Đang thực thi (Active)'), 'Top frame must be marked Active');
+    assert.ok(topFrameText.includes('ĐỈNH NGĂN XẾP'), 'Top frame must have TOP badge');
+    assert.ok(topFrameText.includes('Hàm đang thực hiện'), 'Top frame must be marked as executing frame');
     assert.ok(topFrameText.includes('1'), 'Top frame must contain n=1');
 
     // Verify bottom frame (depth 0) is main()
     const bottomFrameText = await evaluate("document.querySelector('[data-testid=\"call-stack-frame-0\"]')?.textContent || ''");
     assert.ok(bottomFrameText.includes('main()'), 'Bottom frame must be main()');
-    assert.ok(bottomFrameText.includes('ĐÁY NGĂN XẾP (BOTTOM)'), 'Bottom frame must have BOTTOM badge');
+    assert.ok(bottomFrameText.includes('ĐÁY NGĂN XẾP'), 'Bottom frame must have BOTTOM badge');
     assert.ok(bottomFrameText.includes('result'), 'Bottom frame must contain variable result');
 
     // Verify 4 call connectors between frames
@@ -493,7 +493,7 @@ async function main() {
 
     const baseTopText = await evaluate("document.querySelector('[data-testid=\"call-stack-frame-1\"]')?.textContent || ''");
     assert.ok(baseTopText.includes('factorial()'), 'Active frame must be factorial()');
-    assert.ok(baseTopText.includes('Đang thực thi (Active)'), 'Must be marked Active');
+    assert.ok(baseTopText.includes('Hàm đang thực hiện'), 'Must be marked as executing frame');
     assert.ok(baseTopText.includes('1'), 'n must be 1');
 
     const screenshotBaseCase = await saveScreenshot('m1-2a-factorial1-base-case.png');

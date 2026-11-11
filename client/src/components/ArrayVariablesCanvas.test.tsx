@@ -117,7 +117,7 @@ describe('ArrayVariablesCanvas Component Tests', () => {
 
     render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={15} />);
 
-    expect(screen.getByText(/Quy ước trước câu lệnh \(Before-Statement\):/)).toBeDefined();
+    expect(screen.getByText(/Quy ước trước câu lệnh:/)).toBeDefined();
     expect(screen.getByText(/Dòng 15 chuẩn bị được thực thi/)).toBeDefined();
   });
 
@@ -377,7 +377,7 @@ describe('ArrayVariablesCanvas Component Tests', () => {
       },
     ];
 
-    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} />);
+    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} mode="advanced" />);
 
     // pivot, min, max should appear as scalar variables, NOT as index badges
     expect(screen.queryByTestId('index-badge-pivot')).toBeNull();
@@ -624,7 +624,7 @@ describe('ArrayVariablesCanvas Component Tests', () => {
       },
     ];
 
-    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} />);
+    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} mode="advanced" />);
 
     // Verify section header & frame count badge
     expect(screen.getByTestId('call-stack-section')).toBeDefined();
@@ -679,7 +679,7 @@ describe('ArrayVariablesCanvas Component Tests', () => {
       },
     ];
 
-    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} />);
+    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} mode="advanced" />);
 
     expect(screen.getByTestId('stack-frame-count').textContent).toContain('2 khung lệnh');
     const frame1 = screen.getByTestId('call-stack-frame-1');
@@ -728,7 +728,7 @@ describe('ArrayVariablesCanvas Component Tests', () => {
       },
     ];
 
-    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} />);
+    render(<ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} mode="advanced" />);
 
     expect(screen.getByTestId('stack-frame-count').textContent).toContain('3 khung lệnh');
 
@@ -899,5 +899,80 @@ describe('ArrayVariablesCanvas Component Tests', () => {
       />
     );
     expect(screen.getByTestId('stack-transition-indicator').textContent).toContain('Trở về hàm gọi — giảm số khung (-1)');
+  });
+
+  // AT-30: Beginner mode presentation cleanup
+  it('AT-30: Beginner mode presentation cleanup (natural Vietnamese, no English labels, hides raw frame IDs and hex addresses)', () => {
+    const stackToRender = [
+      {
+        funcName: 'main',
+        frameId: '0x5ffe40',
+        frameDepth: 0,
+        isHighlighted: false,
+        line: 10,
+        encodedLocals: {
+          result: ['C_DATA', '0x5ffe44', 'int', 24],
+        },
+      },
+      {
+        funcName: 'factorial',
+        frameId: '0x5ffd80',
+        frameDepth: 1,
+        isHighlighted: true,
+        line: 5,
+        encodedLocals: {
+          n: ['C_DATA', '0x5ffdb0', 'int', 1],
+          arr: [
+            'C_ARRAY',
+            '0x7fff0000',
+            ['C_DATA', '0x7fff0000', 'int', 10],
+            ['C_DATA', '0x7fff0004', 'int', 20],
+          ],
+        },
+      },
+    ];
+
+    const { rerender } = render(
+      <ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} mode="beginner" />
+    );
+
+    const canvasText = screen.getByTestId('array-variables-canvas').textContent || '';
+
+    // 1. Natural Vietnamese before-statement label, NO English "(Before-Statement)"
+    expect(canvasText).toContain('Quy ước trước câu lệnh:');
+    expect(canvasText).not.toContain('(Before-Statement)');
+
+    // 2. NO English section labels
+    expect(canvasText).not.toContain('(Scalar Variables)');
+    expect(canvasText).not.toContain('(1D Arrays)');
+    expect(canvasText).not.toContain('(called by)');
+
+    // 3. NO English status badges
+    expect(canvasText).not.toContain('(TOP)');
+    expect(canvasText).not.toContain('(BOTTOM)');
+    expect(canvasText).not.toContain('(Active)');
+
+    // 4. Clean Vietnamese badges present
+    expect(canvasText).toContain('ĐỈNH NGĂN XẾP');
+    expect(canvasText).toContain('ĐÁY NGĂN XẾP');
+    expect(canvasText).toContain('Hàm đang thực hiện');
+    expect(canvasText).toContain('được gọi bởi');
+
+    // 5. Raw frame IDs and element memory addresses hidden in Beginner mode
+    expect(canvasText).not.toContain('ID: 0x5ffd80');
+    expect(canvasText).not.toContain('ID: 0x5ffe40');
+    expect(canvasText).not.toContain('@0x7fff0000');
+
+    // 6. When switched to Advanced mode, full technical metadata returns
+    rerender(
+      <ArrayVariablesCanvas stackToRender={stackToRender} currentLine={5} mode="advanced" />
+    );
+    const advancedText = screen.getByTestId('array-variables-canvas').textContent || '';
+    expect(advancedText).toContain('(Before-Statement)');
+    expect(advancedText).toContain('ĐỈNH NGĂN XẾP (TOP)');
+    expect(advancedText).toContain('ĐÁY NGĂN XẾP (BOTTOM)');
+    expect(advancedText).toContain('Đang thực thi (Active)');
+    expect(advancedText).toContain('ID: 0x5ffd80');
+    expect(advancedText).toContain('ID: 0x5ffe40');
   });
 });

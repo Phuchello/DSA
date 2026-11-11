@@ -7,6 +7,7 @@ export interface ArrayVariablesCanvasProps {
   isTraceStale?: boolean;
   previousStackToRender?: any[];
   event?: string;
+  mode?: 'beginner' | 'advanced';
 }
 
 interface ResolvedArray {
@@ -82,6 +83,7 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
   isTraceStale = false,
   previousStackToRender,
   event,
+  mode = 'beginner',
 }) => {
   // Empty state handling
   if (!stackToRender || stackToRender.length === 0) {
@@ -422,7 +424,9 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
         <div className="flex items-center space-x-2 flex-wrap">
           <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
           <span className="text-slate-300 font-semibold">
-            Quy ước trước câu lệnh (Before-Statement):
+            {mode === 'advanced'
+              ? 'Quy ước trước câu lệnh (Before-Statement):'
+              : 'Quy ước trước câu lệnh:'}
           </span>
           <span className="text-slate-400">
             Trạng thái trước khi chạy dòng này — Dòng {currentLine || '?'} chuẩn bị được thực thi. Dữ liệu bên dưới phản ánh giá trị trước khi dòng này chạy.
@@ -443,7 +447,11 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
         >
           <span className="text-blue-400 text-sm mt-0.5">ℹ️</span>
           <div>
-            <div className="font-semibold text-slate-200">Cấu trúc dữ liệu tự định nghĩa (User-defined struct)</div>
+            <div className="font-semibold text-slate-200">
+              {mode === 'advanced'
+                ? 'Cấu trúc dữ liệu tự định nghĩa (User-defined struct)'
+                : 'Cấu trúc dữ liệu tự định nghĩa'}
+            </div>
             <div className="text-slate-400 text-[11px] mt-0.5 leading-relaxed">
               Đang hiển thị các trường dữ liệu và khung hàm quan sát được từ bộ nhớ. Hệ thống chưa hỗ trợ sơ đồ cây/đồ thị chuyên biệt cho kiểu dữ liệu này (không suy diễn cấu trúc khi chưa có dữ liệu quan sát xác thực).
             </div>
@@ -456,7 +464,9 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
         <div className="space-y-3 shrink-0">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <div className="flex items-center space-x-2">
-              <span className="text-sm font-bold text-slate-200">Mảng tĩnh 1 chiều (1D Arrays)</span>
+              <span className="text-sm font-bold text-slate-200">
+                {mode === 'advanced' ? 'Mảng tĩnh 1 chiều (1D Arrays)' : 'Mảng tĩnh 1 chiều'}
+              </span>
               <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-1.5 py-0.5 rounded">
                 {arrayList.length} mảng
               </span>
@@ -490,7 +500,9 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
                       : `[${arr.elementCount} phần tử]`}
                   </span>
                   <span className="text-[10px] text-slate-500">
-                    trong {arr.frameName}() @{arr.address}
+                    {mode === 'advanced'
+                      ? `trong ${arr.frameName}() @${arr.address}`
+                      : `trong hàm ${arr.frameName}()`}
                   </span>
                 </div>
                 {arr.referencedByPointers.length > 0 && (
@@ -543,9 +555,11 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
                         </div>
 
                         {/* Element address */}
-                        <span className="text-[8px] text-slate-600 mt-0.5 truncate max-w-[56px]">
-                          {elem.address}
-                        </span>
+                        {mode === 'advanced' && (
+                          <span className="text-[8px] text-slate-600 mt-0.5 truncate max-w-[56px]">
+                            {elem.address}
+                          </span>
+                        )}
 
                         {/* Positional Index Badges */}
                         {pointersHere.length > 0 && (
@@ -578,8 +592,12 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
           <div className="flex items-center space-x-2">
             <span className="text-sm font-bold text-slate-200">
               {stackToRender.length > 1
-                ? 'Ngăn xếp Gọi hàm (Call Stack — LIFO) — Các hàm đang được gọi'
-                : 'Các biến đang theo dõi (Scalar Variables)'}
+                ? (mode === 'advanced'
+                    ? 'Ngăn xếp Gọi hàm (Call Stack — LIFO) — Các hàm đang được gọi'
+                    : 'Ngăn xếp gọi hàm — Các hàm đang được gọi')
+                : (mode === 'advanced'
+                    ? 'Các biến đang theo dõi (Scalar Variables)'
+                    : 'Các biến đang theo dõi')}
             </span>
             <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded" data-testid="stack-frame-count">
               {stackToRender.length} khung lệnh
@@ -643,17 +661,19 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
                         </span>
                         {group.isHighlighted && (
                           <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
-                            Hàm đang thực hiện — Đang thực thi (Active)
+                            {mode === 'advanced'
+                              ? 'Hàm đang thực hiện — Đang thực thi (Active)'
+                              : 'Hàm đang thực hiện'}
                           </span>
                         )}
                         {isTop && (
                           <span className="text-[10px] bg-blue-500/20 text-blue-300 border border-blue-500/30 px-1.5 py-0.5 rounded font-bold">
-                            ĐỈNH NGĂN XẾP (TOP)
+                            {mode === 'advanced' ? 'ĐỈNH NGĂN XẾP (TOP)' : 'ĐỈNH NGĂN XẾP'}
                           </span>
                         )}
                         {isBottom && (
                           <span className="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-1.5 py-0.5 rounded font-bold">
-                            ĐÁY NGĂN XẾP (BOTTOM)
+                            {mode === 'advanced' ? 'ĐÁY NGĂN XẾP (BOTTOM)' : 'ĐÁY NGĂN XẾP'}
                           </span>
                         )}
                       </div>
@@ -665,9 +685,11 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
                         <span className="text-[10px] bg-slate-800/80 text-slate-400 px-1.5 py-0.5 rounded">
                           Độ sâu #{group.frameDepth}
                         </span>
-                        <span className="text-[10px] text-slate-500">
-                          ID: {group.frameId}
-                        </span>
+                        {mode === 'advanced' && (
+                          <span className="text-[10px] text-slate-500">
+                            ID: {group.frameId}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -732,7 +754,7 @@ export const ArrayVariablesCanvas: React.FC<ArrayVariablesCanvasProps> = ({
                     <div className="flex items-center justify-center py-0.5 text-slate-600 text-xs select-none">
                       <span className="flex items-center space-x-1 bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded-full text-[10px] text-slate-400 font-mono shadow-sm">
                         <span>▲</span>
-                        <span>được gọi bởi (called by)</span>
+                        <span>{mode === 'advanced' ? 'được gọi bởi (called by)' : 'được gọi bởi'}</span>
                       </span>
                     </div>
                   )}

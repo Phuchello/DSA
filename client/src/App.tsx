@@ -393,6 +393,7 @@ export const App: React.FC = () => {
                     currentStepIndex > 0 ? trace[currentStepIndex - 1]?.stackToRender : undefined
                   }
                   event={currentStep?.event}
+                  mode={mode}
                 />
               )}
             </div>

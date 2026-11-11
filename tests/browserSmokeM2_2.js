@@ -718,6 +718,61 @@ int main() {
     console.log('✅ Scenario 10 (Manual tab selection preservation) PASS');
 
     // =========================================================================
+    // SCENARIO 11: Zero-Initialized Array Provenance & Metadata Visibility
+    // =========================================================================
+    console.log('\n--- Scenario 11: Zero-Initialized Array Provenance & Metadata Visibility ---');
+    const codeZeroArray = `#include <iostream>
+using namespace std;
+int main() {
+    int a[3] = {0, 0, 0};
+    a[0] = 5;
+    cout << a[0] << " " << a[1] << " " << a[2] << endl;
+    return 0;
+}`;
+    await pasteCode(codeZeroArray, 'int a[3] = {0, 0, 0};');
+    await clickRun();
+    await waitForExecution('5 0 0');
+
+    // Step 1: After int a[3] = {0, 0, 0}; declaration executed
+    await setStep(1);
+    const step1ZeroObserved = await evaluate("document.querySelector('[data-testid=\"explanation-observed\"]')?.textContent || ''");
+    assert.ok(!step1ZeroObserved.includes('thay đổi từ'), `Step 1 zero-init must NOT claim 'thay đổi từ': "${step1ZeroObserved}"`);
+    assert.ok(step1ZeroObserved.includes('được khởi tạo giá trị 0') || step1ZeroObserved.includes('khởi tạo giá trị 0'),
+      `Step 1 zero-init must report elements initialized to 0: "${step1ZeroObserved}"`);
+
+    // Verify all 3 cells are rendered with value 0
+    const cell0 = await evaluate("document.querySelector('[data-testid=\"array-cell-0\"]')?.textContent || ''");
+    const cell1Z = await evaluate("document.querySelector('[data-testid=\"array-cell-1\"]')?.textContent || ''");
+    const cell2Z = await evaluate("document.querySelector('[data-testid=\"array-cell-2\"]')?.textContent || ''");
+    assert.ok(cell0.includes('0') && cell0.includes('[0]'), 'Cell 0 must show 0');
+    assert.ok(cell1Z.includes('0') && cell1Z.includes('[1]'), 'Cell 1 must show 0');
+    assert.ok(cell2Z.includes('0') && cell2Z.includes('[2]'), 'Cell 2 must show 0');
+
+    // Beginner mode metadata assertions
+    const beginnerCanvasText = await evaluate("document.querySelector('[data-testid=\"array-variables-canvas\"]')?.textContent || ''");
+    assert.ok(beginnerCanvasText.includes('Quy ước trước câu lệnh:'), 'Beginner mode must use natural Vietnamese before-statement label');
+    assert.ok(!beginnerCanvasText.includes('(Before-Statement)'), 'Beginner mode must NOT show (Before-Statement)');
+    assert.ok(!beginnerCanvasText.includes('(Scalar Variables)'), 'Beginner mode must NOT show (Scalar Variables)');
+    assert.ok(!beginnerCanvasText.includes('(1D Arrays)'), 'Beginner mode must NOT show (1D Arrays)');
+    assert.ok(!beginnerCanvasText.includes('(TOP)'), 'Beginner mode must NOT show (TOP)');
+    assert.ok(!beginnerCanvasText.includes('(Active)'), 'Beginner mode must NOT show (Active)');
+    assert.ok(!beginnerCanvasText.includes('ID: '), 'Beginner mode must NOT display raw frame IDs');
+
+    // Switch to Advanced Mode and assert technical metadata visibility
+    await click('button[title*="Chuyển đổi giữa chế độ"]');
+    await delay(300);
+    const advancedCanvasText = await evaluate("document.querySelector('[data-testid=\"array-variables-canvas\"]')?.textContent || ''");
+    assert.ok(advancedCanvasText.includes('(Before-Statement)'), 'Advanced mode must display (Before-Statement)');
+    assert.ok(advancedCanvasText.includes('ID: '), 'Advanced mode must display frame IDs');
+
+    // Switch back to Beginner Mode
+    await click('button[title*="Chuyển đổi giữa chế độ"]');
+    await delay(300);
+
+    await saveScreenshot('m2-2-11-zero-init-and-mode-metadata.png');
+    console.log('✅ Scenario 11 (Zero-initialized array provenance and Beginner/Advanced metadata) PASS');
+
+    // =========================================================================
     // RESPONSIVE VIEWPORT TESTING & SCREENSHOTS
     // =========================================================================
     console.log('\n--- Responsive Viewport Verification ---');
@@ -793,7 +848,7 @@ int main() {
     console.log('✅ Beginner vs Advanced mode comparison captured');
 
     console.log('\n======================================================================');
-    console.log('🎉 ALL 10 M2.2 ACCEPTANCE SCENARIOS & RESPONSIVE CHECKS PASSED!');
+    console.log('🎉 ALL 11 M2.2 ACCEPTANCE SCENARIOS & RESPONSIVE CHECKS PASSED!');
     console.log('======================================================================');
 
   } finally {

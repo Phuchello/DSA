@@ -72,7 +72,7 @@ export const EducationalBanner: React.FC<EducationalBannerProps> = ({
               }`}
             >
               {mode === 'beginner' ? <Sparkles className="w-3 h-3" /> : <Info className="w-3 h-3" />}
-              <span>{mode === 'beginner' ? 'Sư phạm IT003 (Tập sự)' : 'Góc nhìn Chuyên sâu'}</span>
+              <span>{mode === 'beginner' ? 'Sư phạm IT003 (Dễ hiểu)' : 'Góc nhìn Chuyên sâu'}</span>
             </span>
 
             {line && codeText && (

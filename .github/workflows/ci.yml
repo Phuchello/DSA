@@ -12,7 +12,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   lint-and-unit-tests:
     name: Build, Full C++/GDB & Unit Tests (Linux/POSIX)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -57,7 +57,10 @@ jobs:
         run: node tests/educationalExplanationsTests.js
 
       - name: Install native Linux toolchain (g++ and GDB)
-        run: sudo apt-get update && sudo apt-get install -y g++ gdb
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y g++ gdb && break || sleep 5
+          done
 
       - name: Run full native C++/GDB and process-tree regression suite (Linux/POSIX)
         run: npm test

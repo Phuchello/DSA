@@ -152,6 +152,17 @@ function makeMultiStepResponse() {
           step: 1,
           line: 12,
           funcName: 'main',
+          codeText: 'int b = 5;',
+          stdout: '',
+          event: 'stepLine',
+          stackToRender: [],
+          heap: {},
+          dsa: { nodes: [], pointers: [], diff: {}, vietnameseExplanation: '', advancedNotes: '' },
+        },
+        {
+          step: 2,
+          line: 13,
+          funcName: 'main',
           codeText: 'return 0;',
           stdout: '',
           event: 'stepLine',
@@ -386,5 +397,123 @@ describe('App execution request ownership', () => {
 
     // Mock array variables canvas also receives isTraceStale=true
     expect(screen.getByTestId('mock-array-variables').getAttribute('data-stale')).toBe('true');
+  });
+
+  // AT-09: WAI-ARIA and APG keyboard tabs compliance (R04)
+  it('AT-09: provides APG keyboard arrow navigation, roving tabIndex, and stable tabpanel references', async () => {
+    installFetchMock();
+    render(<App />);
+
+    const tabList = screen.getByRole('tablist', { name: 'Lựa chọn khung trực quan hóa' });
+    expect(tabList).toBeDefined();
+
+    const linkedListTab = screen.getByRole('tab', { name: /Danh sách liên kết/i });
+    const arraysTab = screen.getByRole('tab', { name: /Mảng & Biến/i });
+
+    // Both tabpanels must exist simultaneously in DOM
+    const linkedListPanel = document.getElementById('canvas-tabpanel-linked-list');
+    const arraysPanel = document.getElementById('canvas-tabpanel-arrays');
+    expect(linkedListPanel).not.toBeNull();
+    expect(arraysPanel).not.toBeNull();
+
+    // Verify aria-controls targets point to existing DOM elements
+    expect(linkedListTab.getAttribute('aria-controls')).toBe('canvas-tabpanel-linked-list');
+    expect(arraysTab.getAttribute('aria-controls')).toBe('canvas-tabpanel-arrays');
+
+    // Initially linked-list is selected: roving tabIndex 0 for active, -1 for inactive
+    expect(linkedListTab.getAttribute('aria-selected')).toBe('true');
+    expect(linkedListTab.getAttribute('tabindex')).toBe('0');
+    expect(arraysTab.getAttribute('aria-selected')).toBe('false');
+    expect(arraysTab.getAttribute('tabindex')).toBe('-1');
+
+    // Inactive panel must have hidden attribute
+    expect(linkedListPanel?.hasAttribute('hidden')).toBe(false);
+    expect(arraysPanel?.hasAttribute('hidden')).toBe(true);
+
+    // Press ArrowRight to move selection and focus to arrays tab
+    linkedListTab.focus();
+    await act(async () => {
+      fireEvent.keyDown(tabList, { key: 'ArrowRight' });
+    });
+
+    // State changes: arrays tab becomes selected with roving tabIndex 0
+    expect(arraysTab.getAttribute('aria-selected')).toBe('true');
+    expect(arraysTab.getAttribute('tabindex')).toBe('0');
+    expect(linkedListTab.getAttribute('aria-selected')).toBe('false');
+    expect(linkedListTab.getAttribute('tabindex')).toBe('-1');
+
+    expect(arraysPanel?.hasAttribute('hidden')).toBe(false);
+    expect(linkedListPanel?.hasAttribute('hidden')).toBe(true);
+
+    // Press ArrowLeft to return to linked-list tab
+    await act(async () => {
+      fireEvent.keyDown(tabList, { key: 'ArrowLeft' });
+    });
+    expect(linkedListTab.getAttribute('aria-selected')).toBe('true');
+    expect(linkedListTab.getAttribute('tabindex')).toBe('0');
+    expect(arraysTab.getAttribute('aria-selected')).toBe('false');
+    expect(arraysTab.getAttribute('tabindex')).toBe('-1');
+  });
+
+  // AT-10: Tab navigation arrow keys must not modify timeline index (Fix 2 PR review)
+  it('AT-10: tab arrow navigation changes tab selection without modifying timeline index in nonempty trace', async () => {
+    const runs = installFetchMock();
+    render(<App />);
+
+    const runBtn = await screen.findByTestId('test-run');
+    await act(async () => {
+      fireEvent.click(runBtn);
+    });
+    await act(async () => {
+      runs[0].response.resolve(makeMultiStepResponse());
+    });
+
+    // Advance timeline to step 1 (nonzero step so we can verify both directions)
+    const stepForwardBtn = screen.getByTestId('test-step-forward');
+    await act(async () => {
+      fireEvent.click(stepForwardBtn);
+    });
+
+    const stepDisplay = screen.getByTestId('test-current-step');
+    expect(stepDisplay.textContent).toBe('1');
+
+    const tabList = screen.getByRole('tablist', { name: 'Lựa chọn khung trực quan hóa' });
+    const linkedListTab = screen.getByRole('tab', { name: /Danh sách liên kết/i });
+    const arraysTab = screen.getByRole('tab', { name: /Mảng & Biến/i });
+
+    // Trace has array structures, so arrays-variables is auto-selected
+    expect(arraysTab.getAttribute('aria-selected')).toBe('true');
+    arraysTab.focus();
+
+    // 1. Press ArrowLeft while focused on tablist:
+    // Tab changes to linked-list, but timeline step remains 1 (does NOT rewind to 0)
+    await act(async () => {
+      fireEvent.keyDown(tabList, { key: 'ArrowLeft', code: 'ArrowLeft' });
+    });
+
+    expect(linkedListTab.getAttribute('aria-selected')).toBe('true');
+    expect(stepDisplay.textContent).toBe('1');
+
+    // 2. Press ArrowRight while focused on tablist:
+    // Tab changes back to arrays, but timeline step remains 1 (does NOT advance to 2)
+    await act(async () => {
+      fireEvent.keyDown(tabList, { key: 'ArrowRight', code: 'ArrowRight' });
+    });
+
+    expect(arraysTab.getAttribute('aria-selected')).toBe('true');
+    expect(stepDisplay.textContent).toBe('1');
+
+    // 3. Move focus outside interactive controls (blur active element):
+    // Global ArrowRight and ArrowLeft shortcuts must work normally
+    (document.activeElement as HTMLElement)?.blur();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'ArrowRight', code: 'ArrowRight' });
+    });
+    expect(stepDisplay.textContent).toBe('2');
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'ArrowLeft', code: 'ArrowLeft' });
+    });
+    expect(stepDisplay.textContent).toBe('1');
   });
 });

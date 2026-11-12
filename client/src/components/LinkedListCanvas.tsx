@@ -97,9 +97,9 @@ export const LinkedListCanvas: React.FC<LinkedListCanvasProps> = ({
   const freedNodes = nodes.filter((n) => n.status === 'freed');
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 p-6 overflow-auto" data-testid="linked-list-canvas">
+    <div className="flex flex-col h-full bg-slate-950 p-3.5 sm:p-5 overflow-auto" data-testid="linked-list-canvas">
       {/* Canvas Header & Legend */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-4 border-b border-slate-800 select-none">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 mb-4 sm:mb-6 pb-3 sm:pb-4 border-b border-slate-800 select-none">
         <div>
           <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
             <span>Sơ đồ Danh sách liên kết đơn (Singly Linked List)</span>

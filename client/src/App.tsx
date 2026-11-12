@@ -203,13 +203,25 @@ export const App: React.FC = () => {
   // Keyboard navigation shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in textarea or code editor
-      if (
-        document.activeElement?.tagName === 'TEXTAREA' ||
-        document.activeElement?.tagName === 'INPUT' ||
-        document.activeElement?.classList.contains('cm-content')
-      ) {
+      // Ignore if event was already handled or prevented (e.g. by tab navigation)
+      if (e.defaultPrevented) {
         return;
+      }
+
+      // Ignore if user is interacting with form controls, code editor, or tabs
+      const rawTarget = e.target instanceof Element ? e.target : document.activeElement;
+      if (rawTarget instanceof Element) {
+        if (
+          rawTarget.tagName === 'TEXTAREA' ||
+          rawTarget.tagName === 'INPUT' ||
+          rawTarget.tagName === 'SELECT' ||
+          rawTarget.getAttribute('role') === 'tab' ||
+          Boolean(rawTarget.closest('[role="tablist"]')) ||
+          Boolean(rawTarget.closest('[role="tab"]')) ||
+          rawTarget.classList.contains('cm-content')
+        ) {
+          return;
+        }
       }
 
       if (e.code === 'Space') {
@@ -247,9 +259,9 @@ export const App: React.FC = () => {
       />
 
       {/* Main Workspace (Split Screen) */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+      <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative min-h-0">
         {/* Left Panel: C++ Editor, Stdin & Terminal Drawer */}
-        <div className="w-full md:w-5/12 h-1/2 md:h-full flex flex-col">
+        <div className="w-full md:w-5/12 h-1/2 md:h-full flex flex-col border-b md:border-b-0 md:border-r border-slate-800 shrink-0 min-h-0">
           <CodeEditor
             code={code}
             onChangeCode={handleCodeChange}
@@ -266,13 +278,51 @@ export const App: React.FC = () => {
           />
         </div>
 
-        {/* Right Panel: Linked List Canvas & Memory Inspector */}
-        <div className="w-full md:w-7/12 h-1/2 md:h-full flex flex-col bg-slate-950 overflow-hidden relative">
+        {/* Right Panel: Educational Explanation, Visualizer Canvas & Memory Inspector */}
+        <div className="w-full md:w-7/12 h-1/2 md:h-full flex flex-col bg-slate-950 overflow-hidden relative min-h-0">
+          {/* Educational Tutor Banner / Learning Explanation — Prominently placed at the top of the right panel */}
+          <EducationalBanner
+            explanation={
+              isTraceStale
+                ? '⚠️ Lưu ý: Mã nguồn đã bị thay đổi kể từ lần chạy cuối. Vết thực thi này thuộc về phiên bản mã trước đó. Bấm "Chạy chương trình" để phân tích mã mới.'
+                : currentStep?.dsa.vietnameseExplanation || ''
+            }
+            explanationDetail={isTraceStale ? undefined : currentStep?.dsa.explanationDetail}
+            advancedNotes={currentStep?.dsa.advancedNotes || ''}
+            mode={mode}
+            diff={currentStep?.dsa.diff}
+            codeText={currentStep?.codeText}
+            line={currentStep?.line}
+          />
+
           {/* Canvas Tabs Header */}
           <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-3 py-1.5 shrink-0 z-10">
-            <div className="flex items-center gap-1.5">
+            <div
+              className="flex items-center gap-1.5"
+              role="tablist"
+              aria-label="Lựa chọn khung trực quan hóa"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.nativeEvent?.stopImmediatePropagation?.();
+                  userSelectedTabRef.current = true;
+                  const nextTab = activeCanvasTab === 'linked-list' ? 'arrays-variables' : 'linked-list';
+                  setActiveCanvasTab(nextTab);
+                  const nextBtnId = nextTab === 'linked-list' ? 'canvas-tab-btn-linked-list' : 'canvas-tab-btn-arrays';
+                  setTimeout(() => {
+                    document.getElementById(nextBtnId)?.focus();
+                  }, 0);
+                }
+              }}
+            >
               <button
                 type="button"
+                role="tab"
+                id="canvas-tab-btn-linked-list"
+                aria-controls="canvas-tabpanel-linked-list"
+                aria-selected={activeCanvasTab === 'linked-list'}
+                tabIndex={activeCanvasTab === 'linked-list' ? 0 : -1}
                 data-testid="canvas-tab-linked-list"
                 onClick={() => {
                   userSelectedTabRef.current = true;
@@ -289,6 +339,11 @@ export const App: React.FC = () => {
               </button>
               <button
                 type="button"
+                role="tab"
+                id="canvas-tab-btn-arrays"
+                aria-controls="canvas-tabpanel-arrays"
+                aria-selected={activeCanvasTab === 'arrays-variables'}
+                tabIndex={activeCanvasTab === 'arrays-variables' ? 0 : -1}
                 data-testid="canvas-tab-arrays"
                 onClick={() => {
                   userSelectedTabRef.current = true;
@@ -318,26 +373,44 @@ export const App: React.FC = () => {
           </div>
 
           {/* Visualizer Canvas Body */}
-          <div className="flex-1 overflow-hidden relative">
-            {activeCanvasTab === 'linked-list' ? (
-              <LinkedListCanvas
-                nodes={currentStep?.dsa.nodes || []}
-                pointers={currentStep?.dsa.pointers || []}
-                listRoots={currentStep?.dsa.listRoots || []}
-                currentLine={currentStep?.line}
-              />
-            ) : (
-              <ArrayVariablesCanvas
-                stackToRender={currentStep?.stackToRender || []}
-                currentLine={currentStep?.line}
-                codeText={currentStep?.codeText}
-                isTraceStale={isTraceStale}
-                previousStackToRender={
-                  currentStepIndex > 0 ? trace[currentStepIndex - 1]?.stackToRender : undefined
-                }
-                event={currentStep?.event}
-              />
-            )}
+          <div className="flex-1 overflow-hidden relative min-h-0">
+            <div
+              id="canvas-tabpanel-linked-list"
+              role="tabpanel"
+              aria-labelledby="canvas-tab-btn-linked-list"
+              hidden={activeCanvasTab !== 'linked-list'}
+              className={`h-full w-full ${activeCanvasTab === 'linked-list' ? '' : 'hidden'}`}
+            >
+              {activeCanvasTab === 'linked-list' && (
+                <LinkedListCanvas
+                  nodes={currentStep?.dsa.nodes || []}
+                  pointers={currentStep?.dsa.pointers || []}
+                  listRoots={currentStep?.dsa.listRoots || []}
+                  currentLine={currentStep?.line}
+                />
+              )}
+            </div>
+            <div
+              id="canvas-tabpanel-arrays"
+              role="tabpanel"
+              aria-labelledby="canvas-tab-btn-arrays"
+              hidden={activeCanvasTab !== 'arrays-variables'}
+              className={`h-full w-full ${activeCanvasTab === 'arrays-variables' ? '' : 'hidden'}`}
+            >
+              {activeCanvasTab === 'arrays-variables' && (
+                <ArrayVariablesCanvas
+                  stackToRender={currentStep?.stackToRender || []}
+                  currentLine={currentStep?.line}
+                  codeText={currentStep?.codeText}
+                  isTraceStale={isTraceStale}
+                  previousStackToRender={
+                    currentStepIndex > 0 ? trace[currentStepIndex - 1]?.stackToRender : undefined
+                  }
+                  event={currentStep?.event}
+                  mode={mode}
+                />
+              )}
+            </div>
           </div>
 
           {/* Advanced Mode: Memory Inspector */}
@@ -349,21 +422,6 @@ export const App: React.FC = () => {
           )}
         </div>
       </div>
-
-      {/* Educational Tutor Banner */}
-      <EducationalBanner
-        explanation={
-          isTraceStale
-            ? '⚠️ Lưu ý: Mã nguồn đã bị thay đổi kể từ lần chạy cuối. Vết thực thi này thuộc về phiên bản mã trước đó. Bấm "Chạy mã C++" để phân tích mã mới.'
-            : currentStep?.dsa.vietnameseExplanation || ''
-        }
-        explanationDetail={isTraceStale ? undefined : currentStep?.dsa.explanationDetail}
-        advancedNotes={currentStep?.dsa.advancedNotes || ''}
-        mode={mode}
-        diff={currentStep?.dsa.diff}
-        codeText={currentStep?.codeText}
-        line={currentStep?.line}
-      />
 
       {/* Timeline Controls Bottom Bar */}
       <TimelineControls

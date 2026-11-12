@@ -12,7 +12,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   lint-and-unit-tests:
     name: Build, Full C++/GDB & Unit Tests (Linux/POSIX)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -57,7 +57,9 @@ jobs:
         run: node tests/educationalExplanationsTests.js
 
       - name: Install native Linux toolchain (g++ and GDB)
-        run: sudo apt-get update && sudo apt-get install -y g++ gdb
+        run: |
+          echo "nameserver 8.8.8.8" | sudo tee -a /etc/resolv.conf
+          sudo apt-get update && sudo apt-get install -y g++ gdb
 
       - name: Run full native C++/GDB and process-tree regression suite (Linux/POSIX)
         run: npm test
@@ -143,6 +145,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'arrays') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'recursion') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-1') | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-2') | Out-Null
 
       - name: Run linked-list Chrome browser smoke against native C++/GDB backend
         env:
@@ -163,6 +166,11 @@ jobs:
         env:
           FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/m2-1
         run: npm run test:browser:m2-1
+
+      - name: Run M2.2 Beginner Learning Experience Chrome browser acceptance against native C++/GDB backend
+        env:
+          FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/m2-2
+        run: npm run test:browser:m2-2
 
       - name: Preserve real browser logs and screenshots
         if: always()

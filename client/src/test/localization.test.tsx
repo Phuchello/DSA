@@ -55,7 +55,7 @@ describe('Vietnamese Localization Verification', () => {
       />
     );
 
-    expect(screen.getByText('Sư phạm IT003 (Tập sự)')).toBeTruthy();
+    expect(screen.getByText('Sư phạm IT003 (Dễ hiểu)')).toBeTruthy();
 
     rerender(
       <EducationalBanner

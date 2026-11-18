@@ -1,0 +1,760 @@
+[
+  {
+    "checkpointId": "CP-A1",
+    "step": 0,
+    "line": 23,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "int seq[6] = {2, 5, 5, 5, 8, 12};",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "seq": [
+        1119008,
+        0,
+        1116816,
+        1,
+        76,
+        0
+      ]
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int seq[6] = {2, 5, 5, 5, 8, 12};.",
+      "observed": "Bắt đầu chương trình — trạng thái bộ nhớ ban đầu trước khi thực thi.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-A2",
+    "step": 5,
+    "line": 8,
+    "funcName": "findFirstOccurrence",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "while (low <= high) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị đánh giá điều kiện lặp: while (low <= high) {.",
+      "observed": "Biến firstOccurrence được khởi tạo giá trị -1.",
+      "semantics": "Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này."
+    }
+  },
+  {
+    "checkpointId": "CP-A3",
+    "step": 6,
+    "line": 9,
+    "funcName": "findFirstOccurrence",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "int midPoint = low + (high - low) / 2;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int midPoint = low + (high - low) / 2;.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-A4",
+    "step": 7,
+    "line": 10,
+    "funcName": "findFirstOccurrence",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "if (seq[midPoint] == needle) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (seq[midPoint] == needle) {.",
+      "observed": "Biến midPoint được khởi tạo giá trị 2.",
+      "semantics": "Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Khi thiếu bằng chứng, không thể suy luận kết quả chỉ từ mã nguồn."
+    }
+  },
+  {
+    "checkpointId": "CP-A5",
+    "step": 9,
+    "line": 12,
+    "funcName": "findFirstOccurrence",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "high = midPoint - 1;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: high = midPoint - 1;.",
+      "observed": "Biến firstOccurrence thay đổi từ -1 thành 2.",
+      "semantics": "Lưu trữ giá trị tính toán trung gian phục vụ cho các bước xử lý tiếp theo."
+    }
+  },
+  {
+    "checkpointId": "CP-B1",
+    "step": 1,
+    "line": 6,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "int cumSum[6] = {0, 0, 0, 0, 0, 0};",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "cumSum": [
+        0,
+        0,
+        0,
+        1,
+        6291056,
+        0
+      ]
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int cumSum[6] = {0, 0, 0, 0, 0, 0};.",
+      "observed": "Phần tử mảng rawVals[0] được khởi tạo giá trị 3. Phần tử mảng rawVals[1] được khởi tạo giá trị 1. Phần tử mảng rawVals[2] được khởi tạo giá trị 4. Phần tử mảng rawVals[3] được khởi tạo giá trị 1. Phần tử mảng rawVals[4] được khởi tạo giá trị 5.",
+      "semantics": "Cập nhật trực tiếp dữ liệu trên các ô nhớ liên tiếp của mảng."
+    }
+  },
+  {
+    "checkpointId": "CP-B2",
+    "step": 3,
+    "line": 8,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "cumSum[i] = cumSum[i - 1] + rawVals[i - 1];",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "rawVals": [
+        3,
+        1,
+        4,
+        1,
+        5
+      ],
+      "cumSum": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: cumSum[i] = cumSum[i - 1] + rawVals[i - 1];.",
+      "observed": "Biến i được khởi tạo giá trị 1.",
+      "semantics": "Lưu trữ giá trị tính toán trung gian phục vụ cho các bước xử lý tiếp theo."
+    }
+  },
+  {
+    "checkpointId": "CP-B3",
+    "step": 2,
+    "line": 7,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "for (int i = 1; i <= 5; ++i) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "i": "?"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị đánh giá điều kiện lặp: for (int i = 1; i <= 5; ++i) {.",
+      "observed": "Phần tử mảng cumSum[0] được khởi tạo giá trị 0. Phần tử mảng cumSum[1] được khởi tạo giá trị 0. Phần tử mảng cumSum[2] được khởi tạo giá trị 0. Phần tử mảng cumSum[3] được khởi tạo giá trị 0. Phần tử mảng cumSum[4] được khởi tạo giá trị 0. Phần tử mảng cumSum[5] được khởi tạo giá trị 0.",
+      "semantics": "Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này."
+    }
+  },
+  {
+    "checkpointId": "CP-B4",
+    "step": 11,
+    "line": 8,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "cumSum[i] = cumSum[i - 1] + rawVals[i - 1];",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "cumSum": [
+        0,
+        3,
+        4,
+        8,
+        9,
+        0
+      ]
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: cumSum[i] = cumSum[i - 1] + rawVals[i - 1];.",
+      "observed": "Biến i được khởi tạo giá trị 5.",
+      "semantics": "Lưu trữ giá trị tính toán trung gian phục vụ cho các bước xử lý tiếp theo."
+    }
+  },
+  {
+    "checkpointId": "CP-B5",
+    "step": 14,
+    "line": 11,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "int singleSum = cumSum[3] - cumSum[2];",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "singleSum": "?"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int singleSum = cumSum[3] - cumSum[2];.",
+      "observed": "Biến fullSum được khởi tạo giá trị 14.",
+      "semantics": "Lưu trữ giá trị tính toán trung gian phục vụ cho các bước xử lý tiếp theo."
+    }
+  },
+  {
+    "checkpointId": "CP-C1",
+    "step": 1,
+    "line": 5,
+    "funcName": "gcdIterative",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "while (beta != 0) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị đánh giá điều kiện lặp: while (beta != 0) {.",
+      "observed": "Đã tạo khung ngăn xếp mới cho hàm gcdIterative() ở độ sâu 1.",
+      "semantics": "Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này."
+    }
+  },
+  {
+    "checkpointId": "CP-C2",
+    "step": 2,
+    "line": 6,
+    "funcName": "gcdIterative",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "int remainder = alpha % beta;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int remainder = alpha % beta;.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-C3",
+    "step": 16,
+    "line": 22,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "int resRec = gcdRecursive(54, 24);",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "resRec": "?"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int resRec = gcdRecursive(54, 24);.",
+      "observed": "Khung ngăn xếp của hàm gcdIterative() đã hoàn thành và được thu hồi (Pop). Biến resIter được khởi tạo giá trị 6.",
+      "semantics": "Hàm con hoàn thành tính toán, truyền giá trị trả về cho hàm gọi và giải phóng khung stack."
+    }
+  },
+  {
+    "checkpointId": "CP-C4",
+    "step": 21,
+    "line": 14,
+    "funcName": "gcdRecursive",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "if (v == 0) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (v == 0) {.",
+      "observed": "Đã tạo khung ngăn xếp mới cho hàm gcdRecursive() ở độ sâu 3.",
+      "semantics": "Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Khi thiếu bằng chứng, không thể suy luận kết quả chỉ từ mã nguồn."
+    }
+  },
+  {
+    "checkpointId": "CP-C5",
+    "step": 22,
+    "line": 15,
+    "funcName": "gcdRecursive",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "return u;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị kết thúc hàm và trả về giá trị: return u;.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Trả về giá trị tính toán và hoàn tất chu kỳ sống của khung hàm hiện tại."
+    }
+  },
+  {
+    "checkpointId": "CP-D1",
+    "step": 0,
+    "line": 6,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffd90",
+    "codeText": "vector<int> heights = {4, 5, 2, 10, 8};",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "n": "?"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị thực thi câu lệnh: \"vector<int> heights = {4, 5, 2, 10, 8};\".",
+      "observed": "Bắt đầu chương trình — trạng thái bộ nhớ ban đầu trước khi thực thi.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-D2",
+    "step": 4,
+    "line": 10,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffd90",
+    "codeText": "for (int i = 0; i < n; ++i) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "i": "?"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị đánh giá điều kiện lặp: for (int i = 0; i < n; ++i) {.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này."
+    }
+  },
+  {
+    "checkpointId": "CP-D3",
+    "step": 5,
+    "line": 11,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffd90",
+    "codeText": "while (!stk.empty() && heights[stk.back()] < heights[i]) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "i": 0
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị đánh giá điều kiện lặp: while (!stk.empty() && heights[stk.back()] < heights[i]) {.",
+      "observed": "Biến i được khởi tạo giá trị 0.",
+      "semantics": "Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này."
+    }
+  },
+  {
+    "checkpointId": "CP-D4",
+    "step": 9,
+    "line": 12,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffd90",
+    "codeText": "nge[stk.back()] = heights[i];",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "i": 1
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: nge[stk.back()] = heights[i];.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-D5",
+    "step": 6,
+    "line": 15,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffd90",
+    "codeText": "stk.push_back(i);",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "i": 0
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị thực thi câu lệnh: \"stk.push_back(i);\".",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-E1",
+    "step": 1,
+    "line": 33,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "mergeSort(data, 0, 3);",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "data": [
+        38,
+        27,
+        43,
+        3
+      ]
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị gọi thực thi hàm: mergeSort(data, 0, 3);.",
+      "observed": "Phần tử mảng data[0] được khởi tạo giá trị 38. Phần tử mảng data[1] được khởi tạo giá trị 27. Phần tử mảng data[2] được khởi tạo giá trị 43. Phần tử mảng data[3] được khởi tạo giá trị 3.",
+      "semantics": "Cập nhật trực tiếp dữ liệu trên các ô nhớ liên tiếp của mảng."
+    }
+  },
+  {
+    "checkpointId": "CP-E2",
+    "step": 2,
+    "line": 24,
+    "funcName": "mergeSort",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "if (left >= right) return;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (left >= right) return;.",
+      "observed": "Đã tạo khung ngăn xếp mới cho hàm mergeSort() ở độ sâu 1.",
+      "semantics": "Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Khi thiếu bằng chứng, không thể suy luận kết quả chỉ từ mã nguồn."
+    }
+  },
+  {
+    "checkpointId": "CP-E3",
+    "step": 3,
+    "line": 25,
+    "funcName": "mergeSort",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "int mid = left + (right - left) / 2;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int mid = left + (right - left) / 2;.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-E4",
+    "step": 13,
+    "line": 28,
+    "funcName": "mergeSort",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "merge(arr, left, mid, right);",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị gọi thực thi hàm: merge(arr, left, mid, right);.",
+      "observed": "Khung ngăn xếp của hàm mergeSort() đã hoàn thành và được thu hồi (Pop).",
+      "semantics": "Hàm con hoàn thành tính toán, truyền giá trị trả về cho hàm gọi và giải phóng khung stack."
+    }
+  },
+  {
+    "checkpointId": "CP-E5",
+    "step": 61,
+    "line": 14,
+    "funcName": "merge",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "arr[k++] = L[i++];",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: arr[k++] = L[i++];.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-F1",
+    "step": 0,
+    "line": 16,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "BinNode* leftChild = new BinNode{5, nullptr, nullptr};",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "leftChild": "?"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị thực thi câu lệnh: \"BinNode* leftChild = new BinNode{5, nullptr, nullptr};\".",
+      "observed": "Bắt đầu chương trình — trạng thái bộ nhớ ban đầu trước khi thực thi.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-F2",
+    "step": 3,
+    "line": 20,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "int total = sumKeys(root);",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "root": "0x7c0480",
+      "total": "?"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int total = sumKeys(root);.",
+      "observed": "Con trỏ root đổi hướng sang 0x7c0480.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-F3",
+    "step": 4,
+    "line": 11,
+    "funcName": "sumKeys",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "if (cur == nullptr) return 0;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
+      "observed": "Đã tạo khung ngăn xếp mới cho hàm sumKeys() ở độ sâu 1.",
+      "semantics": "Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Khi thiếu bằng chứng, không thể suy luận kết quả chỉ từ mã nguồn."
+    }
+  },
+  {
+    "checkpointId": "CP-F4",
+    "step": 8,
+    "line": 11,
+    "funcName": "sumKeys",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "if (cur == nullptr) return 0;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
+      "observed": "Đã tạo khung ngăn xếp mới cho hàm sumKeys() ở độ sâu 3.",
+      "semantics": "Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Khi thiếu bằng chứng, không thể suy luận kết quả chỉ từ mã nguồn."
+    }
+  },
+  {
+    "checkpointId": "CP-F5",
+    "step": 24,
+    "line": 25,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe30",
+    "codeText": "delete root;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "root": "0x7c0480"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x7c0480.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Sắp thực hiện lệnh delete để giải phóng vùng nhớ. Ở trạng thái trước câu lệnh này, chưa thể kết luận bộ nhớ đã được giải phóng."
+    }
+  },
+  {
+    "checkpointId": "CP-G1",
+    "step": 2,
+    "line": 7,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "int dp[6] = {0, 99, 99, 99, 99, 99};",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "target": 5,
+      "dp": [
+        0,
+        0,
+        0,
+        1,
+        6291056,
+        0
+      ]
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int dp[6] = {0, 99, 99, 99, 99, 99};.",
+      "observed": "Phần tử mảng coins[0] được khởi tạo giá trị 1. Phần tử mảng coins[1] được khởi tạo giá trị 2. Phần tử mảng coins[2] được khởi tạo giá trị 3.",
+      "semantics": "Cập nhật trực tiếp dữ liệu trên các ô nhớ liên tiếp của mảng."
+    }
+  },
+  {
+    "checkpointId": "CP-G2",
+    "step": 3,
+    "line": 9,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "for (int amt = 1; amt <= target; ++amt) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "amt": "?",
+      "target": 5
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị đánh giá điều kiện lặp: for (int amt = 1; amt <= target; ++amt) {.",
+      "observed": "Phần tử mảng dp[0] được khởi tạo giá trị 0. Phần tử mảng dp[1] được khởi tạo giá trị 99. Phần tử mảng dp[2] được khởi tạo giá trị 99. Phần tử mảng dp[3] được khởi tạo giá trị 99. Phần tử mảng dp[4] được khởi tạo giá trị 99. Phần tử mảng dp[5] được khởi tạo giá trị 99.",
+      "semantics": "Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này."
+    }
+  },
+  {
+    "checkpointId": "CP-G3",
+    "step": 6,
+    "line": 12,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "if (amt - coinVal >= 0 && dp[amt - coinVal] + 1 < dp[amt]) {",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "coinVal": 1,
+      "amt": 1
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (amt - coinVal >= 0 && dp[amt - coinVal] + 1 < dp[amt]) {.",
+      "observed": "Biến coinVal được khởi tạo giá trị 1.",
+      "semantics": "Kiểm tra điều kiện rẽ nhánh phức hợp. Kết quả rẽ nhánh phụ thuộc vào toàn bộ biểu thức điều kiện tại thời điểm thực thi — không suy đoán kết quả khi chưa có bằng chứng quan sát."
+    }
+  },
+  {
+    "checkpointId": "CP-G4",
+    "step": 7,
+    "line": 13,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "dp[amt] = dp[amt - coinVal] + 1;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "coinVal": 1,
+      "amt": 1,
+      "dp": [
+        0,
+        99,
+        99,
+        99,
+        99,
+        99
+      ]
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: dp[amt] = dp[amt - coinVal] + 1;.",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-G5",
+    "step": 67,
+    "line": 18,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe10",
+    "codeText": "cout << dp[target] << endl;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "target": 5,
+      "dp": [
+        0,
+        1,
+        1,
+        1,
+        2,
+        2
+      ]
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị thực thi câu lệnh: \"cout << dp[target] << endl;\".",
+      "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-H1",
+    "step": 0,
+    "line": 17,
+    "funcName": "main",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "int val = 5;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "val": "?"
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int val = 5;.",
+      "observed": "Bắt đầu chương trình — trạng thái bộ nhớ ban đầu trước khi thực thi.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-H2",
+    "step": 2,
+    "line": 11,
+    "funcName": "processOuter",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "int* ptr = &val;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "val": 5
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị thực thi câu lệnh: \"int* ptr = &val;\".",
+      "observed": "Đã tạo khung ngăn xếp mới cho hàm processOuter() ở độ sâu 1.",
+      "semantics": "Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này."
+    }
+  },
+  {
+    "checkpointId": "CP-H3",
+    "step": 3,
+    "line": 12,
+    "funcName": "processOuter",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "int res = computeInner(ptr);",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {},
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int res = computeInner(ptr);.",
+      "observed": "Con trỏ ptr đổi hướng sang 0x5ffe40.",
+      "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
+    }
+  },
+  {
+    "checkpointId": "CP-H4",
+    "step": 4,
+    "line": 5,
+    "funcName": "computeInner",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "int val = *targetPtr * 2;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "val": 5
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị khai báo và khởi tạo: int val = *targetPtr * 2;.",
+      "observed": "Đã tạo khung ngăn xếp mới cho hàm computeInner() ở độ sâu 2.",
+      "semantics": "Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này."
+    }
+  },
+  {
+    "checkpointId": "CP-H5",
+    "step": 5,
+    "line": 6,
+    "funcName": "computeInner",
+    "frameDepth": 0,
+    "frameId": "0x5ffe40",
+    "codeText": "*targetPtr = val + 1;",
+    "snapshotConvention": "before-statement",
+    "relevantVariables": {
+      "val": 5
+    },
+    "explanation": {
+      "upcoming": "Chuẩn bị thực thi câu lệnh: \"*targetPtr = val + 1;\".",
+      "observed": "Biến val được khởi tạo giá trị 10.",
+      "semantics": "Lưu trữ giá trị tính toán trung gian phục vụ cho các bước xử lý tiếp theo."
+    }
+  }
+]

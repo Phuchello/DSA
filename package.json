@@ -16,7 +16,9 @@
     "test:browser:recursion": "node tests/browserSmokeRecursion.js",
     "test:browser:m2-1": "node tests/browserSmokeM2_1.js",
     "test:browser:m2-2": "node tests/browserSmokeM2_2.js",
-    "test:browser:m2-3": "node tests/browserSmokeM2_3.js"
+    "test:browser:m2-3": "node tests/browserSmokeM2_3.js",
+    "test:eval": "node tests/runEvaluationM2_3.js",
+    "test:eval:corruption": "node tests/evaluatorCorruptionTests.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

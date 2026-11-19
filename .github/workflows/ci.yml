@@ -146,6 +146,44 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'recursion') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-1') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-2') | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-3') | Out-Null
+          $m23EvalDir = Join-Path $env:RUNNER_TEMP 'flowlab-m2-3-eval'
+          New-Item -ItemType Directory -Force -Path $m23EvalDir | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "FLOWLAB_M2_3_EVAL_ARTIFACT_DIR=$m23EvalDir"
+
+      - name: Run M2.3 evaluation benchmark (10 fixtures, 40 checkpoints)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $logFile = Join-Path $env:FLOWLAB_M2_3_EVAL_ARTIFACT_DIR 'test-eval.log'
+          npm run test:eval 2>&1 | Tee-Object -FilePath $logFile
+          $evalExit = $LASTEXITCODE
+          if (Test-Path 'docs/eval_results') {
+            Copy-Item -Path 'docs/eval_results/*' -Destination $env:FLOWLAB_M2_3_EVAL_ARTIFACT_DIR -Force -ErrorAction SilentlyContinue
+          }
+          if ($evalExit -ne 0) {
+            exit $evalExit
+          }
+          $r = Get-Content 'docs/eval_results/m2_3_evaluation_results.json' -Raw | ConvertFrom-Json
+          $s = $r.rubricSummary
+          $sum = [int]$s.CORRECT + [int]$s.GENERIC + [int]$s.UNSUPPORTED + [int]$s.PARTIAL + [int]$s.WRONG + [int]$s.UNKNOWN
+          if ($r.fixturesCount -ne 10 -or $r.registeredCheckpointsCount -ne 40 -or $s.TOTAL -ne 40 -or $sum -ne 40) {
+            throw "Inconsistent M2.3 evaluation totals: fixtures=$($r.fixturesCount), registered=$($r.registeredCheckpointsCount), total=$($s.TOTAL), sum=$sum"
+          }
+          if (-not $r.negativeControls.N1_step_limit.verified -or -not $r.negativeControls.N2_compile_error.verified) {
+            throw "Mandatory negative control verification failed: N1=$($r.negativeControls.N1_step_limit.verified), N2=$($r.negativeControls.N2_compile_error.verified)"
+          }
+          Write-Host "Verified M2.3 evaluation totals: CORRECT=$($s.CORRECT), GENERIC=$($s.GENERIC), UNSUPPORTED=$($s.UNSUPPORTED), PARTIAL=$($s.PARTIAL), WRONG=$($s.WRONG), UNKNOWN=$($s.UNKNOWN), TOTAL=$($s.TOTAL)"
+
+      - name: Run M2.3 adversarial evaluator corruption tests (11 checks)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $logFile = Join-Path $env:FLOWLAB_M2_3_EVAL_ARTIFACT_DIR 'test-eval-corruption.log'
+          npm run test:eval:corruption 2>&1 | Tee-Object -FilePath $logFile
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Run linked-list Chrome browser smoke against native C++/GDB backend
         env:
@@ -172,6 +210,18 @@ jobs:
           FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/m2-2
         run: npm run test:browser:m2-2
 
+      - name: Run M2.3 Generalization & Educational Accuracy Chrome browser acceptance against native C++/GDB backend
+        shell: pwsh
+        env:
+          FLOWLAB_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/m2-3
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $logFile = Join-Path $env:FLOWLAB_M2_3_EVAL_ARTIFACT_DIR 'test-browser-m2-3.log'
+          npm run test:browser:m2-3 2>&1 | Tee-Object -FilePath $logFile
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Preserve real browser logs and screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -179,4 +229,15 @@ jobs:
           name: browser-smoke-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/flowlab-browser-smoke/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Preserve M2.3 evaluation results, logs, and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m2-3-evaluation-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/flowlab-m2-3-eval/
+            ${{ runner.temp }}/flowlab-browser-smoke/m2-3/
+          if-no-files-found: warn
           retention-days: 14

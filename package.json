@@ -17,6 +17,8 @@
     "test:browser:m2-1": "node tests/browserSmokeM2_1.js",
     "test:browser:m2-2": "node tests/browserSmokeM2_2.js",
     "test:browser:m2-3": "node tests/browserSmokeM2_3.js",
+    "test:browser:m2-4": "node tests/browserSmokeM2_4.js",
+    "test:m2-4": "node tests/m24ControlFlowTests.js && node tests/m24AcceptanceTests.js",
     "test:eval": "node tests/runEvaluationM2_3.js",
     "test:eval:corruption": "node tests/evaluatorCorruptionTests.js"
   },

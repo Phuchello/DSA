@@ -1086,6 +1086,247 @@ export function normalizeTrace(rawTrace: any[]): NormalizedExecutionPoint[] {
   return normalized;
 }
 
+const VERIFIED_INTEGER_TYPES = new Set([
+  'int', 'short', 'short int', 'signed int',
+  'long', 'long int', 'long long', 'long long int',
+  'unsigned int', 'unsigned', 'unsigned short', 'unsigned short int',
+  'unsigned long', 'unsigned long int', 'unsigned long long', 'unsigned long long int',
+  'int8_t', 'uint8_t', 'int16_t', 'uint16_t', 'int32_t', 'uint32_t', 'int64_t', 'uint64_t',
+  'size_t', 'ssize_t', 'ptrdiff_t',
+]);
+
+const UNSIGNED_INTEGER_TYPES = new Set([
+  'unsigned int', 'unsigned', 'unsigned short', 'unsigned short int',
+  'unsigned long', 'unsigned long int', 'unsigned long long', 'unsigned long long int',
+  'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t', 'size_t',
+]);
+
+const RESERVED_CPP_TOKENS = new Set([
+  'true', 'false', 'nullptr', 'NULL', 'sizeof', 'alignof',
+  'and', 'or', 'not', 'xor', 'bitand', 'bitor', 'compl',
+]);
+
+interface ExtractedControlStatement {
+  kind: 'if' | 'while' | 'for';
+  condition: string;
+  afterCondition: string;
+  evaluable: boolean;
+}
+
+interface ConditionEvalResult {
+  result: boolean;
+  operandsSummary: string;
+  comparisonText: string;
+  evalKind: 'int' | 'bool';
+}
+
+/** Extract paren-delimited control condition and determine whether M2.4 can safely inspect it. */
+function extractControlStatement(trimmed: string): ExtractedControlStatement | null {
+  const match = trimmed.match(/^(?:(?:\}\s*)?else\s+if|if|while|for)\s*\(/);
+  if (!match) return null;
+
+  const head = match[0];
+  const kind: 'if' | 'while' | 'for' = head.includes('while')
+    ? 'while'
+    : (head.startsWith('for') ? 'for' : 'if');
+
+  let parenDepth = 1;
+  const startIdx = head.length;
+  let closeIdx = -1;
+  for (let i = startIdx; i < trimmed.length; i++) {
+    if (trimmed[i] === '(') parenDepth++;
+    else if (trimmed[i] === ')') {
+      parenDepth--;
+      if (parenDepth === 0) {
+        closeIdx = i;
+        break;
+      }
+    }
+  }
+  if (closeIdx === -1) return null;
+
+  const rawInner = trimmed.slice(startIdx, closeIdx).trim();
+  const afterCondition = trimmed.slice(closeIdx + 1).trim();
+
+  if (kind !== 'for') {
+    return { kind, condition: rawInner, afterCondition, evaluable: rawInner.length > 0 };
+  }
+
+  // Split for(init; cond; incr) on top-level semicolons only.
+  // Refuse to evaluate whenever init or incr is non-empty so uninitialized
+  // declarations (e.g. `int i = 0`) and pending increments (`++i`) stay safe.
+  const clauses: string[] = [];
+  let depth = 0;
+  let clauseStart = 0;
+  for (let i = 0; i < rawInner.length; i++) {
+    const ch = rawInner[i];
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    else if (ch === ';' && depth === 0) {
+      clauses.push(rawInner.slice(clauseStart, i).trim());
+      clauseStart = i + 1;
+    }
+  }
+  clauses.push(rawInner.slice(clauseStart).trim());
+
+  if (clauses.length !== 3 || clauses[0] !== '' || clauses[2] !== '' || clauses[1] === '') {
+    return { kind: 'for', condition: rawInner, afterCondition, evaluable: false };
+  }
+
+  return { kind: 'for', condition: clauses[1], afterCondition, evaluable: true };
+}
+
+function resolveActiveFrame(stackFrames?: any[]): any | null {
+  if (!stackFrames || stackFrames.length === 0) return null;
+  return stackFrames.find(f => f && f.isHighlighted) || stackFrames[stackFrames.length - 1];
+}
+
+function resolveIntegerOperand(
+  token: string,
+  locals: Record<string, any>
+): { value: number; summaryPair?: string; isUnsigned: boolean; isVar: boolean } | null {
+  if (/^-?(?:0|[1-9]\d*)$/.test(token)) {
+    const num = Number(token);
+    if (!Number.isSafeInteger(num)) return null;
+    return { value: num, isUnsigned: false, isVar: false };
+  }
+
+  if (!/^[a-zA-Z_]\w*$/.test(token) || RESERVED_CPP_TOKENS.has(token)) return null;
+  const entry = locals[token];
+  if (!Array.isArray(entry) || entry[0] !== 'C_DATA' || entry.length < 4) return null;
+
+  const rawType = String(entry[2] || '').replace(/\bconst\b/g, '').trim().replace(/\s+/g, ' ');
+  if (!VERIFIED_INTEGER_TYPES.has(rawType)) return null;
+
+  const rawVal = entry[3];
+  if (rawVal === '?' || rawVal === null || rawVal === undefined || rawVal === 'uninitialized') {
+    return null;
+  }
+
+  let parsedNum: number;
+  if (typeof rawVal === 'number') {
+    parsedNum = rawVal;
+  } else if (typeof rawVal === 'string' && /^-?(?:0|[1-9]\d*)$/.test(rawVal.trim())) {
+    parsedNum = Number(rawVal.trim());
+  } else {
+    return null;
+  }
+
+  if (!Number.isSafeInteger(parsedNum)) return null;
+  return {
+    value: parsedNum,
+    summaryPair: `${token} = ${parsedNum}`,
+    isUnsigned: UNSIGNED_INTEGER_TYPES.has(rawType),
+    isVar: true,
+  };
+}
+
+function resolveBooleanVariable(
+  token: string,
+  locals: Record<string, any>
+): { value: boolean; summaryPair: string } | null {
+  if (!/^[a-zA-Z_]\w*$/.test(token) || RESERVED_CPP_TOKENS.has(token)) return null;
+  const entry = locals[token];
+  if (!Array.isArray(entry) || entry[0] !== 'C_DATA' || entry.length < 4) return null;
+
+  const rawType = String(entry[2] || '').replace(/\bconst\b/g, '').trim().replace(/\s+/g, ' ');
+  if (rawType !== 'bool') return null;
+
+  const rawVal = entry[3];
+  if (typeof rawVal !== 'boolean') return null;
+  return { value: rawVal, summaryPair: `${token} = ${rawVal}` };
+}
+
+/**
+ * Conservatively evaluate simple scalar/bool C++ control conditions against
+ * ONLY the active stack frame's verified native locals. Returns null for any
+ * compound, dereferencing, call, array, uninitialized, or type-ambiguous input.
+ */
+function evaluateControlCondition(condition: string, activeFrame: any | null): ConditionEvalResult | null {
+  if (!condition || !activeFrame) return null;
+  const locals = activeFrame.encodedLocals || {};
+
+  // Reject compound boolean operators, calls/parens, array subscripts, member access,
+  // pointer dereference/address-of, arithmetic, bitwise ops, shifts, ternary, and mutators.
+  if (/[()\[\].+\/%^~&|,?:]|->|\+\+|--/.test(condition)) {
+    return null;
+  }
+
+  const boolUnaryMatch = condition.match(/^(!\s*)?([a-zA-Z_]\w*)$/);
+  if (boolUnaryMatch) {
+    const negated = Boolean(boolUnaryMatch[1]);
+    const varName = boolUnaryMatch[2];
+    const resolved = resolveBooleanVariable(varName, locals);
+    if (!resolved) return null;
+    const result = negated ? !resolved.value : resolved.value;
+    return {
+      result,
+      operandsSummary: resolved.summaryPair,
+      comparisonText: negated ? `!${varName} (!${resolved.value})` : `${varName} (${resolved.value})`,
+      evalKind: 'bool',
+    };
+  }
+
+  const cmpMatch = condition.match(
+    /^([a-zA-Z_]\w*|-?(?:0|[1-9]\d*))\s*(==|!=|<=|>=|<|>)\s*([a-zA-Z_]\w*|-?(?:0|[1-9]\d*))$/
+  );
+  if (!cmpMatch) return null;
+
+  const [, lhsTok, op, rhsTok] = cmpMatch;
+
+  // Simple bool comparison: flag == true / flag != false / true == flag
+  if ((op === '==' || op === '!=') &&
+      ((lhsTok === 'true' || lhsTok === 'false') || (rhsTok === 'true' || rhsTok === 'false'))) {
+    const lhsIsLit = lhsTok === 'true' || lhsTok === 'false';
+    const rhsIsLit = rhsTok === 'true' || rhsTok === 'false';
+    if (lhsIsLit === rhsIsLit) return null; // Refuse constant-only comparison or non-bool pair
+
+    const varTok = lhsIsLit ? rhsTok : lhsTok;
+    const litVal = (lhsIsLit ? lhsTok : rhsTok) === 'true';
+    const resolved = resolveBooleanVariable(varTok, locals);
+    if (!resolved) return null;
+
+    const result = op === '==' ? resolved.value === litVal : resolved.value !== litVal;
+    const lhsDesc = lhsIsLit ? String(litVal) : String(resolved.value);
+    const rhsDesc = rhsIsLit ? String(litVal) : String(resolved.value);
+    return {
+      result,
+      operandsSummary: resolved.summaryPair,
+      comparisonText: `${lhsDesc} ${op} ${rhsDesc}`,
+      evalKind: 'bool',
+    };
+  }
+
+  // Binary integer comparison: require at least one variable operand
+  const lhs = resolveIntegerOperand(lhsTok, locals);
+  const rhs = resolveIntegerOperand(rhsTok, locals);
+  if (!lhs || !rhs || (!lhs.isVar && !rhs.isVar)) return null;
+
+  // Guard against C++ signed/unsigned usual-arithmetic conversion wraparound
+  if ((lhs.isUnsigned || rhs.isUnsigned) && (lhs.value < 0 || rhs.value < 0)) {
+    return null;
+  }
+
+  let result: boolean;
+  switch (op) {
+    case '==': result = lhs.value === rhs.value; break;
+    case '!=': result = lhs.value !== rhs.value; break;
+    case '<':  result = lhs.value < rhs.value; break;
+    case '<=': result = lhs.value <= rhs.value; break;
+    case '>':  result = lhs.value > rhs.value; break;
+    case '>=': result = lhs.value >= rhs.value; break;
+    default: return null;
+  }
+
+  const pairs = [lhs.summaryPair, rhs.summaryPair].filter((p): p is string => Boolean(p));
+  return {
+    result,
+    operandsSummary: pairs.join(', '),
+    comparisonText: `${lhs.value} ${op} ${rhs.value}`,
+    evalKind: 'int',
+  };
+}
+
 /**
  * Task C: Generates a 3-facet educational explanation:
  * 1. "Sắp thực hiện" (upcoming): What statement N will attempt prospectively.
@@ -1139,7 +1380,7 @@ export function generateVietnameseExplanation(
     } else {
       upcoming = `Chuẩn bị đánh giá điều kiện lặp: ${trimmed}.`;
     }
-  } else if (/^if\s*\(/.test(trimmed) || /^else\s+if\s*\(/.test(trimmed)) {
+  } else if (/^(?:(?:\}\s*)?else\s+if|if)\s*\(/.test(trimmed)) {
     upcoming = `Chuẩn bị kiểm tra điều kiện rẽ nhánh: ${trimmed}.`;
   } else if (/^return\b/.test(trimmed)) {
     upcoming = `Chuẩn bị kết thúc hàm và trả về giá trị: ${trimmed}.`;
@@ -1214,105 +1455,86 @@ export function generateVietnameseExplanation(
   // Facet 3: "Ý nghĩa" (semantics) — Algorithmic & pedagogical context
   // ---------------------------------------------------------------------------
   // Evaluate conditional / branch statements accurately and conservatively
-  const extractIfCondition = (str: string): { condition: string; afterCondition: string } | null => {
-    const prefixMatch = str.match(/^(?:if|else\s+if)\s*\(/);
-    if (!prefixMatch) return null;
-    let parenDepth = 1;
-    const startIdx = prefixMatch[0].length;
-    for (let j = startIdx; j < str.length; j++) {
-      if (str[j] === '(') parenDepth++;
-      else if (str[j] === ')') {
-        parenDepth--;
-        if (parenDepth === 0) {
-          return {
-            condition: str.slice(startIdx, j).trim(),
-            afterCondition: str.slice(j + 1).trim(),
-          };
-        }
-      }
-    }
-    return null;
-  };
-
-  const parsedIf = extractIfCondition(trimmed);
+  const parsedControl = extractControlStatement(trimmed);
+  const parsedIf = parsedControl && parsedControl.kind === 'if' ? parsedControl : null;
+  const activeFrame = resolveActiveFrame(stackFrames);
   let branchEvaluation: 'true_with_return' | 'true_without_return' | 'false' | 'compound' | 'unknown' = 'unknown';
   let isPotentialBaseCaseCandidate = false;
+  let evaluatedIfCond: ConditionEvalResult | null = null;
+  let evaluatedLoopCond: ConditionEvalResult | null = null;
 
-  if (parsedIf) {
-    const { condition, afterCondition } = parsedIf;
-    const hasTerminatingReturn = /\breturn\b/.test(afterCondition);
+  if (parsedControl) {
+    const { kind, condition, afterCondition, evaluable } = parsedControl;
     const isCompound = condition.includes('&&') || condition.includes('||');
 
-    // A return statement alone is not evidence of recursion. Keep generic
-    // guard clauses neutral, and reserve "potential base case" for familiar
-    // simple termination predicates; never claim an outcome from syntax alone.
-    isPotentialBaseCaseCandidate = Boolean(
-      hasTerminatingReturn && (
-        (/\bn\b/.test(condition) && /\b(0|1)\b/.test(condition)) ||
-        (/\b(node|p|root|curr|head)\b/.test(condition) && /\b(nullptr|NULL|0)\b/.test(condition))
-      )
-    );
+    if (kind === 'if') {
+      const hasTerminatingReturn = /\breturn\b/.test(afterCondition);
 
-    if (isCompound) {
-      branchEvaluation = 'compound';
-    } else {
-      const activeFrame = stackFrames && stackFrames.length > 0 ? stackFrames[stackFrames.length - 1] : null;
-      const locals = activeFrame?.encodedLocals || {};
+      // A return statement alone is not evidence of recursion. Keep generic
+      // guard clauses neutral, and reserve "potential base case" for familiar
+      // simple termination predicates; never claim an outcome from syntax alone.
+      isPotentialBaseCaseCandidate = Boolean(
+        hasTerminatingReturn && (
+          (/\bn\b/.test(condition) && /\b(0|1)\b/.test(condition)) ||
+          (/\b(node|p|root|curr|head)\b/.test(condition) && /\b(nullptr|NULL|0)\b/.test(condition))
+        )
+      );
 
-      // Check numeric parameter `n`
-      if (/\bn\b/.test(condition) && locals.n && Array.isArray(locals.n)) {
-        const nVal = locals.n[3];
-        if (typeof nVal === 'number') {
-          let condTrue: boolean | null = null;
-          if (/\bn\s*==\s*0\b/.test(condition) || /\b0\s*==\s*n\b/.test(condition)) {
-            condTrue = (nVal === 0);
-          } else if (/\bn\s*<\s*1\b/.test(condition) || /\b1\s*>\s*n\b/.test(condition)) {
-            condTrue = (nVal < 1);
-          } else if (/\bn\s*<=\s*1\b/.test(condition) || /\b1\s*>=\s*n\b/.test(condition)) {
-            condTrue = (nVal <= 1);
-          } else if (/\bn\s*<=\s*0\b/.test(condition)) {
-            condTrue = (nVal <= 0);
-          } else if (/\bn\s*==\s*1\b/.test(condition) || /\b1\s*==\s*n\b/.test(condition)) {
-            condTrue = (nVal === 1);
-          }
-
-          if (condTrue === true) {
-            branchEvaluation = hasTerminatingReturn ? 'true_with_return' : 'true_without_return';
-          } else if (condTrue === false) {
-            branchEvaluation = 'false';
+      if (isCompound) {
+        branchEvaluation = 'compound';
+      } else {
+        if (evaluable) {
+          evaluatedIfCond = evaluateControlCondition(condition, activeFrame);
+          if (evaluatedIfCond !== null) {
+            if (evaluatedIfCond.result) {
+              branchEvaluation = hasTerminatingReturn ? 'true_with_return' : 'true_without_return';
+            } else {
+              branchEvaluation = 'false';
+            }
           }
         }
-      }
 
-      // Check pointer nullity
-      if (branchEvaluation === 'unknown' && /\b(node|p|root|curr|head)\b/.test(condition)) {
-        const ptrMatch = condition.match(/\b(node|p|root|curr|head)\b/);
-        const pName = ptrMatch ? ptrMatch[1] : '';
-        const pLocal = locals[pName];
-        let ptrVal = Array.isArray(pLocal) ? pLocal[3] : undefined;
-        if (ptrVal === undefined) {
-          const foundPtr = pointers.find(p => p.name === pName);
-          ptrVal = foundPtr?.targetAddress;
-        }
+        // Preserve existing M2.2/M2.3 pointer nullity checks scoped strictly to the active frame
+        if (branchEvaluation === 'unknown' && /\b(node|p|root|curr|head)\b/.test(condition)) {
+          const locals = activeFrame?.encodedLocals || {};
+          const ptrMatch = condition.match(/\b(node|p|root|curr|head)\b/);
+          const pName = ptrMatch ? ptrMatch[1] : '';
+          const pLocal = locals[pName];
+          let ptrVal = Array.isArray(pLocal) ? pLocal[3] : undefined;
+          if (ptrVal === undefined) {
+            const activeFrameId = activeFrame?.frameId;
+            const foundPtr = activeFrameId
+              ? pointers.find(p => p.name === pName && (!p.frameId || p.frameId === activeFrameId))
+              : pointers.find(p => p.name === pName);
+            ptrVal = foundPtr?.targetAddress;
+          }
 
-        const isPointerNullCheck = (
-          new RegExp(`\\b${pName}\\s*==\\s*(nullptr|NULL|0)\\b`).test(condition) ||
-          new RegExp(`!\\s*${pName}\\b`).test(condition)
-        );
+          const isPointerNullCheck = (
+            new RegExp(`\\b${pName}\\s*==\\s*(nullptr|NULL|0)\\b`).test(condition) ||
+            new RegExp(`!\\s*${pName}\\b`).test(condition)
+          );
 
-        if (isPointerNullCheck && ptrVal !== undefined && ptrVal !== '?') {
-          const isNull = (ptrVal === '0x0' || ptrVal === 'nullptr' || ptrVal === null || ptrVal === 0 || ptrVal === '');
-          if (isNull) {
-            branchEvaluation = hasTerminatingReturn ? 'true_with_return' : 'true_without_return';
-          } else {
-            branchEvaluation = 'false';
+          if (isPointerNullCheck && ptrVal !== undefined && ptrVal !== '?') {
+            const isNull = (ptrVal === '0x0' || ptrVal === 'nullptr' || ptrVal === null || ptrVal === 0 || ptrVal === '');
+            if (isNull) {
+              branchEvaluation = hasTerminatingReturn ? 'true_with_return' : 'true_without_return';
+            } else {
+              branchEvaluation = 'false';
+            }
           }
         }
       }
+    } else if (evaluable && !isCompound) {
+      // Conservative scalar/bool evaluation for `while (...)` and empty-init/incr `for (; ...; )`
+      evaluatedLoopCond = evaluateControlCondition(condition, activeFrame);
     }
   }
 
   let semantics = '';
+  const ifEvidenceClause = evaluatedIfCond
+    ? `trạng thái hiện tại: ${evaluatedIfCond.operandsSummary}; phép kiểm tra ${evaluatedIfCond.comparisonText}`
+    : '';
+
   if (trimmed.startsWith('delete ')) {
     semantics = 'Sắp thực hiện lệnh delete để giải phóng vùng nhớ. Ở trạng thái trước câu lệnh này, chưa thể kết luận bộ nhớ đã được giải phóng.';
   } else if (diff.freedNodes.length > 0) {
@@ -1321,17 +1543,37 @@ export function generateVietnameseExplanation(
     semantics = 'Toán tử new cấp phát sizeof(NODE) bytes trên Heap và trả về con trỏ địa chỉ ô nhớ.';
   } else if (parsedIf) {
     if (branchEvaluation === 'true_with_return') {
-      semantics = 'Điều kiện dừng (base case) thỏa mãn — chuẩn bị thực hiện lệnh return để bắt đầu quá trình quay lui (backtracking).';
+      const evid = ifEvidenceClause ? ` (${ifEvidenceClause} -> Đúng (true))` : '';
+      if (isPotentialBaseCaseCandidate) {
+        semantics = `Điều kiện dừng (base case) thỏa mãn${evid} — điều kiện đúng; chương trình dự kiến đi vào nhánh tương ứng, chuẩn bị thực hiện lệnh return (lệnh return chưa thực thi ở thời điểm trước câu lệnh).`;
+      } else {
+        semantics = `Điều kiện rẽ nhánh thỏa mãn${evid} — điều kiện đúng; chương trình dự kiến đi vào nhánh tương ứng chứa lệnh return (chưa thực thi lệnh return ở thời điểm trước câu lệnh).`;
+      }
     } else if (branchEvaluation === 'true_without_return') {
-      semantics = 'Điều kiện rẽ nhánh thỏa mãn. Khối lệnh bên trong chuẩn bị được thực thi (chưa kết thúc đệ quy do không chứa lệnh return kết thúc hàm).';
+      const evid = ifEvidenceClause ? ` (${ifEvidenceClause} -> Đúng (true))` : '';
+      semantics = `Điều kiện rẽ nhánh thỏa mãn${evid} — điều kiện đúng; chương trình dự kiến đi vào nhánh tương ứng (các câu lệnh bên trong thân nhánh chưa thực thi ở thời điểm trước câu lệnh).`;
     } else if (branchEvaluation === 'false') {
-      semantics = 'Điều kiện dừng chưa được đáp ứng (giá trị hiện tại không khớp điều kiện) — chương trình chuẩn bị tiếp tục nhánh đệ quy tiếp theo.';
+      if (isPotentialBaseCaseCandidate) {
+        const evid = evaluatedIfCond ? `: ${ifEvidenceClause} -> Sai (false)` : '';
+        semantics = `Điều kiện dừng chưa được đáp ứng (giá trị hiện tại không khớp điều kiện${evid}) — điều kiện sai; chương trình dự kiến bỏ qua nhánh dừng và tiếp tục nhánh đệ quy tiếp theo.`;
+      } else {
+        const evid = ifEvidenceClause
+          ? ` (${ifEvidenceClause} -> Sai (false))`
+          : ' (giá trị hiện tại không khớp điều kiện)';
+        semantics = `Điều kiện rẽ nhánh chưa được đáp ứng${evid} — điều kiện sai; chương trình dự kiến bỏ qua khối lệnh bên trong nhánh này.`;
+      }
     } else if (branchEvaluation === 'compound') {
       semantics = 'Kiểm tra điều kiện rẽ nhánh phức hợp. Kết quả rẽ nhánh phụ thuộc vào toàn bộ biểu thức điều kiện tại thời điểm thực thi — không suy đoán kết quả khi chưa có bằng chứng quan sát.';
     } else if (isPotentialBaseCaseCandidate) {
       semantics = 'Kiểm tra điều kiện dừng tiềm năng (potential base case). Kết quả rẽ nhánh phụ thuộc vào giá trị biến tại thời điểm thực thi — không thể suy luận chỉ từ mã nguồn.';
     } else {
       semantics = 'Chuẩn bị kiểm tra điều kiện rẽ nhánh (if) để quyết định luồng thực thi tiếp theo. Khi thiếu bằng chứng, không thể suy luận kết quả chỉ từ mã nguồn.';
+    }
+  } else if (evaluatedLoopCond) {
+    if (evaluatedLoopCond.result) {
+      semantics = `Ngữ nghĩa trước câu lệnh: Với trạng thái hiện tại (${evaluatedLoopCond.operandsSummary}), phép kiểm tra ${evaluatedLoopCond.comparisonText} cho kết quả Đúng (true) — điều kiện lặp đúng; chương trình dự kiến đi vào thân vòng lặp.`;
+    } else {
+      semantics = `Ngữ nghĩa trước câu lệnh: Với trạng thái hiện tại (${evaluatedLoopCond.operandsSummary}), phép kiểm tra ${evaluatedLoopCond.comparisonText} cho kết quả Sai (false) — điều kiện lặp sai; chương trình dự kiến thoát khỏi vòng lặp và bỏ qua thân lặp.`;
     }
   } else if (diff.frameTransition?.type === 'push') {
     semantics = 'Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này.';
@@ -1422,6 +1664,9 @@ export function generateVietnameseExplanation(
     if (isPointerTraversalLoop && pPtr) {
       explanation = `Kiểm tra điều kiện lặp: ${trimmed}. Con trỏ duyệt p đang ở địa chỉ ${pPtr.targetAddress || 'nullptr'}.`;
       advanced = `Vong lap ket thuc khi p la nullptr, dia chi khong con trong nodeMap, hoac phat hien chu ky. Viec duyet an toan phu thuoc vao nhieu dieu kien, khong chi rieng p != nullptr.`;
+    } else if (evaluatedLoopCond) {
+      explanation = `Chuẩn bị đánh giá điều kiện lặp: ${trimmed}. ${semantics}`;
+      advanced = `Hàm: ${funcName}, Dòng: ${line}. ${semantics}`;
     } else {
       explanation = `Chuẩn bị đánh giá điều kiện lặp: ${trimmed}.`;
       advanced = `Ngữ nghĩa trước câu lệnh: Biểu thức lặp chuẩn bị được đánh giá. Giá trị các biến phản ánh trạng thái trước bước lặp này.`;

@@ -117,63 +117,65 @@ A second independent integrity audit identified three additional confirmed defec
 No changes to the production engine were required.
 
 ### Defect 1 — Source-Text Echo Accepted as CORRECT Evidence (CP-D4, CP-C5, CP-F4)
-
-**Root Cause:** Three checkpoints were graded CORRECT solely because the upcoming field contained the expected
-source statement text. The evaluator did not independently verify that the trace diff confirmed the state transition.
-
-- **CP-D4** (
-ge[stk.back()] = heights[i]): STL ector<int> nge writes are not tracked as C-array element diffs
-  by the normalizer. The upcoming text matched, but no rrayUpdates diff for 
-ge existed in the trace. Source-text
-  echo is not proof of a CORRECT pedagogical explanation.
-- **CP-C5** (eturn u): GDB normalizer does not emit a scalar diff for a return value being propagated to the caller.
-  The diff for esRec = 6 appears in a later step (after frame unwind), not on the return step itself.
-- **CP-F4** (if (cur == nullptr) return 0): Same issue — no diff evidence on the return step itself.
-
-**Fix Applied:** Each checkpoint now requires an explicit diff assertion (e.g. 
-extStep.dsa.diff.arrayUpdates.some(...),
-
-extStep.dsa.diff.scalarUpdates.some(...)). If the diff is absent, the verdict is demoted to GENERIC.
-The source statement text (upcoming) alone is never sufficient for CORRECT.
-
-**Verdict Impact:**
-- CP-D4: CORRECT -> GENERIC
-- CP-C5: CORRECT -> GENERIC
-- CP-F4: CORRECT -> GENERIC
-- Net change: **CORRECT 25 -> 22**, **GENERIC 14 -> 17**, **Pedagogical Specificity 62.5% -> 55.0%**
+- **CP-D4** (`nge[stk.back()] = heights[i]`): STL `vector<int> nge` writes are not tracked as C-array element diffs by the normalizer. The `upcoming` text matched, but no `arrayUpdates` diff for `nge` existed in the trace. Source-text echo is not proof of a CORRECT pedagogical explanation.
+- **CP-C5** (`return u`): GDB normalizer does not emit a scalar diff for a return value being propagated to the caller. The diff for `resRec = 6` appears in a later step (after frame unwind), not on the return step itself.
+- **CP-F4** (`if (cur == nullptr) return 0`): Same issue — no diff evidence on the return step itself.
+- **Fix Applied:** Each checkpoint requires an explicit diff assertion (`nextStep.dsa.diff.arrayUpdates` or `nextStep.dsa.diff.scalarUpdates`). If diff is absent, verdict is demoted to `GENERIC`.
+- **Verdict Impact:** CORRECT 25 -> 22, GENERIC 14 -> 17, Specificity 62.5% -> 55.0%.
 
 ### Defect 2 — Wrong Active Frame Exported by extractTraceExcerpt() (CP-H4, CP-H5, CP-C4)
+- **Root Cause:** `extractTraceExcerpt()` always used `stackToRender[0]` (main) instead of the deepest active frame.
+- **Fix Applied:** Added `selectActiveFrame(step)` matching `step.funcName`.
+- **Verdict Impact:** `trace_excerpts.json` accurately reflects variables in the active frame for all 40 checkpoints.
 
-**Root Cause:** extractTraceExcerpt() always used stackToRender[0] to export the "active frame" data.
-stackToRender is ordered shallowest -> deepest, so index [0] is always main. When the active step is in a
-nested function (e.g. computeInner at depth 2), the exported variables were from main, not the actual executing frame.
-This caused CP-H4, CP-H5, and CP-C4 to export incorrect variable sets in 	race_excerpts.json.
+### Defect 3 — Corruption Suite Hardening (Tests A–E)
+- Added 5 adversarial corruption tests covering fabricated semantics, completed-action timing, frame attribution, false old/new values, and missing source lines.
 
-**Fix Applied:** Added selectActiveFrame(step) helper that uses
-stackToRender.slice().reverse().find(f => f.funcName === step.funcName) to locate the deepest frame matching the
-current step's function name. extractTraceExcerpt() now exports variables from this correctly identified active frame,
-with caller-frame values exported separately when needed.
+---
 
-**Verdict Impact:** No checkpoint verdict changed (the fix improves exported evidence quality, not grading logic).
-	race_excerpts.json now accurately reflects the variables in the active frame for all 40 checkpoints.
+## 6. Evaluator Truthfulness & Provenance Hardening (Final Grader Truthfulness Fix)
 
-### Defect 3 — Corruption Test Suite Missing 5 Adversarial Cases (Tests A–E)
+A third adversarial review identified three independently reproducible counterexamples in the evaluation harness:
+1. **CP-D4 Counterexample:** Fabricated observed mutation `nge[0]: 900 -> -5555` plus completed-action semantics remained graded `GENERIC`.
+2. **CP-H4 Counterexample:** A `val = 10` diff incorrectly attributed to `main` instead of `computeInner` remained `CORRECT`.
+3. **CP-A5 Counterexample:** A corrupted high-value mutation `5 -> 99` was classified `PARTIAL` rather than `WRONG`.
 
-**Root Cause:** The original corruption suite (Tests 1–5) covered value corruption, frame identity collision, inverted
-timing, missing checkpoints, and wrong source lines. It did not cover:
-- Completed-action language injected into before-statement semantics text (fabricated UX).
-- Wrong-frame attribution in diff (caller/callee identity swap).
-- False old/new pairs on real trace mutations.
-- Missing source line from trace (checkpoint cannot be located).
+All three defects were in the evaluation grader (`tests/runEvaluationM2_3.js`), with zero defects in the FlowLab production engine.
 
-**Fix Applied:** Added 5 new adversarial corruption tests (A–E) to 	ests/evaluatorCorruptionTests.js:
-- **Test A:** đã được cập nhật in semantics on before-statement step -> must be WRONG.
-- **Test B:** đã được cập nhật xong in semantics on before-statement step -> must be WRONG.
-- **Test C:** Correct value attributed to wrong frame (CP-H4 caller/callee swap). Documents known limitation:
-  the evaluator checks value presence but not owning frame identity in diff. Passes with ⚠️ documented limitation.
-- **Test D:** Real mutation with false old/new pair -> must be PARTIAL (not CORRECT).
-- **Test E:** Checkpoint source line removed from trace -> must be UNKNOWN.
+### Fix A — One Shared Truthfulness Guard (`validateExplanationFidelity`)
+- **Universal Application:** Integrated `validateExplanationFidelity(step)` directly into `makeResult()`, ensuring every candidate verdict (`CORRECT`, `GENERIC`, `PARTIAL`, `UNSUPPORTED`) is verified for factual and timing consistency before finalizing.
+- **Truthful Generic Allowed:** A statement explaining standard language-level control flow remains `GENERIC`.
+- **Contradictions Rejected:** Any statement containing fabricated mutations or timing contradictions is converted to `WRONG`, even if the source line description is generic.
+- **Legitimate Past-Tense Preserved:** In the `observed` facet, legitimate past-tense phrasing (describing the state transition from snapshot $N-1$ to $N$) is permitted and verified against `step.dsa.diff`.
 
-Mandatory failures (Tests A, B, D, E) cause non-zero process exit if any mandatory check passes without detection.
+#### Explicitly Checked Claim Patterns:
+1. **Timing Consistency (`semantics` & `upcoming`):** Completed-action keywords on before-statement snapshots (`đã thực hiện xong`, `đã được cập nhật`, `đã cập nhật xong`, `đã hoàn thành`, `đã gán xong`, `đã tính toán xong`, `đã thay đổi xong`, `đã được gán`, `đã kết thúc`, `đã giải phóng xong`, `đã cấp phát xong`, `already completed`, `has been updated`).
+2. **Observed Scalar Mutations:** `Biến [frame::]var thay đổi từ fromVal thành toVal`, `Biến [frame::]var được khởi tạo giá trị toVal`, and colon/arrow notation (`var: fromVal -> toVal`), strictly verified against `step.dsa.diff.scalarUpdates` (name, values, frame provenance).
+3. **Observed Array Mutations:** `Phần tử mảng [frame::]arr[idx] thay đổi từ fromVal thành toVal`, `Phần tử mảng [frame::]arr[idx] được khởi tạo giá trị toVal`, and colon/arrow notation (`arr[idx]: fromVal -> toVal`), strictly verified against `step.dsa.diff.arrayUpdates` (array name, element index, values, frame provenance).
+4. **Observed Heap Allocations & Deallocations:** `Đã cấp phát khối nhớ mới trên Heap tại addr` and `Đã giải phóng khối nhớ Heap tại addr`, strictly verified against `diff.allocatedNodes` and `diff.freedNodes`.
+5. **Observed Stack Frame Transitions:** `Đã tạo khung ngăn xếp mới cho hàm func() ở độ sâu depth` and `Khung ngăn xếp của hàm func() đã hoàn thành và được thu hồi`, strictly verified against `diff.frameTransition`.
+6. **Observed Diff Emptiness:** Claims of `Không có thay đổi biến nào trong bộ nhớ ở bước trước` strictly verified against diff emptiness (flagged if diff contains scalar or array updates).
 
-**Corruption Suite Total:** 10/10 PASS (5 original + 5 new).
+#### Explicitly Unchecked Language Patterns (by design):
+- High-level conceptual descriptions of algorithms (e.g. general prose stating "áp dụng chia để trị", "duyệt ngăn xếp đơn điệu").
+- Mathematical induction formulas or loop invariant proofs in unstructured natural language.
+- Stylistic prose variations, punctuation nuances, or formatting that do not assert concrete memory state transitions.
+
+### Fix B — Frame Provenance and False Value Hardening
+- **CP-H4:** Requires `u.frameName === 'computeInner'` and `u.to === 10`. If `val` is attributed to `main` or has an incorrect value, returns `WRONG`.
+- **CP-H5:** Verifies pointer mutation belongs to caller frame `processOuter` (`u.frameName === 'processOuter'`, `from === 5 && to === 11`), and explicitly asserts that `main`'s `val` was NOT mutated.
+- **CP-A5:** If a mutation for `high` is present but value contradicts `5 -> 1` (e.g. `5 -> 99`), classifies `WRONG` (demonstrated false value). Reserves `PARTIAL` strictly for cases where no diff evidence is present.
+
+### Fix C — Corruption Suite Hardening (11/11 PASS)
+- **Test C (Wrong Frame):** Updated to strictly require `corruptedResult.verdict === 'WRONG'`. Passes with confirmed `WRONG` detection (frame provenance mismatch). Zero warnings or soft passes.
+- **Test D (False Old/New Value):** Updated to strictly require `corruptedResult.verdict === 'WRONG'`. Passes with confirmed `WRONG` detection (demonstrated false value `5 -> 99`).
+- **Test F (CP-D4 Fabricated Observed & Completed Semantics):** Added new adversarial test falsifying `observed` (`nge[0]: 900 -> -5555`) and `semantics` on a generic statement while retaining valid upcoming source line. Strictly requires `WRONG`. Passes with confirmed `WRONG` detection.
+- **Exit Code:** Suite fails with non-zero exit code if any mandatory corruption is missed. All 11/11 tests PASS with exit code 0.
+
+### Final Verification Results
+- **Evaluator Corruption Suite:** 11/11 PASS (exit 0)
+- **M2.3 Evaluation Runner:** 40/40 PASS (22 CORRECT, 17 GENERIC, 1 UNSUPPORTED, 0 PARTIAL, 0 WRONG, 0 UNKNOWN) (exit 0)
+- **Root Regression Suite:** 155/155 PASS (exit 0)
+- **Client Vitest Suite:** 67/67 PASS (exit 0)
+- **M2.3 Browser Acceptance Suite:** 5/5 Scenarios + Multi-viewport responsive PASS (exit 0)
+- **Protected Workspace:** `C:\Users\lyle3\OneDrive\Documents\Môn học\DSA\Web` remains UNTOUCHED.

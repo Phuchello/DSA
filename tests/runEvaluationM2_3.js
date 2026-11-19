@@ -153,36 +153,253 @@ function extractTraceExcerpt(step, cpId, relevantVarNames = []) {
 }
 
 /**
- * Check that an explanation's observed/semantics facets do not contain fabricated
- * claims that are inconsistent with trusted state data.
- *
- * Returns an array of violation strings (empty = no inconsistency detected).
- *
- * This is a narrow structural check, NOT a general NLU model:
- * - If observed claims a specific variable mutation (pattern: "từ X thành Y" or "X → Y"),
- *   verify that at least one diff entry confirms it. If no diff matches, flag it.
- * - If semantics claims an action completed ("đã thực hiện", "đã hoàn thành") while the
- *   snapshot is before-statement, flag it as a timing violation.
- *
- * Checkpoints classified GENERIC are exempt — we only run this for CORRECT candidates.
+ * ONE SHARED TRUTHFULNESS GUARD
+ * 
+ * Validates factual consistency across upcoming, observed, and semantics facets
+ * against trusted state diffs before finalizing any checkpoint verdict.
+ * 
+ * In before-statement convention (step N):
+ * - upcoming: prospective intent of line to be executed at step N.
+ * - observed: state delta from step N-1 to step N, recorded in step.dsa.diff.
+ * - semantics: pedagogical/algorithmic meaning of the upcoming statement.
+ * 
+ * Explicitly Checked Patterns:
+ * 1. Semantics/Upcoming Timing: completed-action keywords on before-statement snapshots
+ *    ("đã thực hiện xong", "đã được cập nhật", "đã cập nhật xong", "đã hoàn thành",
+ *     "đã gán xong", "đã tính toán xong", "đã thay đổi xong", "đã được gán",
+ *     "đã kết thúc", "đã giải phóng xong", "đã cấp phát xong", "already completed", "has been updated").
+ * 2. Observed Scalar Mutations:
+ *    - "Biến [frame::]var thay đổi từ fromVal thành toVal"
+ *    - "Biến [frame::]var được khởi tạo giá trị toVal"
+ *    - "var: fromVal -> toVal" or "var: fromVal → toVal"
+ * 3. Observed Array Mutations:
+ *    - "Phần tử mảng [frame::]arr[idx] thay đổi từ fromVal thành toVal"
+ *    - "Phần tử mảng [frame::]arr[idx] được khởi tạo giá trị toVal"
+ *    - "arr[idx]: fromVal -> toVal" or "arr[idx]: fromVal → toVal"
+ * 4. Observed Heap Allocations / Deallocations:
+ *    - "Đã cấp phát khối nhớ mới trên Heap tại addr" -> verified against diff.allocatedNodes
+ *    - "Đã giải phóng khối nhớ Heap tại addr" -> verified against diff.freedNodes
+ * 5. Observed Stack Frame Transitions:
+ *    - "Đã tạo khung ngăn xếp mới cho hàm func() ở độ sâu depth" -> verified against diff.frameTransition (push)
+ *    - "Khung ngăn xếp của hàm func() đã hoàn thành và được thu hồi" -> verified against diff.frameTransition (pop)
+ * 6. Observed Diff Emptiness:
+ *    - Claims of "Không có thay đổi biến nào trong bộ nhớ ở bước trước" verified against diff emptiness.
+ * 
+ * Explicitly Unchecked Patterns (by design — no natural language understanding model):
+ * - High-level conceptual descriptions of algorithms (e.g. "áp dụng chia để trị", "duyệt ngăn xếp đơn điệu").
+ * - Mathematical proofs or loop invariant formulations in unstructured Vietnamese prose.
+ * - Free-form prose style or wording nuances that do not assert concrete state mutations.
  */
-function checkFacetConsistency(step, nextStep) {
+function validateExplanationFidelity(step) {
   const violations = [];
   if (!step || !step.dsa || !step.dsa.explanationDetail) return violations;
 
-  const { observed, semantics } = step.dsa.explanationDetail;
+  const { upcoming, observed, semantics } = step.dsa.explanationDetail;
+  const diff = step.dsa.diff || {
+    scalarUpdates: [],
+    arrayUpdates: [],
+    allocatedNodes: [],
+    freedNodes: [],
+    frameTransition: { type: 'none' },
+    pointerReroutes: [],
+  };
 
-  // 1. Timing consistency: before-statement step must NOT claim that actions already completed.
-  if (step.snapshotConvention === 'before-statement') {
-    const completedKeywords = ['đã thực hiện xong', 'đã được cập nhật', 'đã hoàn thành', 'đã gán xong'];
+  const isBeforeStatement = (step.snapshotConvention || 'before-statement') === 'before-statement';
+
+  // -------------------------------------------------------------------------
+  // 1. Timing consistency in semantics & upcoming
+  // -------------------------------------------------------------------------
+  if (isBeforeStatement) {
+    const completedKeywords = [
+      'đã thực hiện xong',
+      'đã được cập nhật',
+      'đã cập nhật xong',
+      'đã hoàn thành',
+      'đã gán xong',
+      'đã tính toán xong',
+      'đã thay đổi xong',
+      'đã được gán',
+      'đã kết thúc',
+      'đã giải phóng xong',
+      'đã cấp phát xong',
+      'already completed',
+      'already updated',
+      'has been updated',
+    ];
+
     for (const kw of completedKeywords) {
       if (semantics && semantics.toLowerCase().includes(kw)) {
-        violations.push(`semantics claims completed action on before-statement step: "${kw}"`);
+        violations.push(`Semantics claims completed action on before-statement step: "${kw}"`);
+      }
+      if (upcoming && upcoming.toLowerCase().includes(kw)) {
+        violations.push(`Upcoming claims completed action on before-statement step: "${kw}"`);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 2. Concrete mutation claims in observed vs step.dsa.diff
+  // -------------------------------------------------------------------------
+  if (observed && typeof observed === 'string') {
+    // 2a. Array element mutation (Vietnamese normalizer format):
+    // e.g. "Phần tử mảng cumSum[1] thay đổi từ 0 thành 3."
+    // e.g. "Phần tử mảng nge[0] thay đổi từ 900 thành -5555."
+    const arrMutRegex = /(?:Phần tử mảng\s+)?(?:(\w+)::)?(\w+)\[(\d+)\]\s+thay đổi từ\s+([^\s]+)\s+thành\s+([^\s\.,;]+)/gi;
+    let m;
+    while ((m = arrMutRegex.exec(observed)) !== null) {
+      const [, frameName, arrName, idxStr, fromVal, toVal] = m;
+      const idx = parseInt(idxStr, 10);
+      const match = (diff.arrayUpdates || []).some(u => {
+        const nameMatch = u.arrayName === arrName;
+        const idxMatch = u.index === idx;
+        const toMatch = String(u.to) === String(toVal);
+        const fromMatch = (fromVal === '?' || String(u.from) === String(fromVal));
+        const frameMatch = !frameName || u.frameName === frameName;
+        return nameMatch && idxMatch && toMatch && fromMatch && frameMatch;
+      });
+      if (!match) {
+        violations.push(`Observed claims array mutation ${arrName}[${idx}] (${fromVal} -> ${toVal})${frameName ? ' in ' + frameName : ''} not confirmed by step diff`);
+      }
+    }
+
+    // 2b. Array element initialization (Vietnamese normalizer format):
+    // e.g. "Phần tử mảng cumSum[0] được khởi tạo giá trị 0."
+    const arrInitRegex = /(?:Phần tử mảng\s+)?(?:(\w+)::)?(\w+)\[(\d+)\]\s+được khởi tạo giá trị\s+([^\s\.,;]+)/gi;
+    while ((m = arrInitRegex.exec(observed)) !== null) {
+      const [, frameName, arrName, idxStr, toVal] = m;
+      const idx = parseInt(idxStr, 10);
+      const match = (diff.arrayUpdates || []).some(u => {
+        const nameMatch = u.arrayName === arrName;
+        const idxMatch = u.index === idx;
+        const toMatch = String(u.to) === String(toVal);
+        const frameMatch = !frameName || u.frameName === frameName;
+        return nameMatch && idxMatch && toMatch && frameMatch;
+      });
+      if (!match) {
+        violations.push(`Observed claims array init ${arrName}[${idx}] = ${toVal}${frameName ? ' in ' + frameName : ''} not confirmed by step diff`);
+      }
+    }
+
+    // 2c. Colon/Arrow notation (adversarial injection, e.g. "nge[0]: 900 -> -5555" or "high: 5 -> 1")
+    const arrowRegex = /(?:(\w+)::)?(\w+)(?:\[(\d+)\])?\s*:\s*([^\s]+)\s*(?:->|→)\s*([^\s\.,;]+)/g;
+    while ((m = arrowRegex.exec(observed)) !== null) {
+      const [, frameName, varName, idxStr, fromVal, toVal] = m;
+      if (idxStr !== undefined) {
+        const idx = parseInt(idxStr, 10);
+        const match = (diff.arrayUpdates || []).some(u => {
+          const nameMatch = u.arrayName === varName;
+          const idxMatch = u.index === idx;
+          const toMatch = String(u.to) === String(toVal);
+          const fromMatch = (fromVal === '?' || String(u.from) === String(fromVal));
+          const frameMatch = !frameName || u.frameName === frameName;
+          return nameMatch && idxMatch && toMatch && fromMatch && frameMatch;
+        });
+        if (!match) {
+          violations.push(`Observed claims array mutation ${varName}[${idx}] (${fromVal} -> ${toVal}) not confirmed by step diff`);
+        }
+      } else {
+        const match = (diff.scalarUpdates || []).some(u => {
+          const nameMatch = u.name === varName;
+          const toMatch = String(u.to) === String(toVal);
+          const fromMatch = (fromVal === '?' || String(u.from) === String(fromVal));
+          const frameMatch = !frameName || u.frameName === frameName;
+          return nameMatch && toMatch && fromMatch && frameMatch;
+        });
+        if (!match) {
+          violations.push(`Observed claims scalar mutation ${varName} (${fromVal} -> ${toVal}) not confirmed by step diff`);
+        }
+      }
+    }
+
+    // 2d. Scalar mutation (Vietnamese normalizer format):
+    // e.g. "Biến high thay đổi từ 5 thành 1."
+    const scalarMutRegex = /Biến\s+(?:(\w+)::)?(\w+)\s+thay đổi từ\s+([^\s]+)\s+thành\s+([^\s\.,;]+)/gi;
+    while ((m = scalarMutRegex.exec(observed)) !== null) {
+      const [, frameName, varName, fromVal, toVal] = m;
+      const match = (diff.scalarUpdates || []).some(u => {
+        const nameMatch = u.name === varName;
+        const toMatch = String(u.to) === String(toVal);
+        const fromMatch = (fromVal === '?' || String(u.from) === String(fromVal));
+        const frameMatch = !frameName || u.frameName === frameName;
+        return nameMatch && toMatch && fromMatch && frameMatch;
+      });
+      if (!match) {
+        violations.push(`Observed claims scalar mutation ${varName} (${fromVal} -> ${toVal})${frameName ? ' in ' + frameName : ''} not confirmed by step diff`);
+      }
+    }
+
+    // 2e. Scalar initialization (Vietnamese normalizer format):
+    // e.g. "Biến val được khởi tạo giá trị 5."
+    const scalarInitRegex = /Biến\s+(?:(\w+)::)?(\w+)\s+được khởi tạo giá trị\s+([^\s\.,;]+)/gi;
+    while ((m = scalarInitRegex.exec(observed)) !== null) {
+      const [, frameName, varName, toVal] = m;
+      const match = (diff.scalarUpdates || []).some(u => {
+        const nameMatch = u.name === varName;
+        const toMatch = String(u.to) === String(toVal);
+        const frameMatch = !frameName || u.frameName === frameName;
+        return nameMatch && toMatch && frameMatch;
+      });
+      if (!match) {
+        violations.push(`Observed claims scalar init ${varName} = ${toVal}${frameName ? ' in ' + frameName : ''} not confirmed by step diff`);
+      }
+    }
+
+    // 2f. Heap allocation verification
+    const heapAllocRegex = /Đã cấp phát khối nhớ mới trên Heap tại\s+([0-9a-fxA-FX]+)/gi;
+    while ((m = heapAllocRegex.exec(observed)) !== null) {
+      const addr = m[1].toLowerCase();
+      const match = (diff.allocatedNodes || []).some(a => String(a).toLowerCase() === addr);
+      if (!match) {
+        violations.push(`Observed claims heap allocation at ${m[1]} not found in diff.allocatedNodes`);
+      }
+    }
+
+    // 2g. Heap deallocation verification
+    const heapFreeRegex = /Đã giải phóng khối nhớ Heap tại\s+([0-9a-fxA-FX]+)/gi;
+    while ((m = heapFreeRegex.exec(observed)) !== null) {
+      const addr = m[1].toLowerCase();
+      const match = (diff.freedNodes || []).some(a => String(a).toLowerCase() === addr);
+      if (!match) {
+        violations.push(`Observed claims heap deallocation at ${m[1]} not found in diff.freedNodes`);
+      }
+    }
+
+    // 2h. Stack frame push verification
+    const framePushRegex = /Đã tạo khung ngăn xếp mới cho hàm\s+(\w+)\(\)\s+ở độ sâu\s+(\d+)/gi;
+    while ((m = framePushRegex.exec(observed)) !== null) {
+      const [, fn] = m;
+      const ft = diff.frameTransition || { type: 'none' };
+      if (ft.type !== 'push' || ft.funcName !== fn) {
+        violations.push(`Observed claims frame push for ${fn}(), but diff.frameTransition is ${JSON.stringify(ft)}`);
+      }
+    }
+
+    // 2i. Stack frame pop verification
+    const framePopRegex = /Khung ngăn xếp của hàm\s+(\w+)\(\)\s+đã hoàn thành và được thu hồi/gi;
+    while ((m = framePopRegex.exec(observed)) !== null) {
+      const fn = m[1];
+      const ft = diff.frameTransition || { type: 'none' };
+      if (ft.type !== 'pop' || ft.funcName !== fn) {
+        violations.push(`Observed claims frame pop for ${fn}(), but diff.frameTransition is ${JSON.stringify(ft)}`);
+      }
+    }
+
+    // 2j. Diff emptiness verification
+    if (observed.includes('Không có thay đổi biến nào trong bộ nhớ ở bước trước')) {
+      const hasScalars = diff.scalarUpdates && diff.scalarUpdates.length > 0;
+      const hasArrays = diff.arrayUpdates && diff.arrayUpdates.length > 0;
+      if (hasScalars || hasArrays) {
+        violations.push('Observed claims no variable changes, but diff contains updates');
       }
     }
   }
 
   return violations;
+}
+
+// Backward-compatibility alias
+function checkFacetConsistency(step) {
+  return validateExplanationFidelity(step);
 }
 
 async function runEvaluation() {
@@ -448,11 +665,15 @@ function gradeCheckpoint(cpDef, trace, sourceCode) {
       const step = trace.find(s => s.funcName === targetFunc && s.line === targetLine && s.codeText.includes('high = midPoint - 1;'));
       if (!step) return makeUnknownResult(cpDef, 'Cannot find high adjustment step');
       const nextStep = trace[step.step + 1];
-      const highUpdated = nextStep && nextStep.dsa.diff.scalarUpdates.some(u => u.name === 'high' && u.from === 5 && u.to === 1);
-      if (highUpdated) {
-        return makeResult(cpDef, step, 'CORRECT', 'high boundary shifted from 5 to 1 observed in subsequent step diff', ['high', 'midPoint']);
+      const highUpdate = nextStep && nextStep.dsa.diff.scalarUpdates.find(u => u.name === 'high');
+      if (highUpdate) {
+        if (highUpdate.from === 5 && highUpdate.to === 1) {
+          return makeResult(cpDef, step, 'CORRECT', 'high boundary shifted from 5 to 1 observed in subsequent step diff', ['high', 'midPoint']);
+        }
+        // Mutation is present but contradicts expected value (5 -> 1)
+        return makeWrongResult(cpDef, step, `Demonstrated false value for high: expected 5 -> 1, observed ${highUpdate.from} -> ${highUpdate.to}`);
       }
-      return makeResult(cpDef, step, 'PARTIAL', 'high boundary adjustment without confirmed value transition', ['high']);
+      return makeResult(cpDef, step, 'PARTIAL', 'high boundary adjustment without confirmed value transition (no high update in diff)', ['high']);
     }
 
     // -----------------------------------------------------------------------
@@ -873,11 +1094,21 @@ function gradeCheckpoint(cpDef, trace, sourceCode) {
       const step = trace.find(s => s.funcName === targetFunc && s.line === targetLine && s.codeText.includes('int val = *targetPtr * 2;'));
       if (!step) return makeUnknownResult(cpDef, 'Cannot find shadowed val declaration in computeInner');
       const nextStep = trace[step.step + 1];
-      const val10InInner = nextStep && nextStep.dsa.diff.scalarUpdates.some(u => u.name === 'val' && u.to === 10);
+      const valUpdates = (nextStep && nextStep.dsa.diff.scalarUpdates || []).filter(u => u.name === 'val');
+      if (valUpdates.length === 0) {
+        return makeResult(cpDef, step, 'PARTIAL', 'computeInner local val without confirmed 10 scalar diff', ['val']);
+      }
+      // Check frame provenance: must belong to computeInner, NOT main or processOuter
+      const wrongFrameUpdate = valUpdates.find(u => u.frameName !== 'computeInner');
+      if (wrongFrameUpdate) {
+        return makeWrongResult(cpDef, step, `val update attributed to wrong frame: "${wrongFrameUpdate.frameName}" instead of computeInner`);
+      }
+      const val10InInner = valUpdates.find(u => u.frameName === 'computeInner' && u.to === 10);
       if (val10InInner) {
         return makeResult(cpDef, step, 'CORRECT', 'Shadowed local val in computeInner frame (depth 2) initialized to 10 without corrupting caller val', ['val', 'targetPtr']);
       }
-      return makeResult(cpDef, step, 'PARTIAL', 'computeInner local val without confirmed 10 scalar diff', ['val']);
+      const badVal = valUpdates.find(u => u.frameName === 'computeInner');
+      return makeWrongResult(cpDef, step, `Demonstrated false value for computeInner val: expected 10, got ${badVal ? badVal.to : 'unknown'}`);
     }
 
     case 'CP-H5': {
@@ -885,12 +1116,27 @@ function gradeCheckpoint(cpDef, trace, sourceCode) {
       const step = trace.find(s => s.funcName === targetFunc && s.line === targetLine && s.codeText.includes('*targetPtr = val + 1;'));
       if (!step) return makeUnknownResult(cpDef, 'Cannot find pointer indirection mutation in computeInner');
       const nextStep = trace[step.step + 1];
-      const outerValMutated = nextStep && nextStep.dsa.diff.scalarUpdates.some(u => u.name === 'val' && u.from === 5 && u.to === 11);
-      const isBefore = step.snapshotConvention === 'before-statement';
-      if (isBefore && outerValMutated) {
-        return makeResult(cpDef, step, 'CORRECT', 'Pointer dereference *targetPtr = 11 correctly mutated caller processOuter val (5 -> 11) while leaving main val (5) intact', ['val', 'targetPtr']);
+      const valUpdates = (nextStep && nextStep.dsa.diff.scalarUpdates || []).filter(u => u.name === 'val');
+      if (valUpdates.length === 0) {
+        return makeResult(cpDef, step, 'PARTIAL', 'Pointer store step without confirmed caller mutation', ['val']);
       }
-      return makeResult(cpDef, step, 'PARTIAL', 'Pointer store step without confirmed caller mutation', ['val']);
+      // Verify that pointer mutation belongs to caller frame processOuter, NOT main
+      const mainMut = valUpdates.find(u => u.frameName === 'main');
+      if (mainMut) {
+        return makeWrongResult(cpDef, step, 'Pointer mutation incorrectly mutated main frame val instead of caller processOuter');
+      }
+      const outerMut = valUpdates.find(u => u.frameName === 'processOuter');
+      if (!outerMut) {
+        return makeWrongResult(cpDef, step, `Pointer mutation not attributed to caller processOuter frame (found frame: "${valUpdates[0].frameName}")`);
+      }
+      if (outerMut.to !== 11 || (outerMut.from !== undefined && outerMut.from !== 5)) {
+        return makeWrongResult(cpDef, step, `Demonstrated false value for processOuter val: expected 5 -> 11, got ${outerMut.from} -> ${outerMut.to}`);
+      }
+      const isBefore = step.snapshotConvention === 'before-statement';
+      if (!isBefore) {
+        return makeWrongResult(cpDef, step, 'Violated before-statement timing');
+      }
+      return makeResult(cpDef, step, 'CORRECT', 'Pointer dereference *targetPtr = 11 correctly mutated caller processOuter val (5 -> 11) with verified frame provenance while leaving main val (5) intact', ['val', 'targetPtr']);
     }
 
     default:
@@ -898,7 +1144,29 @@ function gradeCheckpoint(cpDef, trace, sourceCode) {
   }
 }
 
-function makeResult(cpDef, step, verdict, reason, relevantVarNames = []) {
+function makeResult(cpDef, step, candidateVerdict, reason, relevantVarNames = []) {
+  // ONE SHARED TRUTHFULNESS GUARD:
+  // Apply fact-consistency validation across CORRECT, GENERIC, PARTIAL and UNSUPPORTED candidates
+  // before finalizing a checkpoint verdict.
+  // A truthful generic explanation may remain GENERIC.
+  // A contradictory explanation must be WRONG even when the source-line description is generic.
+  if (candidateVerdict !== 'WRONG' && candidateVerdict !== 'UNKNOWN' && step) {
+    const violations = validateExplanationFidelity(step);
+    if (violations.length > 0) {
+      return {
+        id: cpDef.id,
+        name: cpDef.name,
+        targetLine: cpDef.targetLine,
+        targetFunc: cpDef.targetFunc,
+        step: step.step,
+        line: step.line,
+        verdict: 'WRONG',
+        reason: `Facet truthfulness violation: ${violations[0]}`,
+        excerpt: extractTraceExcerpt(step, cpDef.id, relevantVarNames),
+      };
+    }
+  }
+
   return {
     id: cpDef.id,
     name: cpDef.name,
@@ -906,7 +1174,7 @@ function makeResult(cpDef, step, verdict, reason, relevantVarNames = []) {
     targetFunc: cpDef.targetFunc,
     step: step ? step.step : -1,
     line: step ? step.line : cpDef.targetLine,
-    verdict,
+    verdict: candidateVerdict,
     reason,
     excerpt: step ? extractTraceExcerpt(step, cpDef.id, relevantVarNames) : null,
   };

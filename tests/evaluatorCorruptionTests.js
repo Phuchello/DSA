@@ -8,17 +8,18 @@
  * 4. Missing required checkpoints (yielding UNKNOWN, not silent skip) -> UNKNOWN
  * 5. Wrong source line numbers -> UNKNOWN
  *
- * Extended Suite (Tests A–E — new):
- * A. Fabricated observed: invents a variable mutation not in the diff -> WRONG
- * B. Semantics claims completed action on a before-statement step -> WRONG
- * C. Correct value attributed to wrong frame (caller/callee swap) -> WRONG
- * D. Real trace mutation altered to a false old/new pair -> PARTIAL or lower (not CORRECT)
+ * Extended Suite (Tests A–F — adversarial integrity):
+ * A. Fabricated semantics: completed action on before-statement step -> WRONG
+ * B. Semantics claims pending action already completed -> WRONG
+ * C. Correct value attributed to wrong frame (CP-H4 caller/callee swap) -> WRONG
+ * D. Real trace mutation altered to false old/new pair (CP-A5 5->99) -> WRONG
  * E. Checkpoint source line removed from trace -> UNKNOWN
+ * F. Fabricated observed and completed semantics on generic statement (CP-D4) -> WRONG
  *
  * Rules:
- * - Tests 2, 3, A, B, C MUST yield WRONG or the suite fails.
+ * - Tests 2, 3, A, B, C, D, F MUST yield WRONG or the suite fails.
  * - Tests 4, 5, E MUST yield UNKNOWN or the suite fails.
- * - Tests 1, D MUST NOT yield CORRECT (may be PARTIAL or GENERIC).
+ * - Test 1 MUST NOT yield CORRECT (yields PARTIAL).
  * - Mandatory violations cause nonzero process exit.
  */
 
@@ -56,6 +57,10 @@ async function runCorruptionTests() {
   const codeC = fs.readFileSync(path.join(ROOT, 'tests/fixtures/m2_3/C_euclidean_gcd.cpp'), 'utf8');
   const resC = await runCppCode(codeC, '');
   const traceC = normalizeTrace(resC.trace);
+
+  const codeD = fs.readFileSync(path.join(ROOT, 'tests/fixtures/m2_3/D_monotonic_stack.cpp'), 'utf8');
+  const resD = await runCppCode(codeD, '');
+  const traceD = normalizeTrace(resD.trace);
 
   console.log('  Base fixtures compiled and normalized successfully.');
 
@@ -282,7 +287,7 @@ async function runCorruptionTests() {
   // -------------------------------------------------------------------------
   // CORRUPTION TEST C: Correct value attributed to wrong frame (caller/callee swap for CP-H4)
   // CP-H4 checks nextStep.dsa.diff.scalarUpdates for val=10 from computeInner.
-  // We swap the frameName to 'main' (wrong frame) in the diff — grader should NOT be CORRECT.
+  // We swap the frameName to 'main' (wrong frame) in the diff — grader MUST flag as WRONG.
   // -------------------------------------------------------------------------
   {
     console.log('\n--- Corruption Test C: Correct value attributed to wrong frame ---');
@@ -302,18 +307,12 @@ async function runCorruptionTests() {
       valUpdate.frameId = '0x5ffe40'; // main's frameId
     }
 
-    // The current CP-H4 grader checks u.name === 'val' && u.to === 10 but NOT the frameName.
-    // This tests whether the grader catches frame-of-origin attribution errors.
     const corruptedResult = gradeCheckpoint(cpH4, corruptedTraceH, codeH);
-    if (corruptedResult.verdict === 'CORRECT') {
-      // The current grader does not check frameName in the diff — this is a known limitation.
-      // We document it as a PARTIAL detection: the evaluator needs strengthening for this case.
-      // For now we pass the test with a warning (not a mandatory failure) to allow honest reporting.
-      console.log(`  ⚠️  Corruption C: frame attribution not fully checked (verdict=${corruptedResult.verdict}). Known evaluator limitation documented.`);
-      // Not counted as mandatory failure — this is a future hardening opportunity.
-      testsPassed++; // Document as passing with the known limitation acknowledged
+    if (corruptedResult.verdict !== 'WRONG') {
+      console.error(`  ❌ Corruption C MISSED: expected WRONG but got ${corruptedResult.verdict} (${corruptedResult.reason})`);
+      mandatoryFailures++;
     } else {
-      console.log(`  ✅ Corruption C Detected: verdict degraded to ${corruptedResult.verdict} (${corruptedResult.reason})`);
+      console.log(`  ✅ Corruption C Detected: verdict was flagged as WRONG (${corruptedResult.reason})`);
       testsPassed++;
     }
   }
@@ -321,6 +320,7 @@ async function runCorruptionTests() {
   // -------------------------------------------------------------------------
   // CORRUPTION TEST D: Real trace mutation altered to a false old/new pair
   // For CP-A5: high boundary shift from 5 to 1. Corrupt to 5 -> 99 (false).
+  // Grader MUST classify as WRONG (demonstrated false value, not PARTIAL).
   // -------------------------------------------------------------------------
   {
     console.log('\n--- Corruption Test D: Real trace mutation altered to false old/new pair ---');
@@ -332,8 +332,6 @@ async function runCorruptionTests() {
 
     // Corrupt: change the diff update for high from (5 -> 1) to (5 -> 99)
     const corruptedTraceA = deepClone(traceA);
-    // The 'high' diff appears in nextStep = trace[step.step + 1] where step is the high=midPoint-1 line
-    // Find the step for high assignment
     const highStep = corruptedTraceA.find(s => s.funcName === 'findFirstOccurrence' && s.line === 12 &&
       s.codeText && s.codeText.includes('high = midPoint - 1'));
     assert.ok(highStep, 'high assignment step must exist');
@@ -345,11 +343,11 @@ async function runCorruptionTests() {
     }
 
     const corruptedResult = gradeCheckpoint(cpA5, corruptedTraceA, codeA);
-    if (corruptedResult.verdict === 'CORRECT') {
-      console.error(`  ❌ Corruption D MISSED: verdict was still CORRECT with falsified high=99`);
+    if (corruptedResult.verdict !== 'WRONG') {
+      console.error(`  ❌ Corruption D MISSED: expected WRONG but got ${corruptedResult.verdict} (${corruptedResult.reason})`);
       mandatoryFailures++;
     } else {
-      console.log(`  ✅ Corruption D Detected: verdict degraded to ${corruptedResult.verdict} (${corruptedResult.reason})`);
+      console.log(`  ✅ Corruption D Detected: verdict was flagged as WRONG (${corruptedResult.reason})`);
       testsPassed++;
     }
   }
@@ -383,10 +381,46 @@ async function runCorruptionTests() {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // CORRUPTION TEST F: Fabricated observed and completed semantics on generic statement (CP-D4)
+  // Retains valid upcoming source statement, but injects:
+  // - Fabricated observed mutation: "nge[0]: 900 -> -5555" (not in diff)
+  // - Completed-action semantics: "nge[0] đã được cập nhật xong với giá trị mới."
+  // Grader MUST classify as WRONG (not GENERIC).
+  // -------------------------------------------------------------------------
+  {
+    console.log('\n--- Corruption Test F: Fabricated observed and completed semantics on CP-D4 ---');
+    const cpD4 = CHECKPOINT_REGISTRY.find(cp => cp.id === 'CP-D4');
+    assert.ok(cpD4, 'CP-D4 must exist in registry');
+
+    const baseResult = gradeCheckpoint(cpD4, traceD, codeD);
+    assert.strictEqual(baseResult.verdict, 'GENERIC', 'Uncorrupted CP-D4 must be GENERIC');
+
+    // Corrupt CP-D4 step: retain upcoming, falsify observed and semantics
+    const corruptedTraceD = deepClone(traceD);
+    const stepD4 = corruptedTraceD.find(s => s.funcName === 'main' && s.line === 12 &&
+      s.codeText && s.codeText.includes('nge[stk.back()] = heights[i];'));
+    assert.ok(stepD4, 'CP-D4 step must exist');
+    assert.ok(stepD4.dsa.explanationDetail, 'explanationDetail must exist');
+
+    // Injected fabrication
+    stepD4.dsa.explanationDetail.observed = 'nge[0]: 900 -> -5555';
+    stepD4.dsa.explanationDetail.semantics = 'nge[0] đã được cập nhật xong với giá trị mới.';
+
+    const corruptedResult = gradeCheckpoint(cpD4, corruptedTraceD, codeD);
+    if (corruptedResult.verdict !== 'WRONG') {
+      console.error(`  ❌ Corruption F MISSED: expected WRONG but got ${corruptedResult.verdict} (${corruptedResult.reason})`);
+      mandatoryFailures++;
+    } else {
+      console.log(`  ✅ Corruption F Detected: verdict was flagged as WRONG (${corruptedResult.reason})`);
+      testsPassed++;
+    }
+  }
+
   // =========================================================================
   // FINAL SUMMARY
   // =========================================================================
-  const totalTests = 10;
+  const totalTests = 11;
   console.log('\n' + '='.repeat(70));
   if (mandatoryFailures > 0) {
     console.error(`❌ ${mandatoryFailures} MANDATORY CORRUPTION CHECK(S) MISSED — evaluator integrity compromised!`);

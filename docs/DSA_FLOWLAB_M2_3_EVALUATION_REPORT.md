@@ -28,7 +28,7 @@ Following an independent evaluation-integrity audit, all existence-based scoring
 4. **Honest Structural Boundaries: 2.5% (1 / 40 UNSUPPORTED checkpoint)**. In fixture `F_custom_tree.cpp`, binary tree node pointers (`lPtr`, `rPtr`) were honestly retained at 0 linked-list nodes. FlowLab explicitly displayed the unsupported user-defined struct notice and refrained from fabricating a false linear linked list.
 5. **Execution & Trace Fidelity: 100% (8 / 8 positive fixtures)**. Every positive fixture compiled with native `g++ -std=c++17 -O0`, executed inside the native GDB runner, and produced stdout matching ground truth.
 6. **Robust Negative Controls: 100% (2 / 2 negative controls verified)**. Control N1 clamped at 1000 steps with `terminationStatus: "truncated"`; Control N2 failed compilation with `success: false` and surfaced compiler diagnostics in `buildOutput` with 0 trace steps.
-7. **Adversarial Evaluator Robustness: 100% (10 / 10 corruption tests caught)**. The evaluation harness was validated against deliberate state corruption via `tests/evaluatorCorruptionTests.js` (wrong value, wrong frame, early mutation, missing checkpoint, wrong line).
+7. **Adversarial Evaluator Robustness: 100% (11 / 11 corruption tests caught)**. The evaluation harness was validated against deliberate state corruption via `tests/evaluatorCorruptionTests.js` (wrong value, wrong frame, early mutation, missing checkpoint, wrong line).
 8. **Zero P0/P1 Production Engine Defects**: No modifications to `server/src/normalizer/dsaNormalizer.ts`, `server/src/runner/tracer.py`, or `server/src/runner/cppRunner.ts` were required.
 
 ---
@@ -68,8 +68,8 @@ Across the 40 frozen checkpoints evaluated in `tests/runEvaluationM2_3.js`:
 
 ### Key Metrics
 - **Factual Accuracy Rate:** `(CORRECT + GENERIC + UNSUPPORTED) / TOTAL` = **100.0%** (40 / 40 non-WRONG checkpoints)
-- **Pedagogical Specificity Rate:** `CORRECT / TOTAL` = **55.0%** (22 / 40 checkpoints with specific domain grounding) checkpoints with specific domain grounding)
-- **Controlled Fallback Rate:** `GENERIC / TOTAL` = **42.5%** (17 / 40 checkpoints with honest language-level flow description) checkpoints with honest language-level flow description)
+- **Pedagogical Specificity Rate:** `CORRECT / TOTAL` = **55.0%** (22 / 40 checkpoints with specific domain grounding)
+- **Controlled Fallback Rate:** `GENERIC / TOTAL` = **42.5%** (17 / 40 checkpoints with honest language-level flow description)
 
 ### Distinction Between Generic Control Flow and Specialized State Explanations
 A key outcome of the integrity audit was formalizing the boundary between **CORRECT** and **GENERIC**:
@@ -80,6 +80,28 @@ A key outcome of the integrity audit was formalizing the boundary between **CORR
   - Tracking call stack frame pushes with parameters (`gcdRecursive(54, 24)` -> `CP-C3`).
   - Pointer dereference mutating caller frame variables (`*targetPtr = 11` mutating `processOuter`'s `val` while leaving `main`'s `val = 5` intact -> `CP-H5`).
 - **GENERIC (Language-Level Control Flow):** Used when a statement involves general control progression (e.g. `while (low <= high)`, `while (beta != 0)`, `if (left >= right)`, `stk.push_back(i)`, `delete root`). FlowLab truthfully explains what C++ is doing at the statement level ("Chuáº©n bá»‹ Ä‘Ã¡nh giÃ¡ Ä‘iá»u kiá»‡n láº·p...", "Thá»±c thi tuáº§n tá»± cÃ¡c cÃ¢u lá»‡nh...") without falsely claiming it understands high-level algorithmic intent (e.g., it does not claim to know the loop is an invariant-preserving binary search partition). This prevents educational hallucination.
+
+### One Shared Truthfulness Guard (alidateExplanationFidelity)
+
+To prevent the evaluator from accepting false educational explanations or fabricated observations across any classification, a universal truthfulness guard (alidateExplanationFidelity(step)) is integrated directly into makeResult().
+
+The guard is applied uniformly across candidate verdicts (CORRECT, GENERIC, PARTIAL, UNSUPPORTED) before finalizing any checkpoint result:
+- **Truthful Generic Allowed:** A statement explaining standard language-level control flow remains GENERIC.
+- **Factual Contradictions Disallowed:** Any statement containing fabricated mutations or timing contradictions is converted to WRONG, even if the source line description is generic.
+- **Legitimate Past-Tense Preserved:** In the observed facet, legitimate past-tense phrasing (describing the state transition from snapshot -1$ to $) is permitted and verified against step.dsa.diff.
+
+#### Explicitly Checked Claim Patterns:
+1. **Timing Consistency (semantics & upcoming):** Completed-action keywords on before-statement snapshots (đã thực hiện xong, đã được cập nhật, đã cập nhật xong, đã hoàn thành, đã gán xong, đã tính toán xong, đã thay đổi xong, đã được gán, đã kết thúc, đã giải phóng xong, đã cấp phát xong, lready completed, has been updated).
+2. **Observed Scalar Mutations:** Biến [frame::]var thay đổi từ fromVal thành toVal, Biến [frame::]var được khởi tạo giá trị toVal, and colon/arrow notation (ar: fromVal -> toVal), strictly verified against step.dsa.diff.scalarUpdates (name, values, frame provenance).
+3. **Observed Array Mutations:** Phần tử mảng [frame::]arr[idx] thay đổi từ fromVal thành toVal, Phần tử mảng [frame::]arr[idx] được khởi tạo giá trị toVal, and colon/arrow notation (rr[idx]: fromVal -> toVal), strictly verified against step.dsa.diff.arrayUpdates (array name, element index, values, frame provenance).
+4. **Observed Heap Allocations & Deallocations:** Đã cấp phát khối nhớ mới trên Heap tại addr and Đã giải phóng khối nhớ Heap tại addr, strictly verified against diff.allocatedNodes and diff.freedNodes.
+5. **Observed Stack Frame Transitions:** Đã tạo khung ngăn xếp mới cho hàm func() ở độ sâu depth and Khung ngăn xếp của hàm func() đã hoàn thành và được thu hồi, strictly verified against diff.frameTransition.
+6. **Observed Diff Emptiness:** Claims of Không có thay đổi biến nào trong bộ nhớ ở bước trước strictly verified against diff emptiness (flagged if diff contains scalar or array updates).
+
+#### Explicitly Unchecked Language Patterns (by design):
+- High-level conceptual descriptions of algorithms (e.g. general prose stating "áp dụng chia để trị", "duyệt ngăn xếp đơn điệu").
+- Mathematical induction formulas or loop invariant proofs in unstructured natural language.
+- Stylistic prose variations, punctuation nuances, or formatting that do not assert concrete memory state transitions.
 
 ---
 
@@ -258,7 +280,7 @@ A key outcome of the integrity audit was formalizing the boundary between **CORR
 
 To guarantee that the evaluation harness itself is tamper-proof and cannot be satisfied by existence-based artifacts or fabricated data, a dedicated adversarial corruption test suite was authored in `tests/evaluatorCorruptionTests.js`.
 
-The suite deliberately corrupts execution snapshots in 10 critical dimensions (5 original + 5 new adversarial Tests A-E) and asserts that the evaluator correctly rejects or degrades them:
+The suite deliberately corrupts execution snapshots across 11 critical dimensions (5 original + 6 adversarial Tests A–F) and asserts that the evaluator correctly rejects or degrades them:
 
 | Corruption Test | Injected Defect | Expected Grader Response | Result |
 |---|---|---|:---:|
@@ -267,13 +289,14 @@ The suite deliberately corrupts execution snapshots in 10 critical dimensions (5
 | **Test 3: Inverted Timing** | Mutates variable early on pending step instead of following step | Rejected as `WRONG` | **PASS** |
 | **Test 4: Missing Checkpoint** | Omits required checkpoint from registry | Flagged as `UNKNOWN` | **PASS** |
 | **Test 5: Wrong Target Line** | Sets wrong source line (Line 999 instead of 23) | Rejected as `UNKNOWN` | **PASS** |
-| **Test A: Fabricated Semantics** | Injects completed-action language on before-statement step | Rejected as `WRONG` via `checkFacetConsistency` | **PASS** |
-| **Test B: Completed-Action Timing** | Semantics claims pending action already completed | Rejected as `WRONG` via `checkFacetConsistency` | **PASS** |
-| **Test C: Wrong-Frame Attribution** | Correct value attributed to wrong frame (CP-H4 caller/callee swap) | Passes with documented limitation (frame attribution not fully checked) | **PASS** ⚠️ |
-| **Test D: False Old/New Pair** | Real mutation altered to wrong old-to-new values | Degraded from `CORRECT` to `PARTIAL` | **PASS** |
+| **Test A: Fabricated Semantics** | Injects completed-action language on before-statement step | Rejected as `WRONG` via `validateExplanationFidelity` | **PASS** |
+| **Test B: Completed-Action Timing** | Semantics claims pending action already completed | Rejected as `WRONG` via `validateExplanationFidelity` | **PASS** |
+| **Test C: Wrong-Frame Attribution** | Attributes `val = 10` diff to `main` instead of `computeInner` (CP-H4) | Rejected as `WRONG` (frame provenance verified) | **PASS** |
+| **Test D: Demonstrated False Value** | Real mutation altered to false value `5 -> 99` (CP-A5) | Rejected as `WRONG` (demonstrated false value) | **PASS** |
 | **Test E: Missing Source Line** | Checkpoint source line removed from trace | Flagged as `UNKNOWN` | **PASS** |
+| **Test F: Fabricated Observed on Generic** | Injects fabricated `nge[0]: 900 -> -5555` & completed semantics on CP-D4 | Rejected as `WRONG` via shared truthfulness guard | **PASS** |
 
-All 10 corruption tests (5 original + 5 new adversarial Tests A-E) pass 100% via `npm run test:eval:corruption`.
+All 11 corruption tests (5 original + 6 adversarial Tests A–F) pass 100% with exit code 0 via `npm run test:eval:corruption`. Zero soft passes, warnings, or undetected corruptions exist in the evaluation suite.
 
 ---
 
@@ -309,7 +332,7 @@ The dedicated browser acceptance suite in `tests/browserSmokeM2_3.js` was execut
 | **M2.2 Browser Smoke** | `npm run test:browser:m2-2` | 11 scenarios + responsive | All | 0 | **PASS** |
 | **M2.3 Browser Acceptance** | `npm run test:browser:m2-3` | 5 scenarios + responsive | All | 0 | **PASS** |
 | **M2.3 Evaluation Runner** | `npm run test:eval` | 40 semantic checkpoints | 40 | 0 | **PASS** |
-| **M2.3 Evaluator Corruption Tests**| `npm run test:eval:corruption` | 10 adversarial corruption tests (5 original + 5 new A-E) | 10 | 0 | **PASS** |
+| **M2.3 Evaluator Corruption Tests**| `npm run test:eval:corruption` | 11 adversarial corruption tests (5 original + 6 extended A–F) | 11 | 0 | **PASS** |
 
 ---
 
@@ -356,6 +379,9 @@ FlowLab's behavior across general C++ programs is governed by four clear operati
 - **Adversarially Hardened:** 5/5 corruption checks caught by the evaluation harness.
 - **Zero Production Defects:** Core engine code required 0 edits, demonstrating architectural robustness.
 - **Clean Workspace:** Protected workspace `C:\Users\lyle3\OneDrive\Documents\MÃ´n há»c\DSA\Web` remains untouched.
+
+
+
 
 
 

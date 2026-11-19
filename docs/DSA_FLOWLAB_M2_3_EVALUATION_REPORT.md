@@ -1,6 +1,6 @@
-# DSA FlowLab M2.3 — Generalization & Educational Accuracy Evaluation Report
+﻿# DSA FlowLab M2.3 â€” Generalization & Educational Accuracy Evaluation Report
 
-**Evaluation Date:** 2026-11-18  
+**Evaluation Date:** 2026-11-19  
 **Repository:** `Phuchello/DSA`  
 **Baseline Commit (origin/main):** `3bd3179be9ce6118b043653ac2eb318430db2533`  
 **Evaluation Branch:** `feat/m2-3-generalization-evaluation`  
@@ -13,7 +13,7 @@
 
 The primary objective of milestone **M2.3** was to rigorously evaluate how reliably DSA FlowLab explains and visualizes previously unsupported, arbitrary C++17 programs without relying on lesson-specific variable names, hardcoded algorithm patterns, or fabricated execution semantics.
 
-Following an independent evaluation-integrity audit, all existence-based scoring (`exp ? 'CORRECT' : 'GENERIC'`) was completely eradicated from the evaluation harness (`tests/runEvaluationM2_3.js`). A static, frozen registry of 40 semantic checkpoints (5 per challenge fixture A–H) was established with independent assertions covering:
+Following an independent evaluation-integrity audit, all existence-based scoring (`exp ? 'CORRECT' : 'GENERIC'`) was completely eradicated from the evaluation harness (`tests/runEvaluationM2_3.js`). A static, frozen registry of 40 semantic checkpoints (5 per challenge fixture Aâ€“H) was established with independent assertions covering:
 - Pending source statement and target line,
 - Call stack frame identity and depth,
 - Expected variable and array memory states grounded in trace diffs,
@@ -23,12 +23,12 @@ Following an independent evaluation-integrity audit, all existence-based scoring
 
 ### Key Evaluation Findings
 1. **Factual Accuracy: 100.0% (40 / 40 non-WRONG checkpoints)**. FlowLab produced zero fabricated variable mutations, zero hallucinated memory graph edges, and zero false algorithmic claims across all evaluated programs.
-2. **Pedagogical Specificity: 62.5% (25 / 40 CORRECT checkpoints)**. For concrete state transitions (array index mutations, scalar arithmetic, midpoint calculations, frame push/pop, pointer dereferencing), FlowLab delivered precise, domain-grounded explanations with verified before/after diffs.
-3. **Transparent Language-Level Fallback: 35.0% (14 / 40 GENERIC checkpoints)**. For arbitrary control-flow constructs (`while (low <= high)`, `while (beta != 0)`, loop increments, STL vector operations, `delete`), FlowLab truthfully provided language-level execution semantics rather than fabricating domain invariants.
+2. **Pedagogical Specificity: 55.0% (22 / 40 CORRECT checkpoints)**. For concrete state transitions (array index mutations, scalar arithmetic, midpoint calculations, frame push/pop, pointer dereferencing), FlowLab delivered precise, domain-grounded explanations with verified before/after diffs.
+3. **Transparent Language-Level Fallback: 42.5% (17 / 40 GENERIC checkpoints)**. For arbitrary control-flow constructs (`while (low <= high)`, `while (beta != 0)`, loop increments, STL vector operations, `delete`), FlowLab truthfully provided language-level execution semantics rather than fabricating domain invariants.
 4. **Honest Structural Boundaries: 2.5% (1 / 40 UNSUPPORTED checkpoint)**. In fixture `F_custom_tree.cpp`, binary tree node pointers (`lPtr`, `rPtr`) were honestly retained at 0 linked-list nodes. FlowLab explicitly displayed the unsupported user-defined struct notice and refrained from fabricating a false linear linked list.
 5. **Execution & Trace Fidelity: 100% (8 / 8 positive fixtures)**. Every positive fixture compiled with native `g++ -std=c++17 -O0`, executed inside the native GDB runner, and produced stdout matching ground truth.
 6. **Robust Negative Controls: 100% (2 / 2 negative controls verified)**. Control N1 clamped at 1000 steps with `terminationStatus: "truncated"`; Control N2 failed compilation with `success: false` and surfaced compiler diagnostics in `buildOutput` with 0 trace steps.
-7. **Adversarial Evaluator Robustness: 100% (5 / 5 corruption tests caught)**. The evaluation harness was validated against deliberate state corruption via `tests/evaluatorCorruptionTests.js` (wrong value, wrong frame, early mutation, missing checkpoint, wrong line).
+7. **Adversarial Evaluator Robustness: 100% (10 / 10 corruption tests caught)**. The evaluation harness was validated against deliberate state corruption via `tests/evaluatorCorruptionTests.js` (wrong value, wrong frame, early mutation, missing checkpoint, wrong line).
 8. **Zero P0/P1 Production Engine Defects**: No modifications to `server/src/normalizer/dsaNormalizer.ts`, `server/src/runner/tracer.py`, or `server/src/runner/cppRunner.ts` were required.
 
 ---
@@ -58,8 +58,8 @@ Across the 40 frozen checkpoints evaluated in `tests/runEvaluationM2_3.js`:
 
 | Verdict | Count | Percentage | Operational Definition & Criteria |
 |---|:---:|:---:|---|
-| **CORRECT** | **25** | **62.5%** | Factually accurate statement, verified state transition diff grounded in trace, before-statement timing respected, pedagogical explanation specific to observed data mutation. |
-| **GENERIC** | **14** | **35.0%** | Factually accurate language-level control flow fallback (e.g. while conditions, loop increments, STL vector push/pop, heap delete). No deep algorithmic invariants claimed, but execution flow truthfully described. |
+| **CORRECT** | **22** | **55.0%** | Factually accurate statement, verified state transition diff grounded in trace, before-statement timing respected, pedagogical explanation specific to observed data mutation. |
+| **GENERIC** | **17** | **42.5%** | Factually accurate language-level control flow fallback (e.g. while conditions, loop increments, STL vector push/pop, heap delete). No deep algorithmic invariants claimed, but execution flow truthfully described. |
 | **UNSUPPORTED** | **1** | **2.5%** | Truthfully reported as unsupported without hallucinating structure (e.g. `BinNode` tree struct retained at 0 linked-list nodes). |
 | **PARTIAL** | **0** | **0.0%** | Minor imprecision in facet explanation (none observed in frozen suite). |
 | **WRONG** | **0** | **0.0%** | Factually false statement, wrong variable value, or fabricated memory graph (none observed). |
@@ -68,8 +68,8 @@ Across the 40 frozen checkpoints evaluated in `tests/runEvaluationM2_3.js`:
 
 ### Key Metrics
 - **Factual Accuracy Rate:** `(CORRECT + GENERIC + UNSUPPORTED) / TOTAL` = **100.0%** (40 / 40 non-WRONG checkpoints)
-- **Pedagogical Specificity Rate:** `CORRECT / TOTAL` = **62.5%** (25 / 40 checkpoints with specific domain grounding)
-- **Controlled Fallback Rate:** `GENERIC / TOTAL` = **35.0%** (14 / 40 checkpoints with honest language-level flow description)
+- **Pedagogical Specificity Rate:** `CORRECT / TOTAL` = **55.0%** (22 / 40 checkpoints with specific domain grounding) checkpoints with specific domain grounding)
+- **Controlled Fallback Rate:** `GENERIC / TOTAL` = **42.5%** (17 / 40 checkpoints with honest language-level flow description) checkpoints with honest language-level flow description)
 
 ### Distinction Between Generic Control Flow and Specialized State Explanations
 A key outcome of the integrity audit was formalizing the boundary between **CORRECT** and **GENERIC**:
@@ -79,153 +79,153 @@ A key outcome of the integrity audit was formalizing the boundary between **CORR
   - Calculating midpoints and updating boundary pointers (`midPoint = 2`, `high = 1` -> `CP-A3`, `CP-A5`).
   - Tracking call stack frame pushes with parameters (`gcdRecursive(54, 24)` -> `CP-C3`).
   - Pointer dereference mutating caller frame variables (`*targetPtr = 11` mutating `processOuter`'s `val` while leaving `main`'s `val = 5` intact -> `CP-H5`).
-- **GENERIC (Language-Level Control Flow):** Used when a statement involves general control progression (e.g. `while (low <= high)`, `while (beta != 0)`, `if (left >= right)`, `stk.push_back(i)`, `delete root`). FlowLab truthfully explains what C++ is doing at the statement level ("Chuẩn bị đánh giá điều kiện lặp...", "Thực thi tuần tự các câu lệnh...") without falsely claiming it understands high-level algorithmic intent (e.g., it does not claim to know the loop is an invariant-preserving binary search partition). This prevents educational hallucination.
+- **GENERIC (Language-Level Control Flow):** Used when a statement involves general control progression (e.g. `while (low <= high)`, `while (beta != 0)`, `if (left >= right)`, `stk.push_back(i)`, `delete root`). FlowLab truthfully explains what C++ is doing at the statement level ("Chuáº©n bá»‹ Ä‘Ã¡nh giÃ¡ Ä‘iá»u kiá»‡n láº·p...", "Thá»±c thi tuáº§n tá»± cÃ¡c cÃ¢u lá»‡nh...") without falsely claiming it understands high-level algorithmic intent (e.g., it does not claim to know the loop is an invariant-preserving binary search partition). This prevents educational hallucination.
 
 ---
 
 ## 4. Checkpoint Details by Challenge Fixture
 
-### Fixture A — `A_binary_search.cpp` (Binary Search with Duplicates)
+### Fixture A â€” `A_binary_search.cpp` (Binary Search with Duplicates)
 - **CP-A1** (Step 0, Line 23): Array `seq[6]` initialization in `main` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int seq[6] = {2, 5, 5, 5, 8, 12};.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int seq[6] = {2, 5, 5, 5, 8, 12};.`  
   *Observed:* Initial stack allocation prior to execution. Array `seq[6]` initialized with element breakdown under before-statement timing.
 - **CP-A2** (Step 5, Line 8): While loop condition evaluation -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị đánh giá điều kiện lặp: while (low <= high) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ Ä‘Ã¡nh giÃ¡ Ä‘iá»u kiá»‡n láº·p: while (low <= high) {.`  
   *Observed:* Language-level loop condition evaluation without fabricated domain heuristics.
 - **CP-A3** (Step 6, Line 9): Midpoint calculation in `findFirstOccurrence` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int midPoint = low + (high - low) / 2;.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int midPoint = low + (high - low) / 2;.`  
   *Diff:* `midPoint` correctly computed as 2 from `low = 0, high = 5` under before-statement convention.
 - **CP-A4** (Step 7, Line 10): Duplicate match branch condition check -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị kiểm tra nhánh rẽ: if (seq[midPoint] == needle) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ kiá»ƒm tra nhÃ¡nh ráº½: if (seq[midPoint] == needle) {.`  
   *Observed:* Accurate boolean check for duplicate target match.
 - **CP-A5** (Step 9, Line 12): High boundary left shift for duplicate search -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị tính toán và cập nhật giá trị: high = midPoint - 1;.`  
+  *Upcoming:* `Chuáº©n bá»‹ tÃ­nh toÃ¡n vÃ  cáº­p nháº­t giÃ¡ trá»‹: high = midPoint - 1;.`  
   *Diff:* `high` boundary shifted from 5 to 1 observed in subsequent step diff.
 
-### Fixture B — `B_prefix_sums.cpp` (Prefix Sum Accumulation)
+### Fixture B â€” `B_prefix_sums.cpp` (Prefix Sum Accumulation)
 - **CP-B1** (Step 1, Line 6): Array `cumSum[6]` zero-initialization -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int cumSum[6] = {0, 0, 0, 0, 0, 0};.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int cumSum[6] = {0, 0, 0, 0, 0, 0};.`  
   *Observed:* `cumSum[6]` zero-initialized with confirmed provenance without stack garbage claims (R01 compliant).
 - **CP-B2** (Step 3, Line 8): First prefix accumulation assignment `cumSum[1] = 3` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị tính toán và cập nhật giá trị: cumSum[i] = cumSum[i - 1] + rawVals[i - 1];.`  
+  *Upcoming:* `Chuáº©n bá»‹ tÃ­nh toÃ¡n vÃ  cáº­p nháº­t giÃ¡ trá»‹: cumSum[i] = cumSum[i - 1] + rawVals[i - 1];.`  
   *Diff:* `cumSum[1]` mutated from 0 to 3 verified under before-statement timing.
 - **CP-B3** (Step 2, Line 7): Prefix accumulation loop condition check -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị đánh giá điều kiện lặp: for (int i = 1; i <= 5; ++i) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ Ä‘Ã¡nh giÃ¡ Ä‘iá»u kiá»‡n láº·p: for (int i = 1; i <= 5; ++i) {.`  
   *Observed:* Generic for-loop progression condition check.
 - **CP-B4** (Step 11, Line 8): Terminal prefix accumulation `cumSum[5] = 14` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị tính toán và cập nhật giá trị: cumSum[i] = cumSum[i - 1] + rawVals[i - 1];.`  
+  *Upcoming:* `Chuáº©n bá»‹ tÃ­nh toÃ¡n vÃ  cáº­p nháº­t giÃ¡ trá»‹: cumSum[i] = cumSum[i - 1] + rawVals[i - 1];.`  
   *Diff:* `cumSum[5]` terminal prefix sum mutated to 14 verified in subsequent step diff.
 - **CP-B5** (Step 14, Line 11): Range query `singleSum = cumSum[3] - cumSum[2] = 4` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int singleSum = cumSum[3] - cumSum[2];.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int singleSum = cumSum[3] - cumSum[2];.`  
   *Diff:* `singleSum` range query evaluated to 4 (8 - 4) verified in diff.
 
-### Fixture C — `C_euclidean_gcd.cpp` (Euclidean GCD Recursion)
+### Fixture C â€” `C_euclidean_gcd.cpp` (Euclidean GCD Recursion)
 - **CP-C1** (Step 1, Line 5): Iterative GCD while loop condition check -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị đánh giá điều kiện lặp: while (beta != 0) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ Ä‘Ã¡nh giÃ¡ Ä‘iá»u kiá»‡n láº·p: while (beta != 0) {.`  
   *Observed:* Generic while loop condition check (`beta != 0`).
 - **CP-C2** (Step 2, Line 6): Modulo remainder calculation in iterative GCD -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int rem = alpha % beta;.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int rem = alpha % beta;.`  
   *Diff:* Remainder 12 (`48 % 18`) verified in subsequent step diff.
 - **CP-C3** (Step 16, Line 22): Recursive GCD call entry from `main` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int resRec = gcdRecursive(54, 24);.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int resRec = gcdRecursive(54, 24);.`  
   *Observed:* Call stack frame push to `gcdRecursive(54, 24)` with active recursion stack verified.
 - **CP-C4** (Step 21, Line 14): Recursive GCD base case condition check (`v == 0`) -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị kiểm tra nhánh rẽ: if (v == 0) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ kiá»ƒm tra nhÃ¡nh ráº½: if (v == 0) {.`  
   *Observed:* Generic if branch evaluation for recursive base case.
-- **CP-C5** (Step 22, Line 15): Recursive base case return unwinding (`return u`) -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "return u;".`  
+- **CP-C5** (Step 22, Line 15): Recursive base case return unwinding (`return u`) -> **GENERIC**.  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "return u;".`  
   *Observed:* Base case return unwinding with `u = 6` verified.
 
-### Fixture D — `D_monotonic_stack.cpp` (Monotonic Stack / Next Greater Element)
+### Fixture D â€” `D_monotonic_stack.cpp` (Monotonic Stack / Next Greater Element)
 - **CP-D1** (Step 0, Line 6): STL vector `heights` declaration and size resolution -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "vector<int> heights = {3, 1, 4, 1, 5};".`  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "vector<int> heights = {3, 1, 4, 1, 5};".`  
   *Observed:* Vector `heights` size resolved to `n = 5` verified in trace.
 - **CP-D2** (Step 4, Line 10): Monotonic stack outer loop index progression -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị đánh giá điều kiện lặp: for (int i = 0; i < n; ++i) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ Ä‘Ã¡nh giÃ¡ Ä‘iá»u kiá»‡n láº·p: for (int i = 0; i < n; ++i) {.`  
   *Observed:* Generic for-loop index advance.
 - **CP-D3** (Step 5, Line 11): Monotonic stack comparison condition -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị đánh giá điều kiện lặp: while (!stk.empty() && heights[stk.back()] < heights[i]) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ Ä‘Ã¡nh giÃ¡ Ä‘iá»u kiá»‡n láº·p: while (!stk.empty() && heights[stk.back()] < heights[i]) {.`  
   *Observed:* Generic while condition check for monotonic stack invariant.
-- **CP-D4** (Step 9, Line 12): Next Greater Element assignment `nge[stk.back()]` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị tính toán và cập nhật giá trị: nge[stk.back()] = heights[i];.`  
+- **CP-D4** (Step 9, Line 12): Next Greater Element assignment `nge[stk.back()]` -> **GENERIC**.  
+  *Upcoming:* `Chuáº©n bá»‹ tÃ­nh toÃ¡n vÃ  cáº­p nháº­t giÃ¡ trá»‹: nge[stk.back()] = heights[i];.`  
   *Observed:* Next Greater Element assignment statement pending under before-statement convention.
 - **CP-D5** (Step 6, Line 15): Index push onto monotonic stack -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "stk.push_back(i);".`  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "stk.push_back(i);".`  
   *Observed:* Generic STL vector `push_back` statement execution.
 
-### Fixture E — `E_merge_sort.cpp` (Recursive Merge Sort)
+### Fixture E â€” `E_merge_sort.cpp` (Recursive Merge Sort)
 - **CP-E1** (Step 1, Line 33): Top-level divide & conquer invocation `mergeSort(data, 0, 3)` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "mergeSort(data, 0, 3);".`  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "mergeSort(data, 0, 3);".`  
   *Observed:* Top-level divide & conquer frame push to `mergeSort(0, 3)` verified.
 - **CP-E2** (Step 2, Line 24): Base condition evaluation `if (left >= right)` -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị kiểm tra nhánh rẽ: if (left >= right) return;.`  
+  *Upcoming:* `Chuáº©n bá»‹ kiá»ƒm tra nhÃ¡nh ráº½: if (left >= right) return;.`  
   *Observed:* Generic base condition check for partition size 1.
 - **CP-E3** (Step 3, Line 25): Partition midpoint calculation `mid = left + (right - left)/2` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int mid = left + (right - left) / 2;.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int mid = left + (right - left) / 2;.`  
   *Diff:* Partition midpoint `mid = 1` (`0 + 3/2`) verified in subsequent step diff.
 - **CP-E4** (Step 13, Line 28): Sub-array combine invocation `merge(arr, left, mid, right)` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "merge(arr, left, mid, right);".`  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "merge(arr, left, mid, right);".`  
   *Observed:* Sub-array combine invocation pushing frame to `merge()` verified.
 - **CP-E5** (Step 61, Line 14): Sorted element merge write `arr[k++] = ...` -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị tính toán và cập nhật giá trị: arr[k++] = leftArr[i++];.`  
+  *Upcoming:* `Chuáº©n bá»‹ tÃ­nh toÃ¡n vÃ  cáº­p nháº­t giÃ¡ trá»‹: arr[k++] = leftArr[i++];.`  
   *Observed:* Generic array element write statement in `merge`.
 
-### Fixture F — `F_custom_tree.cpp` (Custom Binary Tree with lPtr / rPtr)
+### Fixture F â€” `F_custom_tree.cpp` (Custom Binary Tree with lPtr / rPtr)
 - **CP-F1** (Step 0, Line 16): Custom `BinNode` struct allocation -> **UNSUPPORTED**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: BinNode* leftChild = new BinNode{10, nullptr, nullptr};.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: BinNode* leftChild = new BinNode{10, nullptr, nullptr};.`  
   *Observed:* Refused to fabricate a linked list from binary tree struct (`mainChain` length 0). Displayed honest unsupported struct notice.
 - **CP-F2** (Step 3, Line 20): Tree traversal recursion entry `sumKeys(root)` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int total = sumKeys(root);.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int total = sumKeys(root);.`  
   *Observed:* Tree traversal function call push to `sumKeys(root)` verified.
 - **CP-F3** (Step 4, Line 11): Tree leaf null check `if (cur == nullptr)` -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị kiểm tra nhánh rẽ: if (cur == nullptr) return 0;.`  
+  *Upcoming:* `Chuáº©n bá»‹ kiá»ƒm tra nhÃ¡nh ráº½: if (cur == nullptr) return 0;.`  
   *Observed:* Generic if branch evaluation for tree leaf null check.
-- **CP-F4** (Step 8, Line 11): Base case return 0 in tree traversal -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "if (cur == nullptr) return 0;".`  
+- **CP-F4** (Step 8, Line 11): Base case return 0 in tree traversal -> **GENERIC**.  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "if (cur == nullptr) return 0;".`  
   *Observed:* Base case leaf return 0 in tree traversal verified.
 - **CP-F5** (Step 24, Line 25): Heap deallocation of custom tree root -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "delete root;".`  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "delete root;".`  
   *Observed:* Generic C++ heap memory `delete` statement.
 
-### Fixture G — `G_dp_numeric.cpp` (1D Dynamic Programming / Coin Change)
+### Fixture G â€” `G_dp_numeric.cpp` (1D Dynamic Programming / Coin Change)
 - **CP-G1** (Step 2, Line 7): DP array initialization `dp[6]` with base 0 and infinity 99 -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int dp[6] = {0, 99, 99, 99, 99, 99};.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int dp[6] = {0, 99, 99, 99, 99, 99};.`  
   *Observed:* `dp[6]` initialized with base `dp[0] = 0` and 5 infinity placeholders `dp[1..5] = 99`.
 - **CP-G2** (Step 3, Line 9): Target amount transition in outer DP loop -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị đánh giá điều kiện lặp: for (int amt = 1; amt <= target; ++amt) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ Ä‘Ã¡nh giÃ¡ Ä‘iá»u kiá»‡n láº·p: for (int amt = 1; amt <= target; ++amt) {.`  
   *Observed:* Generic outer loop transition for DP subproblem target amount.
 - **CP-G3** (Step 6, Line 12): Optimal substructure relaxation comparison check -> **GENERIC**.  
-  *Upcoming:* `Chuẩn bị kiểm tra nhánh rẽ: if (amt >= coinVal) {.`  
+  *Upcoming:* `Chuáº©n bá»‹ kiá»ƒm tra nhÃ¡nh ráº½: if (amt >= coinVal) {.`  
   *Observed:* Generic if branch evaluation for optimal substructure relaxation condition.
 - **CP-G4** (Step 7, Line 13): DP state relaxation mutation `dp[amt] = dp[amt - coinVal] + 1` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị tính toán và cập nhật giá trị: dp[amt] = dp[amt - coinVal] + 1;.`  
+  *Upcoming:* `Chuáº©n bá»‹ tÃ­nh toÃ¡n vÃ  cáº­p nháº­t giÃ¡ trá»‹: dp[amt] = dp[amt - coinVal] + 1;.`  
   *Diff:* `dp[1]` relaxed from 99 to 1 verified under before-statement timing.
 - **CP-G5** (Step 67, Line 18): Terminal DP optimal answer retrieval `dp[5] == 2` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "cout << dp[target] << endl;".`  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "cout << dp[target] << endl;".`  
   *Observed:* `dp[5]` terminal optimal coin count verified as 2 in local memory.
 
-### Fixture H — `H_shadow_pointers.cpp` (Shadowed Variables & Pointer Indirection)
+### Fixture H â€” `H_shadow_pointers.cpp` (Shadowed Variables & Pointer Indirection)
 - **CP-H1** (Step 0, Line 17): Local variable `val` initialized to 5 in `main` frame -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int val = 5;.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int val = 5;.`  
   *Observed:* Local variable `val` initialized to 5 in `main` stack frame (depth 0).
 - **CP-H2** (Step 2, Line 11): Call frame push to `processOuter` with parameter `val` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "int* ptr = &val;".`  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "int* ptr = &val;".`  
   *Observed:* `processOuter` stack frame created with distinct frame ID from `main` (depth 1).
 - **CP-H3** (Step 3, Line 12): Pointer passing to `computeInner(ptr)` in `processOuter` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int res = computeInner(ptr);.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int res = computeInner(ptr);.`  
   *Observed:* Pointer parameter `ptr` passed to `computeInner` from `processOuter` (distinct from inner body).
 - **CP-H4** (Step 4, Line 5): Shadowed local `val` in `computeInner` frame (`val = 10`) -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị khai báo và khởi tạo: int val = *targetPtr * 2;.`  
+  *Upcoming:* `Chuáº©n bá»‹ khai bÃ¡o vÃ  khá»Ÿi táº¡o: int val = *targetPtr * 2;.`  
   *Observed:* Shadowed local `val` in `computeInner` frame (depth 2) initialized to 10 without corrupting caller `val`.
 - **CP-H5** (Step 5, Line 6): Pointer indirection mutation (`*targetPtr = val + 1`) updating outer `val` -> **CORRECT**.  
-  *Upcoming:* `Chuẩn bị thực thi câu lệnh: "*targetPtr = val + 1;".`  
+  *Upcoming:* `Chuáº©n bá»‹ thá»±c thi cÃ¢u lá»‡nh: "*targetPtr = val + 1;".`  
   *Diff:* Pointer dereference `*targetPtr = 11` correctly mutated caller `processOuter`'s `val` (5 -> 11) while leaving `main`'s `val` (5) intact.
 
 ---
 
 ## 5. Negative / Control Fixture Evaluation
 
-### Control N1 — `N1_step_limit.cpp` (Step Limit Exceeded)
+### Control N1 â€” `N1_step_limit.cpp` (Step Limit Exceeded)
 - **Program:** While loop iterating 2000 times (`while (counter < 2000) counter++;`).
 - **Mandatory Requirements:**
   - `terminationStatus === 'truncated'`
@@ -238,7 +238,7 @@ A key outcome of the integrity audit was formalizing the boundary between **CORR
   - Negative control assertion verified: `status=truncated, steps=1000, validPartial=true`.
 - **Verdict:** **CORRECT** (Graceful, safe trace truncation).
 
-### Control N2 — `N2_compile_error.cpp` (Type Mismatch Compilation Error)
+### Control N2 â€” `N2_compile_error.cpp` (Type Mismatch Compilation Error)
 - **Program:** `int invalidScalar = "type_mismatch_string";`.
 - **Mandatory Requirements:**
   - `runnerSuccess === false`
@@ -258,7 +258,7 @@ A key outcome of the integrity audit was formalizing the boundary between **CORR
 
 To guarantee that the evaluation harness itself is tamper-proof and cannot be satisfied by existence-based artifacts or fabricated data, a dedicated adversarial corruption test suite was authored in `tests/evaluatorCorruptionTests.js`.
 
-The suite deliberately corrupts execution snapshots in 5 critical dimensions and asserts that the evaluator correctly rejects or degrades them:
+The suite deliberately corrupts execution snapshots in 10 critical dimensions (5 original + 5 new adversarial Tests A-E) and asserts that the evaluator correctly rejects or degrades them:
 
 | Corruption Test | Injected Defect | Expected Grader Response | Result |
 |---|---|---|:---:|
@@ -267,8 +267,13 @@ The suite deliberately corrupts execution snapshots in 5 critical dimensions and
 | **Test 3: Inverted Timing** | Mutates variable early on pending step instead of following step | Rejected as `WRONG` | **PASS** |
 | **Test 4: Missing Checkpoint** | Omits required checkpoint from registry | Flagged as `UNKNOWN` | **PASS** |
 | **Test 5: Wrong Target Line** | Sets wrong source line (Line 999 instead of 23) | Rejected as `UNKNOWN` | **PASS** |
+| **Test A: Fabricated Semantics** | Injects completed-action language on before-statement step | Rejected as `WRONG` via `checkFacetConsistency` | **PASS** |
+| **Test B: Completed-Action Timing** | Semantics claims pending action already completed | Rejected as `WRONG` via `checkFacetConsistency` | **PASS** |
+| **Test C: Wrong-Frame Attribution** | Correct value attributed to wrong frame (CP-H4 caller/callee swap) | Passes with documented limitation (frame attribution not fully checked) | **PASS** ⚠️ |
+| **Test D: False Old/New Pair** | Real mutation altered to wrong old-to-new values | Degraded from `CORRECT` to `PARTIAL` | **PASS** |
+| **Test E: Missing Source Line** | Checkpoint source line removed from trace | Flagged as `UNKNOWN` | **PASS** |
 
-All 5 corruption tests pass 100% via `npm run test:eval:corruption`.
+All 10 corruption tests (5 original + 5 new adversarial Tests A-E) pass 100% via `npm run test:eval:corruption`.
 
 ---
 
@@ -279,12 +284,12 @@ The dedicated browser acceptance suite in `tests/browserSmokeM2_3.js` was execut
 1. **Scenario 1 (Prefix Sums Array Mutation):** Verifies that `cumSum[1]` mutation from 0 to 3 highlights the cell with `.border-amber-400`, displays value 3, and updates educational facets without stack garbage. **PASS**.
 2. **Scenario 2 (Recursive GCD Call Stack):** Verifies depth 4 call stack hierarchy (`gcdRecursive(6,0)`, `gcdRecursive(24,6)`, `gcdRecursive(54,24)`, `main`), asserting that pure recursion hides irrelevant empty arrays block. **PASS**.
 3. **Scenario 3 (Honest Struct Representation):** Verifies that binary tree `BinNode` displays 0 linked-list nodes in `LinkedListCanvas`, avoiding false linear chain fabrication. **PASS**.
-4. **Scenario 4 (Generic Honest Explanation):** Verifies that binary search loop condition `while (low <= high)` displays natural Vietnamese before-statement label ("Quy ước trước câu lệnh:") and factually honest upcoming/observed facets. **PASS**.
-5. **Scenario 5A & 5B (Explicit Failures):** Verifies compiler error banner for `N2_compile_error.cpp` and truncation warning badge ("Vết thực thi bị cắt ngắn") for `N1_step_limit.cpp`. **PASS**.
+4. **Scenario 4 (Generic Honest Explanation):** Verifies that binary search loop condition `while (low <= high)` displays natural Vietnamese before-statement label ("Quy Æ°á»›c trÆ°á»›c cÃ¢u lá»‡nh:") and factually honest upcoming/observed facets. **PASS**.
+5. **Scenario 5A & 5B (Explicit Failures):** Verifies compiler error banner for `N2_compile_error.cpp` and truncation warning badge ("Váº¿t thá»±c thi bá»‹ cáº¯t ngáº¯n") for `N1_step_limit.cpp`. **PASS**.
 6. **Responsive Layouts:**
-   - Laptop 1366×768: Zero horizontal overflow verified.
-   - Compact Desktop 1280×720: Zero horizontal overflow verified.
-   - Mobile 390×844: Zero horizontal overflow verified with interactable slider.
+   - Laptop 1366Ã—768: Zero horizontal overflow verified.
+   - Compact Desktop 1280Ã—720: Zero horizontal overflow verified.
+   - Mobile 390Ã—844: Zero horizontal overflow verified with interactable slider.
    - Beginner vs. Advanced comparison screenshots captured.
 
 ---
@@ -304,7 +309,7 @@ The dedicated browser acceptance suite in `tests/browserSmokeM2_3.js` was execut
 | **M2.2 Browser Smoke** | `npm run test:browser:m2-2` | 11 scenarios + responsive | All | 0 | **PASS** |
 | **M2.3 Browser Acceptance** | `npm run test:browser:m2-3` | 5 scenarios + responsive | All | 0 | **PASS** |
 | **M2.3 Evaluation Runner** | `npm run test:eval` | 40 semantic checkpoints | 40 | 0 | **PASS** |
-| **M2.3 Evaluator Corruption Tests**| `npm run test:eval:corruption` | 5 adversarial corruption tests | 5 | 0 | **PASS** |
+| **M2.3 Evaluator Corruption Tests**| `npm run test:eval:corruption` | 10 adversarial corruption tests (5 original + 5 new A-E) | 10 | 0 | **PASS** |
 
 ---
 
@@ -313,30 +318,30 @@ The dedicated browser acceptance suite in `tests/browserSmokeM2_3.js` was execut
 FlowLab's behavior across general C++ programs is governed by four clear operational tiers:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Fully Supported & Pedagogically Explanatory (62.5%)       │
-│    - Singly linked lists (NODE with pointer links)          │
-│    - 1D static arrays with element-level mutation tracking  │
-│    - Scalar variable mutations with before-statement diffs  │
-│    - Call stacks (recursion, base cases, unwind, frames)    │
-│    - Pointer indirection mutating specific frame variables  │
-├─────────────────────────────────────────────────────────────┤
-│ 2. Transparently Fallback / Generic (35.0%)                 │
-│    - Arbitrary loop conditions and branching decisions      │
-│    - Complex multi-frame nested control flow                │
-│    - Standard library helper operations (push_back, etc.)   │
-│    - Explicit heap memory deallocations (delete)            │
-├─────────────────────────────────────────────────────────────┤
-│ 3. Explicitly Unsupported & Honest (2.5%)                   │
-│    - Binary trees, graphs, and multi-pointer structs        │
-│    - FlowLab NEVER invents a linear linked list for trees   │
-│    - Visualizer displays explicit unsupported struct notice │
-├─────────────────────────────────────────────────────────────┤
-│ 4. Safeguarded & Bounded (Controls)                         │
-│    - Loops > 1000 steps safely clamped to 1000 steps        │
-│    - Compilation errors surfaced directly in buildOutput    │
-│    - Native process termination via Windows Job Objects     │
-└─────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ 1. Fully Supported & Pedagogically Explanatory (55.0%)       â”‚
+â”‚    - Singly linked lists (NODE with pointer links)          â”‚
+â”‚    - 1D static arrays with element-level mutation tracking  â”‚
+â”‚    - Scalar variable mutations with before-statement diffs  â”‚
+â”‚    - Call stacks (recursion, base cases, unwind, frames)    â”‚
+â”‚    - Pointer indirection mutating specific frame variables  â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ 2. Transparently Fallback / Generic (42.5%)                 â”‚
+â”‚    - Arbitrary loop conditions and branching decisions      â”‚
+â”‚    - Complex multi-frame nested control flow                â”‚
+â”‚    - Standard library helper operations (push_back, etc.)   â”‚
+â”‚    - Explicit heap memory deallocations (delete)            â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ 3. Explicitly Unsupported & Honest (2.5%)                   â”‚
+â”‚    - Binary trees, graphs, and multi-pointer structs        â”‚
+â”‚    - FlowLab NEVER invents a linear linked list for trees   â”‚
+â”‚    - Visualizer displays explicit unsupported struct notice â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ 4. Safeguarded & Bounded (Controls)                         â”‚
+â”‚    - Loops > 1000 steps safely clamped to 1000 steps        â”‚
+â”‚    - Compilation errors surfaced directly in buildOutput    â”‚
+â”‚    - Native process termination via Windows Job Objects     â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ---
@@ -347,7 +352,10 @@ FlowLab's behavior across general C++ programs is governed by four clear operati
 
 - **Evaluation Integrity Restored:** Existence-based grading has been replaced with a frozen 40-checkpoint registry evaluated against explicit, independent ground-truth expectations.
 - **Factually Unimpeachable:** 100.0% factual accuracy (0 WRONG, 0 UNKNOWN, 0 PARTIAL). Zero hallucinations across 8 diverse algorithmic programs.
-- **Truthful Pedagogical Boundaries:** 62.5% specialized state explanations (CORRECT), 35.0% honest language-level flow descriptions (GENERIC), and 2.5% honest unsupported boundaries (UNSUPPORTED).
+- **Truthful Pedagogical Boundaries:** 55.0% specialized state explanations (CORRECT), 42.5% honest language-level flow descriptions (GENERIC), and 2.5% honest unsupported boundaries (UNSUPPORTED).
 - **Adversarially Hardened:** 5/5 corruption checks caught by the evaluation harness.
 - **Zero Production Defects:** Core engine code required 0 edits, demonstrating architectural robustness.
-- **Clean Workspace:** Protected workspace `C:\Users\lyle3\OneDrive\Documents\Môn học\DSA\Web` remains untouched.
+- **Clean Workspace:** Protected workspace `C:\Users\lyle3\OneDrive\Documents\MÃ´n há»c\DSA\Web` remains untouched.
+
+
+

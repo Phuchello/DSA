@@ -1,5 +1,5 @@
 {
-  "evaluatedAt": "2026-11-18T06:22:52.523Z",
+  "evaluatedAt": "2026-11-19T03:43:55.602Z",
   "baselineCommit": "3bd3179be9ce6118b043653ac2eb318430db2533",
   "fixturesCount": 10,
   "registeredCheckpointsCount": 40,
@@ -10,7 +10,7 @@
       "name": "Binary Search (duplicates & missing target)",
       "family": "Binary Search",
       "sha256": "91c037548d15e0da129df8dbbe7b9d1add78a461b52f6b242a8300669f30d290",
-      "durationMs": 1442,
+      "durationMs": 1758,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "1 -1",
@@ -40,9 +40,9 @@
             "snapshotConvention": "before-statement",
             "relevantVariables": {
               "seq": [
-                1119008,
+                8279952,
                 0,
-                1116816,
+                8271008,
                 1,
                 76,
                 0
@@ -69,11 +69,14 @@
             "step": 5,
             "line": 8,
             "funcName": "findFirstOccurrence",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 1,
+            "frameId": "0x5ffe10",
             "codeText": "while (low <= high) {",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "low": 0,
+              "high": 5
+            },
             "explanation": {
               "upcoming": "Chuẩn bị đánh giá điều kiện lặp: while (low <= high) {.",
               "observed": "Biến firstOccurrence được khởi tạo giá trị -1.",
@@ -95,11 +98,15 @@
             "step": 6,
             "line": 9,
             "funcName": "findFirstOccurrence",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 1,
+            "frameId": "0x5ffe10",
             "codeText": "int midPoint = low + (high - low) / 2;",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "midPoint": "?",
+              "low": 0,
+              "high": 5
+            },
             "explanation": {
               "upcoming": "Chuẩn bị khai báo và khởi tạo: int midPoint = low + (high - low) / 2;.",
               "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -121,11 +128,14 @@
             "step": 7,
             "line": 10,
             "funcName": "findFirstOccurrence",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 1,
+            "frameId": "0x5ffe10",
             "codeText": "if (seq[midPoint] == needle) {",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "midPoint": 2,
+              "needle": 5
+            },
             "explanation": {
               "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (seq[midPoint] == needle) {.",
               "observed": "Biến midPoint được khởi tạo giá trị 2.",
@@ -147,11 +157,14 @@
             "step": 9,
             "line": 12,
             "funcName": "findFirstOccurrence",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 1,
+            "frameId": "0x5ffe10",
             "codeText": "high = midPoint - 1;",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "midPoint": 2,
+              "high": 5
+            },
             "explanation": {
               "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: high = midPoint - 1;.",
               "observed": "Biến firstOccurrence thay đổi từ -1 thành 2.",
@@ -167,7 +180,7 @@
       "name": "Prefix Sums & Range Queries",
       "family": "Prefix Sums",
       "sha256": "4da1cbc9735bb72cae68774ecb013b748bd91f58a1200262fcbe15ff43dd15e6",
-      "durationMs": 1289,
+      "durationMs": 1411,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "14 4",
@@ -353,7 +366,7 @@
       "name": "Euclidean GCD (Iterative & Recursive)",
       "family": "Euclidean GCD",
       "sha256": "b0c2999168aa9660920c1ee6001c806166632c596088622257c3af2f94737641",
-      "durationMs": 1302,
+      "durationMs": 1608,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "6 6",
@@ -377,11 +390,14 @@
             "step": 1,
             "line": 5,
             "funcName": "gcdIterative",
-            "frameDepth": 0,
-            "frameId": "0x5ffe40",
+            "frameDepth": 1,
+            "frameId": "0x5ffe20",
             "codeText": "while (beta != 0) {",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "alpha": 48,
+              "beta": 18
+            },
             "explanation": {
               "upcoming": "Chuẩn bị đánh giá điều kiện lặp: while (beta != 0) {.",
               "observed": "Đã tạo khung ngăn xếp mới cho hàm gcdIterative() ở độ sâu 1.",
@@ -403,11 +419,15 @@
             "step": 2,
             "line": 6,
             "funcName": "gcdIterative",
-            "frameDepth": 0,
-            "frameId": "0x5ffe40",
+            "frameDepth": 1,
+            "frameId": "0x5ffe20",
             "codeText": "int remainder = alpha % beta;",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "remainder": "?",
+              "alpha": 48,
+              "beta": 18
+            },
             "explanation": {
               "upcoming": "Chuẩn bị khai báo và khởi tạo: int remainder = alpha % beta;.",
               "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -457,11 +477,14 @@
             "step": 21,
             "line": 14,
             "funcName": "gcdRecursive",
-            "frameDepth": 0,
-            "frameId": "0x5ffe40",
+            "frameDepth": 3,
+            "frameId": "0x5ffdb0",
             "codeText": "if (v == 0) {",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "u": 6,
+              "v": 0
+            },
             "explanation": {
               "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (v == 0) {.",
               "observed": "Đã tạo khung ngăn xếp mới cho hàm gcdRecursive() ở độ sâu 3.",
@@ -476,18 +499,20 @@
           "targetFunc": "gcdRecursive",
           "step": 22,
           "line": 15,
-          "verdict": "CORRECT",
-          "reason": "Base case return unwinding with u=6 verified",
+          "verdict": "GENERIC",
+          "reason": "Return statement without confirmed caller scalar diff for resRec=6",
           "excerpt": {
             "checkpointId": "CP-C5",
             "step": 22,
             "line": 15,
             "funcName": "gcdRecursive",
-            "frameDepth": 0,
-            "frameId": "0x5ffe40",
+            "frameDepth": 3,
+            "frameId": "0x5ffdb0",
             "codeText": "return u;",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "u": 6
+            },
             "explanation": {
               "upcoming": "Chuẩn bị kết thúc hàm và trả về giá trị: return u;.",
               "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -503,7 +528,7 @@
       "name": "Monotonic Stack / Next Greater Element",
       "family": "Monotonic Stack",
       "sha256": "a479eed55d4e2d62142a57aeaacee390bcbcfd2735f824a87381e379f72ba724",
-      "durationMs": 1529,
+      "durationMs": 1623,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "5 10 10 -1 -1",
@@ -604,8 +629,8 @@
           "targetFunc": "main",
           "step": 9,
           "line": 12,
-          "verdict": "CORRECT",
-          "reason": "Next Greater Element assignment statement pending under before-statement convention",
+          "verdict": "GENERIC",
+          "reason": "STL vector write without traceable array diff — language-level statement execution",
           "excerpt": {
             "checkpointId": "CP-D4",
             "step": 9,
@@ -661,7 +686,7 @@
       "name": "Merge Sort (Divide & Conquer)",
       "family": "Merge Sort",
       "sha256": "038d3af6ba41d6271569a26561f2d71d43e2da5a18581d9952d2a4d0ea44b5ce",
-      "durationMs": 1615,
+      "durationMs": 1812,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "3 27 38 43",
@@ -718,11 +743,14 @@
             "step": 2,
             "line": 24,
             "funcName": "mergeSort",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 1,
+            "frameId": "0x5ffdf0",
             "codeText": "if (left >= right) return;",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "left": 0,
+              "right": 3
+            },
             "explanation": {
               "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (left >= right) return;.",
               "observed": "Đã tạo khung ngăn xếp mới cho hàm mergeSort() ở độ sâu 1.",
@@ -744,11 +772,15 @@
             "step": 3,
             "line": 25,
             "funcName": "mergeSort",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 1,
+            "frameId": "0x5ffdf0",
             "codeText": "int mid = left + (right - left) / 2;",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "left": 0,
+              "right": 3,
+              "mid": "?"
+            },
             "explanation": {
               "upcoming": "Chuẩn bị khai báo và khởi tạo: int mid = left + (right - left) / 2;.",
               "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -770,11 +802,15 @@
             "step": 13,
             "line": 28,
             "funcName": "mergeSort",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 2,
+            "frameId": "0x5ffdb0",
             "codeText": "merge(arr, left, mid, right);",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "left": 0,
+              "right": 1,
+              "mid": 0
+            },
             "explanation": {
               "upcoming": "Chuẩn bị gọi thực thi hàm: merge(arr, left, mid, right);.",
               "observed": "Khung ngăn xếp của hàm mergeSort() đã hoàn thành và được thu hồi (Pop).",
@@ -796,11 +832,13 @@
             "step": 61,
             "line": 14,
             "funcName": "merge",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 2,
+            "frameId": "0x5ffdb0",
             "codeText": "arr[k++] = L[i++];",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "k": 1
+            },
             "explanation": {
               "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: arr[k++] = L[i++];.",
               "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -816,7 +854,7 @@
       "name": "Custom Binary Tree Structure",
       "family": "Custom Tree",
       "sha256": "8b554f02a6dd9e87ee58251234283ee70ac929636f8810bbe70db09fb6949f84",
-      "durationMs": 1302,
+      "durationMs": 1443,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "30",
@@ -873,12 +911,12 @@
             "codeText": "int total = sumKeys(root);",
             "snapshotConvention": "before-statement",
             "relevantVariables": {
-              "root": "0x7c0480",
+              "root": "0x705330",
               "total": "?"
             },
             "explanation": {
               "upcoming": "Chuẩn bị khai báo và khởi tạo: int total = sumKeys(root);.",
-              "observed": "Con trỏ root đổi hướng sang 0x7c0480.",
+              "observed": "Con trỏ root đổi hướng sang 0x705330.",
               "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
             }
           }
@@ -897,11 +935,13 @@
             "step": 4,
             "line": 11,
             "funcName": "sumKeys",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 1,
+            "frameId": "0x5ffdf0",
             "codeText": "if (cur == nullptr) return 0;",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "cur": "0x705330"
+            },
             "explanation": {
               "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
               "observed": "Đã tạo khung ngăn xếp mới cho hàm sumKeys() ở độ sâu 1.",
@@ -916,18 +956,20 @@
           "targetFunc": "sumKeys",
           "step": 8,
           "line": 11,
-          "verdict": "CORRECT",
-          "reason": "Base case leaf return 0 in tree traversal verified",
+          "verdict": "GENERIC",
+          "reason": "Tree leaf base case return 0 — language-level statement execution (no return-value diff available)",
           "excerpt": {
             "checkpointId": "CP-F4",
             "step": 8,
             "line": 11,
             "funcName": "sumKeys",
-            "frameDepth": 0,
-            "frameId": "0x5ffe30",
+            "frameDepth": 3,
+            "frameId": "0x5ffd70",
             "codeText": "if (cur == nullptr) return 0;",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "cur": "0x0"
+            },
             "explanation": {
               "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
               "observed": "Đã tạo khung ngăn xếp mới cho hàm sumKeys() ở độ sâu 3.",
@@ -954,10 +996,10 @@
             "codeText": "delete root;",
             "snapshotConvention": "before-statement",
             "relevantVariables": {
-              "root": "0x7c0480"
+              "root": "0x705330"
             },
             "explanation": {
-              "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x7c0480.",
+              "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x705330.",
               "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
               "semantics": "Sắp thực hiện lệnh delete để giải phóng vùng nhớ. Ở trạng thái trước câu lệnh này, chưa thể kết luận bộ nhớ đã được giải phóng."
             }
@@ -971,7 +1013,7 @@
       "name": "Dynamic Programming on Numeric Array",
       "family": "Dynamic Programming",
       "sha256": "53089ce77a779ca45c604873351c9a21996a0a0ab4cf730c54a84a8f9afd95ee",
-      "durationMs": 1380,
+      "durationMs": 1747,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "2",
@@ -1156,7 +1198,7 @@
       "name": "Shadowed Variables & Pointer Indirection",
       "family": "Shadowing & Pointers",
       "sha256": "91a4baaf98b2b09d22ecef4142023f23e2b5ddbf5372d067256e3a4cae72de60",
-      "durationMs": 1244,
+      "durationMs": 1647,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "5 21",
@@ -1208,12 +1250,13 @@
             "step": 2,
             "line": 11,
             "funcName": "processOuter",
-            "frameDepth": 0,
-            "frameId": "0x5ffe40",
+            "frameDepth": 1,
+            "frameId": "0x5ffe00",
             "codeText": "int* ptr = &val;",
             "snapshotConvention": "before-statement",
             "relevantVariables": {
-              "val": 5
+              "val": 5,
+              "ptr": "?"
             },
             "explanation": {
               "upcoming": "Chuẩn bị thực thi câu lệnh: \"int* ptr = &val;\".",
@@ -1230,17 +1273,20 @@
           "step": 3,
           "line": 12,
           "verdict": "CORRECT",
-          "reason": "Pointer parameter ptr passed to computeInner from processOuter (distinct from inner body)",
+          "reason": "Pointer parameter ptr passed to computeInner from processOuter — frame push to depth 2 verified",
           "excerpt": {
             "checkpointId": "CP-H3",
             "step": 3,
             "line": 12,
             "funcName": "processOuter",
-            "frameDepth": 0,
-            "frameId": "0x5ffe40",
+            "frameDepth": 1,
+            "frameId": "0x5ffe00",
             "codeText": "int res = computeInner(ptr);",
             "snapshotConvention": "before-statement",
-            "relevantVariables": {},
+            "relevantVariables": {
+              "ptr": "0x5ffe40",
+              "res": "?"
+            },
             "explanation": {
               "upcoming": "Chuẩn bị khai báo và khởi tạo: int res = computeInner(ptr);.",
               "observed": "Con trỏ ptr đổi hướng sang 0x5ffe40.",
@@ -1262,12 +1308,13 @@
             "step": 4,
             "line": 5,
             "funcName": "computeInner",
-            "frameDepth": 0,
-            "frameId": "0x5ffe40",
+            "frameDepth": 2,
+            "frameId": "0x5ffde0",
             "codeText": "int val = *targetPtr * 2;",
             "snapshotConvention": "before-statement",
             "relevantVariables": {
-              "val": 5
+              "targetPtr": "0x5ffe40",
+              "val": "?"
             },
             "explanation": {
               "upcoming": "Chuẩn bị khai báo và khởi tạo: int val = *targetPtr * 2;.",
@@ -1290,12 +1337,13 @@
             "step": 5,
             "line": 6,
             "funcName": "computeInner",
-            "frameDepth": 0,
-            "frameId": "0x5ffe40",
+            "frameDepth": 2,
+            "frameId": "0x5ffde0",
             "codeText": "*targetPtr = val + 1;",
             "snapshotConvention": "before-statement",
             "relevantVariables": {
-              "val": 5
+              "targetPtr": "0x5ffe40",
+              "val": 10
             },
             "explanation": {
               "upcoming": "Chuẩn bị thực thi câu lệnh: \"*targetPtr = val + 1;\".",
@@ -1312,7 +1360,7 @@
       "name": "Execution / Step Limit Exceeded",
       "family": "Negative / Control (Limit)",
       "sha256": "0cd84bd366c6d858d61ff616ed4ecaaf259c8a7f5a35b859e17ad249a73907f6",
-      "durationMs": 2716,
+      "durationMs": 2764,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "",
@@ -1329,7 +1377,7 @@
       "name": "Compile-Time Type Mismatch",
       "family": "Negative / Control (Compile Error)",
       "sha256": "7cb9b3f43c7c1c1e613e059b8e67227a8ff50731fd995aded0f161d950d5f888",
-      "durationMs": 500,
+      "durationMs": 496,
       "runnerSuccess": false,
       "buildOutput": "source.cpp: In function 'int main()':\nsource.cpp:5:25: error: invalid conversion from 'const char*' to 'int' [-fpermissive]\n    5 |     int invalidScalar = \"type_mismatch_string\";\n      |                         ^~~~~~~~~~~~~~~~~~~~~~\n      |                         |\n      |                         const char*\n",
       "stdout": "",
@@ -1353,9 +1401,9 @@
       "snapshotConvention": "before-statement",
       "relevantVariables": {
         "seq": [
-          1119008,
+          8279952,
           0,
-          1116816,
+          8271008,
           1,
           76,
           0
@@ -1372,11 +1420,14 @@
       "step": 5,
       "line": 8,
       "funcName": "findFirstOccurrence",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 1,
+      "frameId": "0x5ffe10",
       "codeText": "while (low <= high) {",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "low": 0,
+        "high": 5
+      },
       "explanation": {
         "upcoming": "Chuẩn bị đánh giá điều kiện lặp: while (low <= high) {.",
         "observed": "Biến firstOccurrence được khởi tạo giá trị -1.",
@@ -1388,11 +1439,15 @@
       "step": 6,
       "line": 9,
       "funcName": "findFirstOccurrence",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 1,
+      "frameId": "0x5ffe10",
       "codeText": "int midPoint = low + (high - low) / 2;",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "midPoint": "?",
+        "low": 0,
+        "high": 5
+      },
       "explanation": {
         "upcoming": "Chuẩn bị khai báo và khởi tạo: int midPoint = low + (high - low) / 2;.",
         "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -1404,11 +1459,14 @@
       "step": 7,
       "line": 10,
       "funcName": "findFirstOccurrence",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 1,
+      "frameId": "0x5ffe10",
       "codeText": "if (seq[midPoint] == needle) {",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "midPoint": 2,
+        "needle": 5
+      },
       "explanation": {
         "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (seq[midPoint] == needle) {.",
         "observed": "Biến midPoint được khởi tạo giá trị 2.",
@@ -1420,11 +1478,14 @@
       "step": 9,
       "line": 12,
       "funcName": "findFirstOccurrence",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 1,
+      "frameId": "0x5ffe10",
       "codeText": "high = midPoint - 1;",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "midPoint": 2,
+        "high": 5
+      },
       "explanation": {
         "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: high = midPoint - 1;.",
         "observed": "Biến firstOccurrence thay đổi từ -1 thành 2.",
@@ -1554,11 +1615,14 @@
       "step": 1,
       "line": 5,
       "funcName": "gcdIterative",
-      "frameDepth": 0,
-      "frameId": "0x5ffe40",
+      "frameDepth": 1,
+      "frameId": "0x5ffe20",
       "codeText": "while (beta != 0) {",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "alpha": 48,
+        "beta": 18
+      },
       "explanation": {
         "upcoming": "Chuẩn bị đánh giá điều kiện lặp: while (beta != 0) {.",
         "observed": "Đã tạo khung ngăn xếp mới cho hàm gcdIterative() ở độ sâu 1.",
@@ -1570,11 +1634,15 @@
       "step": 2,
       "line": 6,
       "funcName": "gcdIterative",
-      "frameDepth": 0,
-      "frameId": "0x5ffe40",
+      "frameDepth": 1,
+      "frameId": "0x5ffe20",
       "codeText": "int remainder = alpha % beta;",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "remainder": "?",
+        "alpha": 48,
+        "beta": 18
+      },
       "explanation": {
         "upcoming": "Chuẩn bị khai báo và khởi tạo: int remainder = alpha % beta;.",
         "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -1604,11 +1672,14 @@
       "step": 21,
       "line": 14,
       "funcName": "gcdRecursive",
-      "frameDepth": 0,
-      "frameId": "0x5ffe40",
+      "frameDepth": 3,
+      "frameId": "0x5ffdb0",
       "codeText": "if (v == 0) {",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "u": 6,
+        "v": 0
+      },
       "explanation": {
         "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (v == 0) {.",
         "observed": "Đã tạo khung ngăn xếp mới cho hàm gcdRecursive() ở độ sâu 3.",
@@ -1620,11 +1691,13 @@
       "step": 22,
       "line": 15,
       "funcName": "gcdRecursive",
-      "frameDepth": 0,
-      "frameId": "0x5ffe40",
+      "frameDepth": 3,
+      "frameId": "0x5ffdb0",
       "codeText": "return u;",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "u": 6
+      },
       "explanation": {
         "upcoming": "Chuẩn bị kết thúc hàm và trả về giá trị: return u;.",
         "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -1749,11 +1822,14 @@
       "step": 2,
       "line": 24,
       "funcName": "mergeSort",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 1,
+      "frameId": "0x5ffdf0",
       "codeText": "if (left >= right) return;",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "left": 0,
+        "right": 3
+      },
       "explanation": {
         "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (left >= right) return;.",
         "observed": "Đã tạo khung ngăn xếp mới cho hàm mergeSort() ở độ sâu 1.",
@@ -1765,11 +1841,15 @@
       "step": 3,
       "line": 25,
       "funcName": "mergeSort",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 1,
+      "frameId": "0x5ffdf0",
       "codeText": "int mid = left + (right - left) / 2;",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "left": 0,
+        "right": 3,
+        "mid": "?"
+      },
       "explanation": {
         "upcoming": "Chuẩn bị khai báo và khởi tạo: int mid = left + (right - left) / 2;.",
         "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -1781,11 +1861,15 @@
       "step": 13,
       "line": 28,
       "funcName": "mergeSort",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 2,
+      "frameId": "0x5ffdb0",
       "codeText": "merge(arr, left, mid, right);",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "left": 0,
+        "right": 1,
+        "mid": 0
+      },
       "explanation": {
         "upcoming": "Chuẩn bị gọi thực thi hàm: merge(arr, left, mid, right);.",
         "observed": "Khung ngăn xếp của hàm mergeSort() đã hoàn thành và được thu hồi (Pop).",
@@ -1797,11 +1881,13 @@
       "step": 61,
       "line": 14,
       "funcName": "merge",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 2,
+      "frameId": "0x5ffdb0",
       "codeText": "arr[k++] = L[i++];",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "k": 1
+      },
       "explanation": {
         "upcoming": "Chuẩn bị tính toán và cập nhật giá trị: arr[k++] = L[i++];.",
         "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
@@ -1836,12 +1922,12 @@
       "codeText": "int total = sumKeys(root);",
       "snapshotConvention": "before-statement",
       "relevantVariables": {
-        "root": "0x7c0480",
+        "root": "0x705330",
         "total": "?"
       },
       "explanation": {
         "upcoming": "Chuẩn bị khai báo và khởi tạo: int total = sumKeys(root);.",
-        "observed": "Con trỏ root đổi hướng sang 0x7c0480.",
+        "observed": "Con trỏ root đổi hướng sang 0x705330.",
         "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
       }
     },
@@ -1850,11 +1936,13 @@
       "step": 4,
       "line": 11,
       "funcName": "sumKeys",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 1,
+      "frameId": "0x5ffdf0",
       "codeText": "if (cur == nullptr) return 0;",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "cur": "0x705330"
+      },
       "explanation": {
         "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
         "observed": "Đã tạo khung ngăn xếp mới cho hàm sumKeys() ở độ sâu 1.",
@@ -1866,11 +1954,13 @@
       "step": 8,
       "line": 11,
       "funcName": "sumKeys",
-      "frameDepth": 0,
-      "frameId": "0x5ffe30",
+      "frameDepth": 3,
+      "frameId": "0x5ffd70",
       "codeText": "if (cur == nullptr) return 0;",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "cur": "0x0"
+      },
       "explanation": {
         "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
         "observed": "Đã tạo khung ngăn xếp mới cho hàm sumKeys() ở độ sâu 3.",
@@ -1887,10 +1977,10 @@
       "codeText": "delete root;",
       "snapshotConvention": "before-statement",
       "relevantVariables": {
-        "root": "0x7c0480"
+        "root": "0x705330"
       },
       "explanation": {
-        "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x7c0480.",
+        "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x705330.",
         "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
         "semantics": "Sắp thực hiện lệnh delete để giải phóng vùng nhớ. Ở trạng thái trước câu lệnh này, chưa thể kết luận bộ nhớ đã được giải phóng."
       }
@@ -2035,12 +2125,13 @@
       "step": 2,
       "line": 11,
       "funcName": "processOuter",
-      "frameDepth": 0,
-      "frameId": "0x5ffe40",
+      "frameDepth": 1,
+      "frameId": "0x5ffe00",
       "codeText": "int* ptr = &val;",
       "snapshotConvention": "before-statement",
       "relevantVariables": {
-        "val": 5
+        "val": 5,
+        "ptr": "?"
       },
       "explanation": {
         "upcoming": "Chuẩn bị thực thi câu lệnh: \"int* ptr = &val;\".",
@@ -2053,11 +2144,14 @@
       "step": 3,
       "line": 12,
       "funcName": "processOuter",
-      "frameDepth": 0,
-      "frameId": "0x5ffe40",
+      "frameDepth": 1,
+      "frameId": "0x5ffe00",
       "codeText": "int res = computeInner(ptr);",
       "snapshotConvention": "before-statement",
-      "relevantVariables": {},
+      "relevantVariables": {
+        "ptr": "0x5ffe40",
+        "res": "?"
+      },
       "explanation": {
         "upcoming": "Chuẩn bị khai báo và khởi tạo: int res = computeInner(ptr);.",
         "observed": "Con trỏ ptr đổi hướng sang 0x5ffe40.",
@@ -2069,12 +2163,13 @@
       "step": 4,
       "line": 5,
       "funcName": "computeInner",
-      "frameDepth": 0,
-      "frameId": "0x5ffe40",
+      "frameDepth": 2,
+      "frameId": "0x5ffde0",
       "codeText": "int val = *targetPtr * 2;",
       "snapshotConvention": "before-statement",
       "relevantVariables": {
-        "val": 5
+        "targetPtr": "0x5ffe40",
+        "val": "?"
       },
       "explanation": {
         "upcoming": "Chuẩn bị khai báo và khởi tạo: int val = *targetPtr * 2;.",
@@ -2087,12 +2182,13 @@
       "step": 5,
       "line": 6,
       "funcName": "computeInner",
-      "frameDepth": 0,
-      "frameId": "0x5ffe40",
+      "frameDepth": 2,
+      "frameId": "0x5ffde0",
       "codeText": "*targetPtr = val + 1;",
       "snapshotConvention": "before-statement",
       "relevantVariables": {
-        "val": 5
+        "targetPtr": "0x5ffe40",
+        "val": 10
       },
       "explanation": {
         "upcoming": "Chuẩn bị thực thi câu lệnh: \"*targetPtr = val + 1;\".",
@@ -2102,8 +2198,8 @@
     }
   ],
   "rubricSummary": {
-    "CORRECT": 25,
-    "GENERIC": 14,
+    "CORRECT": 22,
+    "GENERIC": 17,
     "UNSUPPORTED": 1,
     "PARTIAL": 0,
     "WRONG": 0,

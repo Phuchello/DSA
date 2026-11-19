@@ -1543,33 +1543,24 @@ export function generateVietnameseExplanation(
     semantics = 'Toán tử new cấp phát sizeof(NODE) bytes trên Heap và trả về con trỏ địa chỉ ô nhớ.';
   } else if (parsedIf) {
     if (branchEvaluation === 'true_with_return') {
+      const evid = ifEvidenceClause ? ` (${ifEvidenceClause} -> Đúng (true))` : '';
       if (isPotentialBaseCaseCandidate) {
-        const evid = ifEvidenceClause ? ` (${ifEvidenceClause} -> Đúng (true))` : '';
-        semantics = `Điều kiện dừng (base case) thỏa mãn${evid} — chuẩn bị thực hiện lệnh return để bắt đầu quá trình quay lui (backtracking); bước chuyển tiếp thực tế được xác nhận ở bước kế tiếp.`;
+        semantics = `Điều kiện dừng (base case) thỏa mãn${evid} — điều kiện đúng; chương trình dự kiến đi vào nhánh tương ứng, chuẩn bị thực hiện lệnh return (lệnh return chưa thực thi ở thời điểm trước câu lệnh).`;
       } else {
-        const evid = ifEvidenceClause ? ` (${ifEvidenceClause} -> Đúng (true))` : '';
-        semantics = `Điều kiện rẽ nhánh thỏa mãn${evid} — chuẩn bị thực thi nhánh if chứa lệnh return (trạng thái trước câu lệnh chưa thực thi return; bước chuyển tiếp thực tế được xác nhận ở bước kế tiếp).`;
+        semantics = `Điều kiện rẽ nhánh thỏa mãn${evid} — điều kiện đúng; chương trình dự kiến đi vào nhánh tương ứng chứa lệnh return (chưa thực thi lệnh return ở thời điểm trước câu lệnh).`;
       }
     } else if (branchEvaluation === 'true_without_return') {
       const evid = ifEvidenceClause ? ` (${ifEvidenceClause} -> Đúng (true))` : '';
-      const looksRecursionLike = parsedIf && (
-        /\bn\b/.test(parsedIf.condition) ||
-        /\b(node|p|root|curr|head)\b/.test(parsedIf.condition)
-      );
-      if (looksRecursionLike) {
-        semantics = `Điều kiện rẽ nhánh thỏa mãn${evid}. Khối lệnh bên trong chuẩn bị được thực thi (chưa kết thúc đệ quy do không chứa lệnh return kết thúc hàm; bước chuyển tiếp thực tế được xác nhận ở bước kế tiếp).`;
-      } else {
-        semantics = `Điều kiện rẽ nhánh thỏa mãn${evid}. Khối lệnh bên trong chuẩn bị được thực thi (chưa thực thi lệnh bên trong thân nhánh ở thời điểm trước câu lệnh; bước chuyển tiếp thực tế được xác nhận ở bước kế tiếp).`;
-      }
+      semantics = `Điều kiện rẽ nhánh thỏa mãn${evid} — điều kiện đúng; chương trình dự kiến đi vào nhánh tương ứng (các câu lệnh bên trong thân nhánh chưa thực thi ở thời điểm trước câu lệnh).`;
     } else if (branchEvaluation === 'false') {
       if (isPotentialBaseCaseCandidate) {
         const evid = evaluatedIfCond ? `: ${ifEvidenceClause} -> Sai (false)` : '';
-        semantics = `Điều kiện dừng chưa được đáp ứng (giá trị hiện tại không khớp điều kiện${evid}) — chương trình chuẩn bị tiếp tục nhánh đệ quy tiếp theo.`;
+        semantics = `Điều kiện dừng chưa được đáp ứng (giá trị hiện tại không khớp điều kiện${evid}) — điều kiện sai; chương trình dự kiến bỏ qua nhánh dừng và tiếp tục nhánh đệ quy tiếp theo.`;
       } else {
         const evid = ifEvidenceClause
           ? ` (${ifEvidenceClause} -> Sai (false))`
           : ' (giá trị hiện tại không khớp điều kiện)';
-        semantics = `Điều kiện rẽ nhánh chưa được đáp ứng${evid} — chương trình chuẩn bị bỏ qua khối lệnh bên trong nhánh này.`;
+        semantics = `Điều kiện rẽ nhánh chưa được đáp ứng${evid} — điều kiện sai; chương trình dự kiến bỏ qua khối lệnh bên trong nhánh này.`;
       }
     } else if (branchEvaluation === 'compound') {
       semantics = 'Kiểm tra điều kiện rẽ nhánh phức hợp. Kết quả rẽ nhánh phụ thuộc vào toàn bộ biểu thức điều kiện tại thời điểm thực thi — không suy đoán kết quả khi chưa có bằng chứng quan sát.';
@@ -1580,9 +1571,9 @@ export function generateVietnameseExplanation(
     }
   } else if (evaluatedLoopCond) {
     if (evaluatedLoopCond.result) {
-      semantics = `Ngữ nghĩa trước câu lệnh: Với trạng thái hiện tại (${evaluatedLoopCond.operandsSummary}), phép kiểm tra ${evaluatedLoopCond.comparisonText} cho kết quả Đúng (true) — điều kiện lặp đang được đáp ứng nên chương trình chuẩn bị bước vào thân vòng lặp (bước chuyển tiếp thực tế được xác nhận ở bước kế tiếp).`;
+      semantics = `Ngữ nghĩa trước câu lệnh: Với trạng thái hiện tại (${evaluatedLoopCond.operandsSummary}), phép kiểm tra ${evaluatedLoopCond.comparisonText} cho kết quả Đúng (true) — điều kiện lặp đúng; chương trình dự kiến đi vào thân vòng lặp.`;
     } else {
-      semantics = `Ngữ nghĩa trước câu lệnh: Với trạng thái hiện tại (${evaluatedLoopCond.operandsSummary}), phép kiểm tra ${evaluatedLoopCond.comparisonText} cho kết quả Sai (false) — điều kiện lặp chưa được đáp ứng nên vòng lặp chuẩn bị thoát và bỏ qua thân lặp (bước chuyển tiếp thực tế được xác nhận ở bước kế tiếp).`;
+      semantics = `Ngữ nghĩa trước câu lệnh: Với trạng thái hiện tại (${evaluatedLoopCond.operandsSummary}), phép kiểm tra ${evaluatedLoopCond.comparisonText} cho kết quả Sai (false) — điều kiện lặp sai; chương trình dự kiến thoát khỏi vòng lặp và bỏ qua thân lặp.`;
     }
   } else if (diff.frameTransition?.type === 'push') {
     semantics = 'Mỗi khung ngăn xếp lưu giữ độc lập các biến cục bộ và tham số của lần gọi hàm này.';

@@ -348,6 +348,7 @@ async function runTests() {
   const results = [];
   let normalizerSummary = null;
   let educationalSummary = null;
+  let m24Summary = null;
   let invariantSummary = null;
   let clientAssertions = 0;
   let suiteFailures = 0;
@@ -587,7 +588,6 @@ int main() {
     // -------------------------------------------------------------
     // PART 2B: M2.1 Evidence-Based Educational Explanations Tests
     // -------------------------------------------------------------
-    let m24Summary;
     console.log('\n--- PHẦN 2B: KIỂM THỬ ĐƠN VỊ GIẢI THÍCH SƯ PHẠM DỰA TRÊN BẰNG CHỨNG (M2.1) ---');
     try {
       educationalSummary = runEducationalExplanationsTests();

@@ -32,6 +32,8 @@ function checkBeforeStatementTiming(step) {
     assert.ok(!upcoming.toLowerCase().includes(kw), `Step ${step.step}: upcoming leaked completed phrase "${kw}"`);
     assert.ok(!semantics.toLowerCase().includes(kw), `Step ${step.step}: semantics leaked completed phrase "${kw}"`);
   }
+  assert.ok(!semantics.includes('xác nhận ở bước kế tiếp'), `Step ${step.step}: semantics leaked unverified next-step confirmation claim`);
+  assert.ok(!semantics.includes('do không chứa lệnh return'), `Step ${step.step}: semantics leaked false no-return inference`);
 }
 
 async function runM24AcceptanceTests() {
@@ -136,6 +138,43 @@ async function runM24AcceptanceTests() {
 
   console.log(`  ✅ Fixture 02 (02_bool_flag_countdown.cpp): ${f2Trace.length} steps, stdout="2"`);
 
+  // -------------------------------------------------------------------------
+  // Fixture C (M2.3 regression excerpt): C_euclidean_gcd.cpp (CP-C4 & v != 0)
+  // -------------------------------------------------------------------------
+  const cPath = path.join(__dirname, 'fixtures', 'm2_3', 'C_euclidean_gcd.cpp');
+  const cCode = fs.readFileSync(cPath, 'utf8');
+  const cRes = await runCppCode(cCode, '');
+  assert.ok(cRes.success, `Fixture C execution failed: ${cRes.buildOutput}`);
+  assert.strictEqual((cRes.finalStdout || '').trim(), '6 6', 'Fixture C stdout mismatch');
+
+  const cTrace = normalizeTrace(cRes.trace);
+  cTrace.forEach(checkBeforeStatementTiming);
+
+  const gcdNonZeroStep = cTrace.find(s => s.funcName === 'gcdRecursive' && s.codeText.includes('if (v == 0)') && s.dsa.explanationDetail.semantics.includes('Sai (false)'));
+  const cpc4Step = cTrace.find(s => s.funcName === 'gcdRecursive' && s.line === 14 && s.step === 21);
+  assert.ok(gcdNonZeroStep, 'Missing gcdRecursive v!=0 condition step');
+  assert.ok(cpc4Step, 'Missing CP-C4 step (Step 21, L14)');
+  assert.ok(
+    cpc4Step.dsa.explanationDetail.semantics.includes('0 == 0') &&
+    cpc4Step.dsa.explanationDetail.semantics.includes('Đúng (true)') &&
+    cpc4Step.dsa.explanationDetail.semantics.includes('dự kiến đi vào nhánh') &&
+    !cpc4Step.dsa.explanationDetail.semantics.includes('chưa kết thúc đệ quy') &&
+    !cpc4Step.dsa.explanationDetail.semantics.includes('xác nhận ở bước kế tiếp'),
+    `CP-C4 regression assertion failed: ${cpc4Step.dsa.explanationDetail.semantics}`
+  );
+  console.log(`  ✅ Fixture C (C_euclidean_gcd.cpp CP-C4): ${cTrace.length} steps, stdout="6 6"`);
+
+  const extractHighlight = (s) => ({
+    step: s.step,
+    line: s.line,
+    funcName: s.funcName,
+    codeText: s.codeText,
+    frameId: (s.stackToRender?.find(f => f.isHighlighted) || s.stackToRender?.[s.stackToRender.length - 1])?.frameId || null,
+    upcoming: s.dsa.explanationDetail.upcoming,
+    observed: s.dsa.explanationDetail.observed,
+    semantics: s.dsa.explanationDetail.semantics,
+  });
+
   const summary = {
     generatedAt: new Date().toISOString(),
     fixtures: [
@@ -143,27 +182,19 @@ async function runM24AcceptanceTests() {
         file: '01_window_bound_scan.cpp',
         stdout: (f1Res.finalStdout || '').trim(),
         steps: f1Trace.length,
-        highlights: [clampFalseStep, whileSteps[0], lastWhile, eqCheckStep, compoundElseIfStep].map(s => ({
-          step: s.step,
-          line: s.line,
-          funcName: s.funcName,
-          codeText: s.codeText,
-          upcoming: s.dsa.explanationDetail.upcoming,
-          semantics: s.dsa.explanationDetail.semantics,
-        })),
+        highlights: [clampFalseStep, whileSteps[0], lastWhile, eqCheckStep, compoundElseIfStep].map(extractHighlight),
       },
       {
         file: '02_bool_flag_countdown.cpp',
         stdout: (f2Res.finalStdout || '').trim(),
         steps: f2Trace.length,
-        highlights: [negBoolStep, countdownWhiles[0], countdownExit, boolEqFalseStep].map(s => ({
-          step: s.step,
-          line: s.line,
-          funcName: s.funcName,
-          codeText: s.codeText,
-          upcoming: s.dsa.explanationDetail.upcoming,
-          semantics: s.dsa.explanationDetail.semantics,
-        })),
+        highlights: [negBoolStep, countdownWhiles[0], countdownExit, boolEqFalseStep].map(extractHighlight),
+      },
+      {
+        file: 'm2_3/C_euclidean_gcd.cpp',
+        stdout: (cRes.finalStdout || '').trim(),
+        steps: cTrace.length,
+        highlights: [gcdNonZeroStep, cpc4Step].map(extractHighlight),
       },
     ],
   };

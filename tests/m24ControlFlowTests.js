@@ -26,6 +26,10 @@ function assertBeforeStatementTiming(step, label) {
     assert.ok(!upcoming.toLowerCase().includes(kw), `${label}: upcoming must not contain completed keyword "${kw}"`);
     assert.ok(!semantics.toLowerCase().includes(kw), `${label}: semantics must not contain completed keyword "${kw}"`);
   }
+  assert.ok(!semantics.includes('xác nhận ở bước kế tiếp'),
+    `${label}: semantics must not claim unverified next-step transition confirmation: ${semantics}`);
+  assert.ok(!semantics.includes('do không chứa lệnh return'),
+    `${label}: semantics must not infer missing return from single-line block header: ${semantics}`);
 }
 
 function runM24ControlFlowTests() {
@@ -352,7 +356,7 @@ function runM24ControlFlowTests() {
   });
 
   // 8. Truncated / unexpected post-condition trace stays strictly honest to snapshot before statement
-  test('M24-08: Condition at truncated end-of-trace stays prospective and never fabricates transitions', () => {
+  test('M24-08: Condition at truncated end-of-trace stays prospective and never claims confirmed next transition', () => {
     const raw = [
       {
         event: 'stepLine', line: 10, funcName: 'guardFn',
@@ -370,10 +374,84 @@ function runM24ControlFlowTests() {
     assert.ok(step.dsa.explanationDetail.semantics.includes('0 == 0') &&
               step.dsa.explanationDetail.semantics.includes('Đúng (true)'),
       `Must still evaluate verified current snapshot: ${step.dsa.explanationDetail.semantics}`);
-    assert.ok(step.dsa.explanationDetail.semantics.includes('xác nhận ở bước kế tiếp') ||
-              step.dsa.explanationDetail.semantics.includes('chuẩn bị'),
-      `Must qualify prospective control-flow implication cleanly: ${step.dsa.explanationDetail.semantics}`);
+    assert.ok(step.dsa.explanationDetail.semantics.includes('dự kiến đi vào nhánh') &&
+              !step.dsa.explanationDetail.semantics.includes('xác nhận ở bước kế tiếp'),
+      `Must qualify prospective branch intent without asserting unverified next transition: ${step.dsa.explanationDetail.semantics}`);
     assert.strictEqual(step.dsa.diff.scalarUpdates.length, 0);
+  });
+
+  // 9. CP-C4 regression: block-form recursive base case `if (v == 0) {` for both v==0 and v!=0
+  test('M24-09: Block-form recursive base case if (v == 0) { handles v=0 and v=24 without false no-return claim', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 14, funcName: 'gcdRecursive',
+        codeText: 'if (v == 0) {',
+        stackToRender: [
+          { funcName: 'main', frameId: 'f0', isHighlighted: false, line: 22, encodedLocals: {} },
+          { funcName: 'gcdRecursive', frameId: 'f1', isHighlighted: true, line: 14,
+            encodedLocals: { u: ['C_DATA', '0x100', 'int', 54], v: ['C_DATA', '0x104', 'int', 24] } },
+        ],
+        heap: {}, deletedAddresses: [],
+      },
+      {
+        event: 'stepLine', line: 14, funcName: 'gcdRecursive',
+        codeText: 'if (v == 0) {',
+        stackToRender: [
+          { funcName: 'main', frameId: 'f0', isHighlighted: false, line: 22, encodedLocals: {} },
+          { funcName: 'gcdRecursive', frameId: 'f2', isHighlighted: true, line: 14,
+            encodedLocals: { u: ['C_DATA', '0x140', 'int', 6], v: ['C_DATA', '0x144', 'int', 0] } },
+        ],
+        heap: {}, deletedAddresses: [],
+      },
+    ];
+    const trace = normalizeTrace(raw);
+    const semFalse = trace[0].dsa.explanationDetail.semantics;
+    const semTrue = trace[1].dsa.explanationDetail.semantics;
+
+    assertBeforeStatementTiming(trace[0], 'gcd v=24');
+    assert.ok(semFalse.includes('v = 24') && semFalse.includes('24 == 0') && semFalse.includes('Sai (false)'),
+      `v=24 must evaluate 24 == 0 -> Sai (false): ${semFalse}`);
+    assert.ok(semFalse.includes('dự kiến bỏ qua'), `v=24 should indicate prospective skip: ${semFalse}`);
+
+    assertBeforeStatementTiming(trace[1], 'CP-C4 v=0');
+    assert.ok(semTrue.includes('v = 0') && semTrue.includes('0 == 0') && semTrue.includes('Đúng (true)'),
+      `CP-C4 v=0 must evaluate 0 == 0 -> Đúng (true): ${semTrue}`);
+    assert.ok(semTrue.includes('dự kiến đi vào nhánh'),
+      `CP-C4 v=0 must indicate prospective true-branch entry: ${semTrue}`);
+    assert.ok(!semTrue.includes('chưa kết thúc đệ quy') && !semTrue.includes('do không chứa lệnh return'),
+      `CP-C4 block header must NEVER claim branch lacks a return: ${semTrue}`);
+  });
+
+  // 10. Merge sort inline guard `if (left >= right) return;` true and false
+  test('M24-10: if (left >= right) return; evaluates both true and false prospectively without next-step claim', () => {
+    const raw = [
+      {
+        event: 'stepLine', line: 24, funcName: 'mergeSort',
+        codeText: 'if (left >= right) return;',
+        stackToRender: [{
+          funcName: 'mergeSort', frameId: 'f1', isHighlighted: true, line: 24,
+          encodedLocals: { left: ['C_DATA', '0x10', 'int', 0], right: ['C_DATA', '0x14', 'int', 3] },
+        }],
+        heap: {}, deletedAddresses: [],
+      },
+      {
+        event: 'stepLine', line: 24, funcName: 'mergeSort',
+        codeText: 'if (left >= right) return;',
+        stackToRender: [{
+          funcName: 'mergeSort', frameId: 'f2', isHighlighted: true, line: 24,
+          encodedLocals: { left: ['C_DATA', '0x20', 'int', 3], right: ['C_DATA', '0x24', 'int', 3] },
+        }],
+        heap: {}, deletedAddresses: [],
+      },
+    ];
+    const trace = normalizeTrace(raw);
+    assertBeforeStatementTiming(trace[0], 'mergeSort 0>=3');
+    assert.ok(trace[0].dsa.explanationDetail.semantics.includes('0 >= 3') &&
+              trace[0].dsa.explanationDetail.semantics.includes('Sai (false)'));
+    assertBeforeStatementTiming(trace[1], 'mergeSort 3>=3');
+    assert.ok(trace[1].dsa.explanationDetail.semantics.includes('3 >= 3') &&
+              trace[1].dsa.explanationDetail.semantics.includes('Đúng (true)') &&
+              trace[1].dsa.explanationDetail.semantics.includes('dự kiến đi vào nhánh'));
   });
 
   console.log(`M2.4 Control-Flow Unit Test Summary: ${passed} PASS, ${failed} FAIL`);

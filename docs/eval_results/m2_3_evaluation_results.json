@@ -1,5 +1,5 @@
 {
-  "evaluatedAt": "2026-11-19T04:22:02.990Z",
+  "evaluatedAt": "2026-11-19T04:48:24.069Z",
   "baselineCommit": "3bd3179be9ce6118b043653ac2eb318430db2533",
   "fixturesCount": 10,
   "registeredCheckpointsCount": 40,
@@ -10,7 +10,7 @@
       "name": "Binary Search (duplicates & missing target)",
       "family": "Binary Search",
       "sha256": "91c037548d15e0da129df8dbbe7b9d1add78a461b52f6b242a8300669f30d290",
-      "durationMs": 2195,
+      "durationMs": 2313,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "1 -1",
@@ -40,9 +40,9 @@
             "snapshotConvention": "before-statement",
             "relevantVariables": {
               "seq": [
-                7865968,
+                8195216,
                 0,
-                7885568,
+                8244720,
                 1,
                 76,
                 0
@@ -180,7 +180,7 @@
       "name": "Prefix Sums & Range Queries",
       "family": "Prefix Sums",
       "sha256": "4da1cbc9735bb72cae68774ecb013b748bd91f58a1200262fcbe15ff43dd15e6",
-      "durationMs": 1706,
+      "durationMs": 1539,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "14 4",
@@ -366,7 +366,7 @@
       "name": "Euclidean GCD (Iterative & Recursive)",
       "family": "Euclidean GCD",
       "sha256": "b0c2999168aa9660920c1ee6001c806166632c596088622257c3af2f94737641",
-      "durationMs": 1688,
+      "durationMs": 1531,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "6 6",
@@ -528,7 +528,7 @@
       "name": "Monotonic Stack / Next Greater Element",
       "family": "Monotonic Stack",
       "sha256": "a479eed55d4e2d62142a57aeaacee390bcbcfd2735f824a87381e379f72ba724",
-      "durationMs": 2376,
+      "durationMs": 1969,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "5 10 10 -1 -1",
@@ -686,7 +686,7 @@
       "name": "Merge Sort (Divide & Conquer)",
       "family": "Merge Sort",
       "sha256": "038d3af6ba41d6271569a26561f2d71d43e2da5a18581d9952d2a4d0ea44b5ce",
-      "durationMs": 2186,
+      "durationMs": 1848,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "3 27 38 43",
@@ -854,7 +854,7 @@
       "name": "Custom Binary Tree Structure",
       "family": "Custom Tree",
       "sha256": "8b554f02a6dd9e87ee58251234283ee70ac929636f8810bbe70db09fb6949f84",
-      "durationMs": 2080,
+      "durationMs": 1525,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "30",
@@ -911,12 +911,12 @@
             "codeText": "int total = sumKeys(root);",
             "snapshotConvention": "before-statement",
             "relevantVariables": {
-              "root": "0x665060",
+              "root": "0x7652b0",
               "total": "?"
             },
             "explanation": {
               "upcoming": "Chuẩn bị khai báo và khởi tạo: int total = sumKeys(root);.",
-              "observed": "Con trỏ root đổi hướng sang 0x665060.",
+              "observed": "Con trỏ root đổi hướng sang 0x7652b0.",
               "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
             }
           }
@@ -940,7 +940,7 @@
             "codeText": "if (cur == nullptr) return 0;",
             "snapshotConvention": "before-statement",
             "relevantVariables": {
-              "cur": "0x665060"
+              "cur": "0x7652b0"
             },
             "explanation": {
               "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
@@ -996,10 +996,10 @@
             "codeText": "delete root;",
             "snapshotConvention": "before-statement",
             "relevantVariables": {
-              "root": "0x665060"
+              "root": "0x7652b0"
             },
             "explanation": {
-              "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x665060.",
+              "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x7652b0.",
               "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
               "semantics": "Sắp thực hiện lệnh delete để giải phóng vùng nhớ. Ở trạng thái trước câu lệnh này, chưa thể kết luận bộ nhớ đã được giải phóng."
             }
@@ -1013,7 +1013,7 @@
       "name": "Dynamic Programming on Numeric Array",
       "family": "Dynamic Programming",
       "sha256": "53089ce77a779ca45c604873351c9a21996a0a0ab4cf730c54a84a8f9afd95ee",
-      "durationMs": 2166,
+      "durationMs": 1647,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "2",
@@ -1198,7 +1198,7 @@
       "name": "Shadowed Variables & Pointer Indirection",
       "family": "Shadowing & Pointers",
       "sha256": "91a4baaf98b2b09d22ecef4142023f23e2b5ddbf5372d067256e3a4cae72de60",
-      "durationMs": 1842,
+      "durationMs": 1577,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "5 21",
@@ -1360,7 +1360,7 @@
       "name": "Execution / Step Limit Exceeded",
       "family": "Negative / Control (Limit)",
       "sha256": "0cd84bd366c6d858d61ff616ed4ecaaf259c8a7f5a35b859e17ad249a73907f6",
-      "durationMs": 4734,
+      "durationMs": 3059,
       "runnerSuccess": true,
       "buildOutput": "",
       "stdout": "",
@@ -1377,7 +1377,7 @@
       "name": "Compile-Time Type Mismatch",
       "family": "Negative / Control (Compile Error)",
       "sha256": "7cb9b3f43c7c1c1e613e059b8e67227a8ff50731fd995aded0f161d950d5f888",
-      "durationMs": 639,
+      "durationMs": 462,
       "runnerSuccess": false,
       "buildOutput": "source.cpp: In function 'int main()':\nsource.cpp:5:25: error: invalid conversion from 'const char*' to 'int' [-fpermissive]\n    5 |     int invalidScalar = \"type_mismatch_string\";\n      |                         ^~~~~~~~~~~~~~~~~~~~~~\n      |                         |\n      |                         const char*\n",
       "stdout": "",
@@ -1401,9 +1401,9 @@
       "snapshotConvention": "before-statement",
       "relevantVariables": {
         "seq": [
-          7865968,
+          8195216,
           0,
-          7885568,
+          8244720,
           1,
           76,
           0
@@ -1922,12 +1922,12 @@
       "codeText": "int total = sumKeys(root);",
       "snapshotConvention": "before-statement",
       "relevantVariables": {
-        "root": "0x665060",
+        "root": "0x7652b0",
         "total": "?"
       },
       "explanation": {
         "upcoming": "Chuẩn bị khai báo và khởi tạo: int total = sumKeys(root);.",
-        "observed": "Con trỏ root đổi hướng sang 0x665060.",
+        "observed": "Con trỏ root đổi hướng sang 0x7652b0.",
         "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
       }
     },
@@ -1941,7 +1941,7 @@
       "codeText": "if (cur == nullptr) return 0;",
       "snapshotConvention": "before-statement",
       "relevantVariables": {
-        "cur": "0x665060"
+        "cur": "0x7652b0"
       },
       "explanation": {
         "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
@@ -1977,10 +1977,10 @@
       "codeText": "delete root;",
       "snapshotConvention": "before-statement",
       "relevantVariables": {
-        "root": "0x665060"
+        "root": "0x7652b0"
       },
       "explanation": {
-        "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x665060.",
+        "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x7652b0.",
         "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
         "semantics": "Sắp thực hiện lệnh delete để giải phóng vùng nhớ. Ở trạng thái trước câu lệnh này, chưa thể kết luận bộ nhớ đã được giải phóng."
       }

@@ -10,9 +10,9 @@
     "snapshotConvention": "before-statement",
     "relevantVariables": {
       "seq": [
-        7865968,
+        8195216,
         0,
-        7885568,
+        8244720,
         1,
         76,
         0
@@ -531,12 +531,12 @@
     "codeText": "int total = sumKeys(root);",
     "snapshotConvention": "before-statement",
     "relevantVariables": {
-      "root": "0x665060",
+      "root": "0x7652b0",
       "total": "?"
     },
     "explanation": {
       "upcoming": "Chuẩn bị khai báo và khởi tạo: int total = sumKeys(root);.",
-      "observed": "Con trỏ root đổi hướng sang 0x665060.",
+      "observed": "Con trỏ root đổi hướng sang 0x7652b0.",
       "semantics": "Thực thi tuần tự các câu lệnh theo luồng điều khiển của hàm."
     }
   },
@@ -550,7 +550,7 @@
     "codeText": "if (cur == nullptr) return 0;",
     "snapshotConvention": "before-statement",
     "relevantVariables": {
-      "cur": "0x665060"
+      "cur": "0x7652b0"
     },
     "explanation": {
       "upcoming": "Chuẩn bị kiểm tra điều kiện rẽ nhánh: if (cur == nullptr) return 0;.",
@@ -586,10 +586,10 @@
     "codeText": "delete root;",
     "snapshotConvention": "before-statement",
     "relevantVariables": {
-      "root": "0x665060"
+      "root": "0x7652b0"
     },
     "explanation": {
-      "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x665060.",
+      "upcoming": "Chuẩn bị giải phóng bộ nhớ qua lệnh: delete root;. Con trỏ root đang giữ địa chỉ 0x7652b0.",
       "observed": "Không có thay đổi biến nào trong bộ nhớ ở bước trước.",
       "semantics": "Sắp thực hiện lệnh delete để giải phóng vùng nhớ. Ở trạng thái trước câu lệnh này, chưa thể kết luận bộ nhớ đã được giải phóng."
     }

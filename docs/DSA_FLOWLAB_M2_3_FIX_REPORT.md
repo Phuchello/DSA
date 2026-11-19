@@ -1,4 +1,4 @@
-﻿# DSA FlowLab M2.3 â€” Fix Report & Architectural Integrity Summary
+# DSA FlowLab M2.3 — Fix Report & Architectural Integrity Summary
 
 **Milestone:** M2.3 Generalization & Educational Accuracy Evaluation Closeout  
 **Repository:** `Phuchello/DSA`  
@@ -28,7 +28,7 @@ This pattern granted `CORRECT` merely because an explanation object was populate
 
 In this closeout, the evaluation system was overhauled to achieve complete evaluation integrity:
 1. **Eliminated All Existence-Based Grading:** Every checkpoint now evaluates against independent ground-truth expectations (pending line, frame depth, variable values, memory diffs, before-statement timing, and explanation text).
-2. **Frozen Checkpoint Registry:** Exactly 40 semantic checkpoints (5 per fixture Aâ€“H) are statically registered in `CHECKPOINT_REGISTRY`. Every checkpoint produces exactly one deterministic verdict (`CORRECT`, `GENERIC`, `UNSUPPORTED`, `PARTIAL`, `WRONG`, or `UNKNOWN`).
+2. **Frozen Checkpoint Registry:** Exactly 40 semantic checkpoints (5 per fixture A–H) are statically registered in `CHECKPOINT_REGISTRY`. Every checkpoint produces exactly one deterministic verdict (`CORRECT`, `GENERIC`, `UNSUPPORTED`, `PARTIAL`, `WRONG`, or `UNKNOWN`).
 3. **Formalized Rubric Granularity:**
    - **CORRECT (22/40, 55.0%):** Specific, evidence-backed explanations of state transitions (array mutations, scalar computations, frame pushes/pops, pointer dereferences).
    - **GENERIC (17/40, 42.5%):** Truthful language-level control-flow explanations (`while`, `for`, `if`, `push_back`, `delete`). FlowLab does not pretend to understand high-level algorithmic intent for arbitrary control flow, avoiding pedagogical hallucination.
@@ -39,7 +39,7 @@ In this closeout, the evaluation system was overhauled to achieve complete evalu
    - N2 (`N2_compile_error.cpp`): Enforced `runnerSuccess === false`, compiler diagnostics in `buildOutput`, and 0 trace steps.
    - The evaluator emits a non-zero exit code if any mandatory check fails.
 5. **Adversarial Evaluator Corruption Suite (`tests/evaluatorCorruptionTests.js`):**
-   - Injected 10 deliberate corruptions: 5 original (corrupted value, frame collision, early mutation timing inversion, missing checkpoint, wrong target line) + 5 new adversarial Tests A-E (fabricated semantics, completed-action timing, wrong-frame attribution, false old/new pair, missing source line).
+   - Injected 11 deliberate corruptions: 5 original (corrupted value, frame collision, early mutation timing inversion, missing checkpoint, wrong target line) + 6 new adversarial Tests A–F (fabricated semantics, completed-action timing, wrong-frame attribution, false old/new pair, missing source line, fabricated observed on generic).
    - Verified that the evaluator catches 100% of these corruptions and rejects or degrades them accordingly.
 6. **Raw GDB Trace Excerpts Export:**
    - Exported 40 compact trace excerpts into `docs/eval_results/trace_excerpts.json`, providing independent auditability for every checkpoint.
@@ -88,12 +88,12 @@ The following test and evaluation harnesses were authored and committed to solid
    - Integrated into `package.json` as `"test:eval"`.
 
 3. **Adversarial Evaluator Corruption Suite (`tests/evaluatorCorruptionTests.js`):**
-   - Tests 10 distinct failure injections against the evaluation grader (5 original + 5 new adversarial Tests A-E).
+   - Tests 11 distinct failure injections against the evaluation grader (5 original + 6 new adversarial Tests A–F).
    - Integrated into `package.json` as `"test:eval:corruption"`.
 
 4. **Browser Acceptance Suite (`tests/browserSmokeM2_3.js`):**
    - Headless Chrome browser acceptance suite exercising real UI interaction across 5 scenarios.
-   - Multi-viewport responsive checks (1366Ã—768 laptop, 1280Ã—720 compact desktop, 390Ã—844 mobile).
+   - Multi-viewport responsive checks (1366×768 laptop, 1280×720 compact desktop, 390×844 mobile).
    - Integrated into `package.json` as `"test:browser:m2-3"`.
 
 5. **Evaluation Documentation:**
@@ -128,7 +128,7 @@ No changes to the production engine were required.
 - **Fix Applied:** Added `selectActiveFrame(step)` matching `step.funcName`.
 - **Verdict Impact:** `trace_excerpts.json` accurately reflects variables in the active frame for all 40 checkpoints.
 
-### Defect 3 — Corruption Suite Hardening (Tests A–E)
+### Defect 3 — Corruption Suite Hardening (Tests A–F)
 - Added 5 adversarial corruption tests covering fabricated semantics, completed-action timing, frame attribution, false old/new values, and missing source lines.
 
 ---
@@ -171,6 +171,10 @@ All three defects were in the evaluation grader (`tests/runEvaluationM2_3.js`), 
 - **Test D (False Old/New Value):** Updated to strictly require `corruptedResult.verdict === 'WRONG'`. Passes with confirmed `WRONG` detection (demonstrated false value `5 -> 99`).
 - **Test F (CP-D4 Fabricated Observed & Completed Semantics):** Added new adversarial test falsifying `observed` (`nge[0]: 900 -> -5555`) and `semantics` on a generic statement while retaining valid upcoming source line. Strictly requires `WRONG`. Passes with confirmed `WRONG` detection.
 - **Exit Code:** Suite fails with non-zero exit code if any mandatory corruption is missed. All 11/11 tests PASS with exit code 0.
+
+### Known Scope Limitations & Metric Qualifications
+1. **Factual Accuracy Qualification:** The 100.0% factual accuracy metric represents zero WRONG among 40 statically sampled semantic checkpoints across 8 challenge fixtures. This metric measures the absence of factual contradictions within the frozen evaluation dataset, not universal correctness across arbitrary unconstrained C++ programs.
+2. **Frame Provenance Qualification:** Frame-name attribution is verified (`computeInner`, `processOuter`, rejection of `main`) but full mutation frame-ID provenance (tracking hexadecimal base pointers e.g. `0x5ffe40` to distinguish between multiple live invocations of the same function name, e.g. recursion) is not yet comprehensively tested across all mutation diff types.
 
 ### Final Verification Results
 - **Evaluator Corruption Suite:** 11/11 PASS (exit 0)

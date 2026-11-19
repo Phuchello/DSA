@@ -147,9 +147,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-1') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-2') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-3') | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $artifactRoot 'm2-4') | Out-Null
           $m23EvalDir = Join-Path $env:RUNNER_TEMP 'flowlab-m2-3-eval'
           New-Item -ItemType Directory -Force -Path $m23EvalDir | Out-Null
           Add-Content -Path $env:GITHUB_ENV -Value "FLOWLAB_M2_3_EVAL_ARTIFACT_DIR=$m23EvalDir"
+          $m24EvidenceDir = Join-Path $env:RUNNER_TEMP 'flowlab-m2-4-evidence'
+          New-Item -ItemType Directory -Force -Path $m24EvidenceDir | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "FLOWLAB_M2_4_ARTIFACT_DIR=$m24EvidenceDir"
 
       - name: Run M2.3 evaluation benchmark (10 fixtures, 40 checkpoints)
         shell: pwsh
@@ -222,6 +226,33 @@ jobs:
             exit $LASTEXITCODE
           }
 
+      - name: Run M2.4 control-flow & native C++/GDB acceptance tests
+        shell: pwsh
+        env:
+          M24_ARTIFACT_JSON: ${{ env.FLOWLAB_M2_4_ARTIFACT_DIR }}/m2_4_acceptance_results.json
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $logFile = Join-Path $env:FLOWLAB_M2_4_ARTIFACT_DIR 'test-m2-4.log'
+          npm run test:m2-4 2>&1 | Tee-Object -FilePath $logFile
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          if (-not (Test-Path -LiteralPath $env:M24_ARTIFACT_JSON)) {
+            throw "Expected M2.4 native acceptance JSON artifact at $($env:M24_ARTIFACT_JSON)"
+          }
+
+      - name: Run M2.4 Control Flow Clarity Chrome browser acceptance against native C++/GDB backend
+        shell: pwsh
+        env:
+          FLOWLAB_BROWSER_M24_ARTIFACT_DIR: ${{ runner.temp }}/flowlab-browser-smoke/m2-4
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $logFile = Join-Path $env:FLOWLAB_M2_4_ARTIFACT_DIR 'test-browser-m2-4.log'
+          npm run test:browser:m2-4 2>&1 | Tee-Object -FilePath $logFile
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Preserve real browser logs and screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -239,5 +270,16 @@ jobs:
           path: |
             ${{ runner.temp }}/flowlab-m2-3-eval/
             ${{ runner.temp }}/flowlab-browser-smoke/m2-3/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Preserve M2.4 native logs, trace evidence, and Chrome screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m2-4-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/flowlab-m2-4-evidence/
+            ${{ runner.temp }}/flowlab-browser-smoke/m2-4/
           if-no-files-found: warn
           retention-days: 14
